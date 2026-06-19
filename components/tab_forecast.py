@@ -119,7 +119,7 @@ def _grafico_portfolio(df: pd.DataFrame, df_pcp: pd.DataFrame) -> None:
             hovertemplate="%{y:.0f} MW<extra>PCP programada CEN</extra>",
         ))
     fig.update_layout(
-        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
         height=320, margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None, yaxis_title="MW",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
@@ -169,7 +169,7 @@ def _grafico_parque(df: pd.DataFrame, parque: str, df_pcp: pd.DataFrame) -> None
             hovertemplate=f"%{{y:.1f}}<extra>{y2_lbl}</extra>",
         ))
     fig.update_layout(
-        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
         height=260, margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None, yaxis_title="MW",
         yaxis2=dict(overlaying="y", side="right", showgrid=False, title=y2_lbl),

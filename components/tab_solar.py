@@ -102,7 +102,7 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
             ))
 
     fig.update_layout(
-        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
         height=280, margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None, yaxis_title="MW",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
@@ -143,7 +143,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame) -> None:
         ))
 
     fig.update_layout(
-        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
         height=200, margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None, yaxis_title="W/m²",
         yaxis2=dict(title="%", overlaying="y", side="right", range=[0, 100], showgrid=False),
