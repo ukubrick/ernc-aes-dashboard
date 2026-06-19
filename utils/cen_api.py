@@ -1,0 +1,377 @@
+import os
+import time
+import requests
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from config import (
+    API_BASE_SIP, API_BASE_OPS, CMG_S3_URL,
+    TZ_CHILE, ID_CENTRAL, LLAVES_OPREAL, LLAVES_GEN_PROG,
+    NOMBRE_DISPLAY, LLAVES_SSCC, PMAX,
+    DIAS_VENTANA, DIAS_VENTANA_LIM,
+)
+
+_KEY_SIP: str | None = None
+_KEY_OPS: str | None = None
+
+
+def _get_keys():
+    global _KEY_SIP, _KEY_OPS
+    if _KEY_SIP is None:
+        _KEY_SIP = os.environ["CEN_USER_KEY"]
+    if _KEY_OPS is None:
+        _KEY_OPS = os.environ["CEN_OPS_KEY"]
+    return _KEY_SIP, _KEY_OPS
+
+
+def _get_with_retry(url: str, params: dict, max_retries: int = 3) -> dict:
+    """GET con backoff exponencial: 10s → 20s → 40s."""
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(url, params=params, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = 10 * (2 ** attempt)
+                print(f"[RETRY] Intento {attempt + 1} fallido ({url}): {e}. Esperando {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
+
+
+def _ventana_fechas(dias: int = DIAS_VENTANA) -> tuple[str, str]:
+    """Retorna (startDate, endDate) en formato YYYY-MM-DD para la ventana de adquisición."""
+    hoy = datetime.now(TZ_CHILE).date()
+    return (hoy - timedelta(days=dias - 1)).isoformat(), hoy.isoformat()
+
+
+def _hora_cen_a_dt(fecha_hora_str: str, hora_cen: int) -> str:
+    """
+    Convierte fecha_hora CEN y hora (1-24) a string 'YYYY-MM-DD HH:MM:SS' (hora 0-based).
+    La API devuelve hora en convención 1-24; convertimos a 0-23 para el sistema.
+    """
+    fecha = fecha_hora_str[:10]
+    hora_0based = hora_cen - 1
+    return f"{fecha} {hora_0based:02d}:00:00"
+
+
+# ── Generación Real ────────────────────────────────────────────────────────────
+
+def fetch_gen_real(parque: str, start_date: str = None, end_date: str = None) -> list[dict]:
+    """
+    Descarga generación real para un parque desde gen-real/v3.
+    Retorna lista de registros normalizados listos para upsert_generacion_real().
+    """
+    key_sip, _ = _get_keys()
+    if start_date is None or end_date is None:
+        start_date, end_date = _ventana_fechas()
+
+    id_central = ID_CENTRAL[parque]
+    llave_opreal = LLAVES_OPREAL[parque]
+    url = f"{API_BASE_SIP}/generacion-real/v3/findByDate"
+
+    registros = []
+    page = 1
+    while True:
+        params = {
+            "startDate":   start_date,
+            "endDate":     end_date,
+            "idCentral":   id_central,
+            "pageSize":    5000,
+            "page":        page,
+            "user_key":    key_sip,
+        }
+        data = _get_with_retry(url, params)
+        items = data.get("data", data) if isinstance(data, dict) else data
+
+        if not items:
+            break
+
+        for item in items:
+            # Filtrar solo registros del parque (API también devuelve BESS asociados)
+            if item.get("llave_opreal") != llave_opreal:
+                continue
+
+            hora_cen = int(item.get("hora", 1))
+            fecha_hora = _hora_cen_a_dt(item["fecha_hora"], hora_cen)
+
+            registros.append({
+                "parque":          parque,
+                "id_central":      item.get("id_central"),
+                "llave_opreal":    item.get("llave_opreal"),
+                "central":         item.get("central"),
+                "gen_real_mw":     item.get("gen_real_mw", 0.0),
+                "potencia_max":    item.get("potencia_maxima"),
+                "factor_ernc":     item.get("factor_ernc"),
+                "valor_ernc":      item.get("valor_ernc"),
+                "tipo_tecnologia": item.get("tipo_tecnologia"),
+                "fecha_hora":      fecha_hora,
+                "hora":            hora_cen - 1,
+            })
+
+        total = data.get("total", len(items)) if isinstance(data, dict) else len(items)
+        if page * 5000 >= total:
+            break
+        page += 1
+
+    return registros
+
+
+def fetch_gen_real_todos(start_date: str = None, end_date: str = None) -> list[dict]:
+    """Descarga generación real para los 11 parques."""
+    if start_date is None or end_date is None:
+        start_date, end_date = _ventana_fechas()
+    todos = []
+    for parque in ID_CENTRAL:
+        try:
+            recs = fetch_gen_real(parque, start_date, end_date)
+            todos.extend(recs)
+            print(f"[GEN-REAL] {NOMBRE_DISPLAY[parque]}: {len(recs)} registros")
+        except Exception as e:
+            print(f"[GEN-REAL] ERROR {parque}: {e}")
+    return todos
+
+
+# ── Generación Programada PCP ─────────────────────────────────────────────────
+
+def fetch_gen_programada(start_date: str = None, end_date: str = None) -> list[dict]:
+    """
+    Descarga generación programada PCP para todos los parques.
+    La API NO filtra por idCentral — se descarga todo y filtra local por LLAVES_GEN_PROG.
+    """
+    key_sip, _ = _get_keys()
+    if start_date is None or end_date is None:
+        start_date, end_date = _ventana_fechas()
+
+    # Construir índice inverso: llave_gen → código de parque
+    llave_a_parque: dict[str, str] = {}
+    for parque, llaves in LLAVES_GEN_PROG.items():
+        for llave in llaves:
+            llave_a_parque[llave] = parque
+
+    url = f"{API_BASE_SIP}/generacion-programada-pcp/v4/findByDate"
+    registros = []
+    page = 1
+
+    while True:
+        params = {
+            "startDate": start_date,
+            "endDate":   end_date,
+            "limit":     5000,
+            "page":      page,
+            "user_key":  key_sip,
+        }
+        data = _get_with_retry(url, params)
+        items = data.get("data", data) if isinstance(data, dict) else data
+
+        if not items:
+            break
+
+        for item in items:
+            # Campo confirmado en API v4: "llave_gen"
+            llave = item.get("llave_gen", "")
+            parque = llave_a_parque.get(llave)
+            if parque is None:
+                continue
+
+            # PCP v4: fecha_hora viene como "YYYY-MM-DD HH:MM:SS" ya en 0-based
+            fecha_hora_raw = item.get("fecha_hora", "")
+            fecha_hora = fecha_hora_raw[:19] if fecha_hora_raw else ""
+            hora_0 = int(fecha_hora[11:13]) if len(fecha_hora) >= 13 else 0
+
+            registros.append({
+                "parque":                   parque,
+                "llave_gen":                llave,
+                "gen_programada_mw":        item.get("gen_programada_mw"),
+                "capacidad_disponible_mw":  item.get("capacidad_disponible_mw"),
+                "costo_generacion_usd":     item.get("costo_generacion_usd"),
+                "fecha_hora":               fecha_hora,
+                "hora":                     hora_0,
+                "fecha_programa":           item.get("fecha_programa"),
+                "fuente":                   "CEN_PCP",
+            })
+
+        total = data.get("total", len(items)) if isinstance(data, dict) else len(items)
+        if page * 5000 >= total:
+            break
+        page += 1
+        print(f"[PCP] Página {page - 1} procesada — {len(registros)} registros acumulados")
+
+    return registros
+
+
+# ── CMG ────────────────────────────────────────────────────────────────────────
+
+def fetch_cmg() -> dict:
+    """
+    Lee el JSON S3 de CMG online. Actualiza cada ~15 min en la fuente.
+    Estructura real: {maintenance: bool, data: [{name, horas: [{hora, total}]}]}
+    Retorna dict {nombre_nodo: {"nombre": ..., "cmg_usd_mwh": ..., "fecha_hora": ...}}.
+    """
+    r = requests.get(
+        CMG_S3_URL,
+        headers={"Referer": "https://www.coordinador.cl/"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    payload = r.json()
+    items = payload.get("data", [])
+    resultado = {}
+    for item in items:
+        nombre = item.get("name", "")
+        horas = item.get("horas", [])
+        if horas:
+            ultima = horas[-1]  # última entrada disponible (más reciente)
+            resultado[nombre] = {
+                "nombre":      nombre,
+                "cmg_usd_mwh": ultima.get("total"),
+                "fecha_hora":  ultima.get("hora"),   # formato "YYYY-MM-DD HH:MM"
+            }
+    return resultado
+
+
+def cmg_a_registros(cmg_data: dict, nodos: list[str]) -> list[dict]:
+    """
+    Convierte el dict de CMG a registros para upsert_cmg().
+    nodos: lista de nombres de nodo a guardar (ej. ['CRUCERO_______220']).
+    """
+    registros = []
+    for nodo in nodos:
+        item = cmg_data.get(nodo)
+        if item:
+            # fecha_hora viene como "YYYY-MM-DD HH:MM", normalizar a "YYYY-MM-DD HH:MM:00"
+            fh = item["fecha_hora"]
+            if len(fh) == 16:
+                fh += ":00"
+            registros.append({
+                "nodo":        nodo,
+                "cmg_usd_mwh": item["cmg_usd_mwh"],
+                "fecha_hora":  fh,
+            })
+    return registros
+
+
+# ── Limitaciones de Transmisión ────────────────────────────────────────────────
+
+def fetch_limitaciones(start_date: str = None, end_date: str = None) -> list[dict]:
+    """
+    Descarga limitaciones de transmisión y filtra las que afectan a los parques del portfolio.
+    """
+    key_sip, _ = _get_keys()
+    if start_date is None or end_date is None:
+        start_date, end_date = _ventana_fechas(DIAS_VENTANA_LIM)
+
+    # Nombres de instalación a buscar (fragmentos — match parcial)
+    nombres_parques = {v.upper() for v in LLAVES_OPREAL.values()}
+
+    url = f"{API_BASE_SIP}/limitaciones-transmision/v4/findByDate"
+    registros = []
+    page = 1
+
+    while True:
+        params = {
+            "startDate": start_date,
+            "endDate":   end_date,
+            "limit":     100,
+            "page":      page,
+            "user_key":  key_sip,
+        }
+        data = _get_with_retry(url, params)
+        items = data.get("data", data) if isinstance(data, dict) else data
+
+        if not items:
+            break
+
+        for item in items:
+            instalacion = (item.get("instalacion_nombre") or "").upper()
+            # Buscar si alguno de nuestros parques aparece en el nombre de la instalación
+            parque_match = None
+            for codigo, llave in LLAVES_OPREAL.items():
+                # Comparar por fragmento del nombre
+                nombre_frag = llave.upper().replace("PFV ", "").replace("PE ", "")
+                if nombre_frag in instalacion:
+                    parque_match = codigo
+                    break
+
+            if parque_match is None:
+                continue
+
+            corr_raw = item.get("correlativo") or item.get("id")
+            corr_int = int(float(corr_raw)) if corr_raw is not None else None
+            id_str = str(item.get("id") or corr_raw or "")
+            registros.append({
+                "id":                       id_str,
+                "correlativo":              corr_int,
+                "parque":                   parque_match,
+                "empresa_nombre":           item.get("empresa_nombre"),
+                "instalacion_nombre":       item.get("instalacion_nombre"),
+                "status":                   item.get("status"),
+                "fecha_perturbacion":       item.get("fecha_perturbacion"),
+                "fecha_retorno_estimada":   item.get("fecha_retorno_estimada"),
+                "fecha_efectiva_retorno":   item.get("fecha_efectiva_retorno"),
+                "potencia":                 item.get("potencia"),
+                "unidad_medida_potencia":   item.get("unidad_medida_potencia"),
+                "produce_indisponibilidad": item.get("produce_indisponibilidad"),
+                "afecta_sscc":              item.get("afecta_sscc"),
+                "observacion":              item.get("observacion"),
+                "created":                  item.get("created"),
+                "modified":                 item.get("modified"),
+            })
+
+        total = data.get("total", len(items)) if isinstance(data, dict) else len(items)
+        if page * 100 >= total:
+            break
+        page += 1
+
+    return registros
+
+
+# ── SSCC ────────────────────────────────────────────────────────────────────────
+
+def fetch_sscc(start_date: str = None, end_date: str = None) -> list[dict]:
+    """
+    Descarga instrucciones de SSCC desde API Operaciones.
+    Filtra solo parques del portfolio (por ahora solo PE San Matías confirmado).
+    """
+    _, key_ops = _get_keys()
+    if start_date is None or end_date is None:
+        start_date, end_date = _ventana_fechas()
+
+    url = f"{API_BASE_OPS}/servicios-complementarios/v1"
+    params = {
+        "initDate":  start_date,
+        "endDate":   end_date,
+        "page":      0,
+        "pageSize":  -1,
+        "user_key":  key_ops,
+    }
+    data = _get_with_retry(url, params)
+
+    # La API de Operaciones usa 'content' y camelCase
+    items = data.get("content", data.get("data", []))
+
+    registros = []
+    for item in items:
+        central_unidad = item.get("centralUnidad", "")
+        parque = LLAVES_SSCC.get(central_unidad)
+        if parque is None:
+            continue
+
+        # Mapeo camelCase → snake_case
+        fecha = item.get("fecha", "")[:10]
+        registros.append({
+            "parque":          parque,
+            "fecha":           fecha,
+            "inicio_periodo":  item.get("inicioPeriodo"),
+            "fin_periodo":     item.get("finPeriodo"),
+            "instruccion_sscc": item.get("instruccionSscc"),
+            "id_configuracion": item.get("idConfiguracion"),
+            "central_unidad":  central_unidad,
+            "disponibilidad":  item.get("disponibilidad"),
+            "baja":            item.get("baja"),
+            "sube":            item.get("sube"),
+            "unidad_medida":   item.get("unidadMedida"),
+        })
+
+    return registros
