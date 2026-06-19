@@ -109,7 +109,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
             ))
 
     fig.update_layout(
-        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
         height=280, margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None, yaxis_title="MW",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
@@ -162,7 +162,7 @@ def _grafico_viento(df_meteo: pd.DataFrame) -> None:
         ))
 
     fig.update_layout(
-        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
         height=240, margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None, yaxis_title="m/s",
         yaxis2=dict(title="α", overlaying="y", side="right", range=[0, 0.6], showgrid=False),

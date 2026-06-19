@@ -36,65 +36,114 @@ st_autorefresh(interval=3_600_000, key="autorefresh_ernc")
 st.markdown(
     f"""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
+    /* ── Animaciones ──────────────────────────────────────────────────────── */
+    @keyframes fadeInUp {{
+        from {{ opacity: 0; transform: translateY(16px); }}
+        to   {{ opacity: 1; transform: translateY(0); }}
+    }}
+    @keyframes fadeInLeft {{
+        from {{ opacity: 0; transform: translateX(-12px); }}
+        to   {{ opacity: 1; transform: translateX(0); }}
+    }}
+    @keyframes pulse-border {{
+        0%, 100% {{ box-shadow: 0 0 0 0 rgba(239,68,68,0.5); }}
+        50%       {{ box-shadow: 0 0 0 6px rgba(239,68,68,0.0); }}
+    }}
+    @keyframes shimmer {{
+        0%   {{ background-position: -400px 0; }}
+        100% {{ background-position: 400px 0; }}
+    }}
+    @keyframes dot-pulse {{
+        0%, 100% {{ transform: scale(1); opacity: 1; }}
+        50%       {{ transform: scale(1.5); opacity: 0.6; }}
+    }}
+
+    /* ── Base ─────────────────────────────────────────────────────────────── */
     html, body, .stApp {{
         font-family: 'Inter', sans-serif;
         background-color: {AES_GRIS};
         color: {AES_TEXTO};
     }}
-    .block-container {{ padding-top: 1.2rem; padding-bottom: 1rem; max-width: 1400px; }}
-
-    /* Sidebar — fondo oscuro AES con gradiente */
-    [data-testid="stSidebar"] {{
-        background: linear-gradient(180deg, {AES_AZUL_OSC} 0%, #1a1f5e 100%);
-        border-right: none;
+    .block-container {{
+        padding-top: 1.2rem; padding-bottom: 1rem; max-width: 1400px;
+        animation: fadeInUp 0.5s ease both;
     }}
-    [data-testid="stSidebar"] * {{ color: rgba(255,255,255,0.90) !important; }}
-    [data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.15) !important; }}
 
-    /* Botones sidebar parques */
+    /* ── Sidebar ──────────────────────────────────────────────────────────── */
+    [data-testid="stSidebar"] {{
+        background: linear-gradient(160deg, {AES_AZUL_OSC} 0%, #111540 60%, #0d1035 100%);
+        border-right: none;
+        box-shadow: 4px 0 20px rgba(0,0,0,0.25);
+    }}
+    [data-testid="stSidebar"] * {{ color: rgba(255,255,255,0.88) !important; }}
+    [data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.12) !important; }}
+
+    /* Botones sidebar */
     [data-testid="stSidebar"] .stButton button {{
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.15);
-        color: rgba(255,255,255,0.85) !important;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.12);
+        color: rgba(255,255,255,0.82) !important;
         font-size: 12px;
         text-align: left;
         border-radius: 8px;
         padding: 7px 12px;
-        transition: all 0.15s;
+        transition: all 0.20s cubic-bezier(0.4,0,0.2,1);
     }}
     [data-testid="stSidebar"] .stButton button:hover {{
-        background: rgba(77,200,220,0.30);
+        background: rgba(77,200,220,0.22);
         border-color: {AES_CYAN};
         color: white !important;
+        transform: translateX(3px);
     }}
     .btn-activo button {{
-        background: {AES_CYAN} !important;
+        background: linear-gradient(90deg, {AES_CYAN} 0%, #38b5cc 100%) !important;
         color: {AES_AZUL_OSC} !important;
         border-color: {AES_CYAN} !important;
         font-weight: 700 !important;
+        box-shadow: 0 4px 12px rgba(77,200,220,0.40) !important;
     }}
 
-    /* Métricas — borde izquierdo AES azul */
+    /* ── KPI cards ────────────────────────────────────────────────────────── */
     [data-testid="metric-container"] {{
         background: {AES_BLANCO};
-        border-radius: 10px;
-        padding: 14px 18px;
+        border-radius: 12px;
+        padding: 16px 18px;
         border: 1px solid {AES_BORDE};
-        border-left: 4px solid {AES_AZUL};
-        box-shadow: 0 2px 8px rgba(59,76,232,0.10);
+        border-top: 4px solid {AES_AZUL};
+        box-shadow: 0 2px 12px rgba(59,76,232,0.08);
+        transition: transform 0.20s ease, box-shadow 0.20s ease;
+        animation: fadeInUp 0.5s ease both;
     }}
-    [data-testid="stMetricLabel"] {{ font-size: 11px; color: {AES_MUTED}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; }}
-    [data-testid="stMetricValue"] {{ font-size: 22px; color: {AES_TEXTO}; font-weight: 700; }}
-    [data-testid="stMetricDelta"] {{ font-size: 12px; }}
+    [data-testid="metric-container"]:hover {{
+        transform: translateY(-3px);
+        box-shadow: 0 8px 24px rgba(59,76,232,0.15);
+    }}
+    [data-testid="stMetricLabel"] {{
+        font-size: 10px; color: {AES_MUTED}; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.8px;
+    }}
+    [data-testid="stMetricValue"] {{ font-size: 22px; color: {AES_TEXTO}; font-weight: 800; }}
+    [data-testid="stMetricDelta"] {{ font-size: 12px; font-weight: 600; }}
 
-    /* Tabs — barra superior coloreada */
+    /* Delay escalonado para los 7 KPIs */
+    [data-testid="metric-container"]:nth-child(1) {{ animation-delay: 0.05s; border-top-color: {AES_AZUL}; }}
+    [data-testid="metric-container"]:nth-child(2) {{ animation-delay: 0.10s; border-top-color: {AES_AZUL}; }}
+    [data-testid="metric-container"]:nth-child(3) {{ animation-delay: 0.15s; border-top-color: {AES_CYAN}; }}
+    [data-testid="metric-container"]:nth-child(4) {{ animation-delay: 0.20s; border-top-color: #F59E0B; }}
+    [data-testid="metric-container"]:nth-child(5) {{ animation-delay: 0.25s; border-top-color: {AES_VIOLETA}; }}
+    [data-testid="metric-container"]:nth-child(6) {{ animation-delay: 0.30s; border-top-color: {AES_CYAN}; }}
+    [data-testid="metric-container"]:nth-child(7) {{ animation-delay: 0.35s; border-top-color: #EF4444; }}
+
+    /* ── Tabs ─────────────────────────────────────────────────────────────── */
     .stTabs [data-baseweb="tab-list"] {{
         background: {AES_BLANCO};
         border-bottom: 3px solid {AES_AZUL};
         gap: 2px;
         padding: 0 4px;
+        border-radius: 8px 8px 0 0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }}
     .stTabs [data-baseweb="tab"] {{
         background: transparent;
@@ -103,39 +152,86 @@ st.markdown(
         font-weight: 500;
         font-size: 13px;
         padding: 9px 18px;
-        transition: all 0.15s;
+        transition: all 0.20s cubic-bezier(0.4,0,0.2,1);
+        position: relative;
     }}
     .stTabs [data-baseweb="tab"]:hover {{
-        background: rgba(59,76,232,0.06);
+        background: rgba(59,76,232,0.07);
         color: {AES_AZUL};
     }}
     .stTabs [aria-selected="true"] {{
-        background: {AES_AZUL} !important;
+        background: linear-gradient(135deg, {AES_AZUL} 0%, #2530B0 100%) !important;
         color: white !important;
         font-weight: 700;
         border-radius: 6px 6px 0 0;
+        box-shadow: 0 -2px 10px rgba(59,76,232,0.30);
     }}
 
-    /* Cards */
+    /* Contenido de tab: aparece con fade */
+    [data-testid="stTabsContent"] {{
+        animation: fadeInUp 0.35s ease both;
+    }}
+
+    /* ── Cards genéricas ──────────────────────────────────────────────────── */
     .aes-card {{
         background: {AES_BLANCO};
-        border-radius: 10px;
-        padding: 16px 20px;
+        border-radius: 12px;
+        padding: 18px 22px;
         border: 1px solid {AES_BORDE};
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        margin-bottom: 12px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+        margin-bottom: 14px;
+        transition: box-shadow 0.20s ease;
+        animation: fadeInUp 0.4s ease both;
+    }}
+    .aes-card:hover {{ box-shadow: 0 6px 20px rgba(0,0,0,0.10); }}
+
+    /* Card insight crítico pulsante */
+    .insight-critico {{
+        animation: fadeInLeft 0.4s ease both, pulse-border 2s ease-in-out infinite;
+    }}
+    .insight-alerta {{
+        animation: fadeInLeft 0.4s ease both;
+    }}
+    .insight-positivo {{
+        animation: fadeInLeft 0.4s ease both;
     }}
 
-    /* Tablas */
-    [data-testid="stDataFrame"] {{ border-radius: 8px; border: 1px solid {AES_BORDE}; overflow: hidden; }}
+    /* Dot pulsante en críticos */
+    .dot-critico {{
+        animation: dot-pulse 1.5s ease-in-out infinite;
+    }}
 
-    /* Divider */
+    /* ── Gráficos Plotly ──────────────────────────────────────────────────── */
+    [data-testid="stPlotlyChart"] {{
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+        animation: fadeInUp 0.5s ease both;
+        transition: box-shadow 0.2s ease;
+    }}
+    [data-testid="stPlotlyChart"]:hover {{
+        box-shadow: 0 6px 20px rgba(59,76,232,0.12);
+    }}
+
+    /* ── Mapa pydeck ──────────────────────────────────────────────────────── */
+    [data-testid="stDeckGlJsonChart"] {{
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+        animation: fadeInUp 0.6s ease both;
+    }}
+
+    /* ── Tablas ───────────────────────────────────────────────────────────── */
+    [data-testid="stDataFrame"] {{
+        border-radius: 10px; border: 1px solid {AES_BORDE};
+        overflow: hidden;
+        animation: fadeInUp 0.45s ease both;
+    }}
+
+    /* ── Varios ───────────────────────────────────────────────────────────── */
     hr {{ border-color: {AES_BORDE}; margin: 12px 0; }}
+    [data-testid="stSelectbox"] > div {{ border-radius: 8px; }}
 
-    /* Inputs */
-    [data-testid="stSelectbox"] > div {{ border-radius: 6px; }}
-
-    /* Tooltip personalizado */
     .aes-tooltip {{
         position: relative; display: inline-block; cursor: help;
         border-bottom: 1px dashed {AES_MUTED};
@@ -143,13 +239,13 @@ st.markdown(
     .aes-tooltip .aes-tooltip-text {{
         visibility: hidden; width: 280px; background: {AES_TEXTO};
         color: white; font-size: 11px; line-height: 1.5;
-        border-radius: 6px; padding: 8px 12px;
+        border-radius: 8px; padding: 10px 14px;
         position: absolute; z-index: 1000; bottom: 125%; left: 50%;
-        margin-left: -140px; opacity: 0; transition: opacity 0.2s;
+        margin-left: -140px; opacity: 0; transition: opacity 0.25s;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
     }}
     .aes-tooltip:hover .aes-tooltip-text {{ visibility: visible; opacity: 1; }}
 
-    /* Ocultar menú hamburguesa */
     #MainMenu {{ visibility: hidden; }}
     footer {{ visibility: hidden; }}
     </style>
@@ -241,10 +337,18 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
     parque_activo = st.session_state.get("parque_activo", PARQUES_SOLAR[0])
 
     with st.sidebar:
+        # Header premium
         st.markdown(
-            f"<div style='padding:8px 0 4px'>"
-            f"<div style='font-size:18px;font-weight:700;color:{AES_AZUL}'>AES Andes ERNC</div>"
-            f"<div style='font-size:11px;color:{AES_MUTED};margin-top:2px'>11 parques renovables · ~1.824 MW</div>"
+            f"<div style='padding:16px 4px 12px;text-align:center'>"
+            f"<div style='display:inline-flex;align-items:center;justify-content:center;"
+            f"width:48px;height:48px;border-radius:14px;"
+            f"background:linear-gradient(135deg,{AES_CYAN} 0%,{AES_AZUL} 100%);"
+            f"margin-bottom:10px;box-shadow:0 4px 16px rgba(77,200,220,0.40)'>"
+            f"<span style='font-size:22px;color:white;font-weight:800;line-height:1'>⚡</span>"
+            f"</div>"
+            f"<div style='font-size:17px;font-weight:800;color:white;letter-spacing:-0.3px'>AES Andes ERNC</div>"
+            f"<div style='font-size:11px;color:rgba(255,255,255,0.50);margin-top:3px'>"
+            f"11 parques · ~1.824 MW instalados</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -252,8 +356,8 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 
         # Parques solares
         st.markdown(
-            f"<div style='font-size:11px;font-weight:600;color:{AES_MUTED};text-transform:uppercase;"
-            f"letter-spacing:0.8px;margin-bottom:6px'>Solar FV</div>",
+            f"<div style='font-size:10px;font-weight:700;color:{AES_CYAN};text-transform:uppercase;"
+            f"letter-spacing:1.2px;margin-bottom:8px;padding-left:2px'>Solar FV</div>",
             unsafe_allow_html=True,
         )
         for p in PARQUES_SOLAR:
@@ -282,8 +386,8 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 
         # Parques eólicos
         st.markdown(
-            f"<div style='font-size:11px;font-weight:600;color:{AES_MUTED};text-transform:uppercase;"
-            f"letter-spacing:0.8px;margin-bottom:6px'>Eólica</div>",
+            f"<div style='font-size:10px;font-weight:700;color:{AES_CYAN};text-transform:uppercase;"
+            f"letter-spacing:1.2px;margin-bottom:8px;padding-left:2px;margin-top:4px'>Eólica</div>",
             unsafe_allow_html=True,
         )
         for p in PARQUES_EOLICA:

@@ -165,7 +165,7 @@ def render_tab_estadisticas(
             hovertemplate="%{y}: %{x:,.0f} MWh<extra></extra>",
         ))
         fig.update_layout(
-            template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+            template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
             height=340, margin=dict(l=0, r=60, t=10, b=0),
             xaxis_title="MWh", yaxis_title=None,
             showlegend=False,
@@ -225,7 +225,7 @@ def render_tab_estadisticas(
         fig2.add_hline(y=25,  line_dash="dot", line_color=AES_ROJO,  line_width=1)
         fig2.add_hline(y=-25, line_dash="dot", line_color=AES_ROJO,  line_width=1)
         fig2.update_layout(
-            template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+            template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
             height=280, margin=dict(l=0, r=0, t=20, b=0),
             xaxis_title=None, yaxis_title="Desvio %",
             showlegend=False,
