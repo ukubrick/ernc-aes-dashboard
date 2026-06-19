@@ -1,7 +1,7 @@
 # CLAUDE.md — Dashboard ERNC AES Andes
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-06-19 (Sesión 7 completada — proyecto completo).
+> Última actualización: 2026-06-19 (Rediseño AES + Deploy producción completado).
 
 ---
 
@@ -13,20 +13,48 @@ Dashboard operacional para **11 parques de energías renovables (ERNC) de AES An
 
 **Proyecto independiente** del dashboard CTM Mejillones (térmicas ANG/CCR). Hereda el stack y patrones de ese proyecto pero con visualización significativamente más rica.
 
+**Estado actual:** En producción en Streamlit Cloud. GitHub Actions corre cada hora (:10 UTC) para adquisición CEN y meteo Open-Meteo.
+
+---
+
+## URLS DE PRODUCCIÓN
+
+- **GitHub:** https://github.com/ukubrick/ernc-aes-dashboard (público — necesario para Streamlit Cloud free tier)
+- **Supabase:** https://ozeubcqoxsihmmfpswoa.supabase.co (proyecto `ernc-aes`)
+- **Streamlit Cloud:** share.streamlit.io (cuenta ukubrick, main file: app_ernc.py)
+
+---
+
+## PALETA DE COLORES AES (aplicada en todo el proyecto)
+
+```python
+AES_AZUL    = "#3B4CE8"   # azul primario AES — Solar FV
+AES_CYAN    = "#4DC8DC"   # cyan — Eólica
+AES_VIOLETA = "#9B6FD4"   # violeta — modelo estimado
+AES_VERDE   = "#5AB848"   # verde — positivo / OK
+AES_AMBAR   = "#F59E0B"   # ambar — PCP programada / alerta
+AES_ROJO    = "#EF4444"   # rojo — crítico
+AES_GRIS    = "#F5F7FA"   # fondo general (tema claro)
+AES_TEXTO   = "#1A1F36"   # texto principal
+AES_MUTED   = "#6B7280"   # texto secundario
+AES_BORDE   = "#E5E7EB"   # bordes / separadores
+AES_BLANCO  = "#FFFFFF"   # fondo cards
+```
+
 ---
 
 ## STACK TECNOLÓGICO
 
 ```
-Frontend:        Streamlit (Python)
-Mapa 3D:         pydeck (deck.gl TerrainLayer + ColumnLayer + ScatterplotLayer)
-Gráficos:        Plotly (interactivos)
+Frontend:        Streamlit (Python), tema claro, paleta AES
+Mapa 2D:         pydeck (ScatterplotLayer sobre Carto Positron — light)
+Gráficos:        Plotly (template plotly_white, paleta AES)
 Base de datos:   Supabase (REST API via supabase-py — NO psycopg2 directo)
-Adquisición:     Python + GitHub Actions (cron horario, minuto :10)
-Meteorología:    Open-Meteo (gratuita, sin key, resolución horaria)
+Adquisición:     Python + GitHub Actions (cron horario, minuto :10 UTC)
+Meteorología:    Open-Meteo (gratuita, sin key, resolución horaria, forecast 7d)
 API energía:     CEN (SIPUB + Operaciones)
 CMG:             JSON S3 público del Coordinador Eléctrico Nacional
-Exportación:     ReportLab (PDF)
+Exportación:     ReportLab (PDF, in-memory BytesIO)
 Autorefresh:     streamlit-autorefresh (cada 3.600.000 ms)
 ```
 
@@ -47,16 +75,24 @@ SUPABASE_URL=https://ozeubcqoxsihmmfpswoa.supabase.co
 SUPABASE_KEY=REDACTED_SERVICE_ROLE_KEY   # service_role (escribe sin RLS)
 ```
 
-> ⚠️ En el frontend (app_ernc.py) usar el `anon key` (`sb_publishable_...`) para lectura, no el secret.
-> El `service_role` key solo debe usarse en el script de adquisición (servidor/GitHub Actions).
+> REGLA DE SEGURIDAD: `service_role` key SOLO en scripts de adquisición y GitHub Actions Secrets.
+> El frontend (app_ernc.py / Streamlit Cloud) usa el `anon key` (`sb_publishable_...`) para lectura.
+> `.env` y `.streamlit/secrets.toml` están en `.gitignore` — nunca se suben a GitHub.
 
-### GitHub Actions Secrets a configurar
+### GitHub Actions Secrets configurados (repo ukubrick/ernc-aes-dashboard) ✅
 ```
-CEN_USER_KEY
-CEN_OPS_KEY
-SUPABASE_URL
-SUPABASE_KEY
+CEN_USER_KEY   ✅
+CEN_OPS_KEY    ✅
+SUPABASE_URL   ✅
+SUPABASE_KEY   ✅ (service_role)
 ```
+
+### Streamlit Cloud Secrets configurados ✅
+```toml
+SUPABASE_URL = "https://ozeubcqoxsihmmfpswoa.supabase.co"
+SUPABASE_KEY = "sb_publishable_..."   # anon key — solo lectura
+```
+El `anon key` se encuentra en: Supabase → proyecto ernc-aes → Settings → API → Project API keys → anon public.
 
 ---
 
@@ -83,15 +119,12 @@ ernc-aes-dashboard/
 │   └── insights.py                           ← (Sesión 6) motor de alertas automáticas
 ├── components/
 │   ├── __init__.py
-│   ├── mapa_ernc.py                          ← (Sesión 4) mapa 3D pydeck
-│   ├── kpis_generales.py                     ← (Sesión 4) fila de KPIs
-│   ├── tab_solar.py                          ← (Sesión 5) tab Solar FV
-│   ├── tab_eolica.py                         ← (Sesión 5) tab Eólica
-│   ├── tab_forecast.py                       ← (Sesión 6) forecast 7 días
-│   ├── tab_insights.py                       ← (Sesión 6) hallazgos automáticos
-│   └── detalle_parque.py                     ← (Sesión 5) vista por parque
-├── assets/
-│   └── logo_aes.png
+│   ├── mapa_ernc.py                          ← mapa 2D pydeck (Carto Positron, ScatterplotLayer)
+│   ├── kpis_generales.py                     ← fila KPIs con tooltips help=
+│   ├── tab_solar.py                          ← tab Solar FV (parque_activo, tooltips, plotly_white)
+│   ├── tab_eolica.py                         ← tab Eólica (parque_activo, tooltips, plotly_white)
+│   ├── tab_forecast.py                       ← forecast 7 días + mensaje claro si no hay datos
+│   └── tab_insights.py                       ← hallazgos automáticos (cards light, sin emojis)
 └── .github/
     └── workflows/
         └── adquisicion_ernc.yml              ← cron horario :10
@@ -105,26 +138,26 @@ ernc-aes-dashboard/
 
 | Código | Nombre Display | id_central | llave_opreal | llave_PCP | P_max (MW) | Lat | Lon |
 |--------|---------------|-----------|-------------|----------|-----------|-----|-----|
-| AS1 | Andes Solar I | 374 | PFV ANDES SOLAR | ANDES_FV | 23.97 | -24.10 | -69.85 |
-| AS2A | Andes Solar 2A | 643 | PFV ANDES SOLAR IIA | ANDES_2A_FV | 91.09 | -24.10 | -69.85 |
-| AS2B | Andes Solar 2B | 1850 | PFV ANDES SOLAR IIB | ANDES_2B_FV | 220.0 | -24.10 | -69.85 |
-| AS3 | Andes Solar III | 2322 | PFV Andes Solar III | ANDES_3_FV | 175.0 | -24.12 | -69.87 |
-| AS4 | Andes Solar IV | 2076 | PFV ANDES SOLAR IV | ANDES_4_FV | 220.0 | -24.08 | -69.83 |
-| BOL | PFV Bolero | 456 | PFV BOLERO | BOLERO_1_FV | 161.3 | -26.20 | -69.90 |
+| AS1 | Andes Solar I | 374 | PFV ANDES SOLAR | ANDES_FV | 23.97 | -24.010753 | -68.584921 | OSM way 745505231 |
+| AS2A | Andes Solar 2A | 643 | PFV ANDES SOLAR IIA | ANDES_2A_FV | 91.09 | -24.009143 | -68.574685 | OSM way 1296706746 |
+| AS2B | Andes Solar 2B | 1850 | PFV ANDES SOLAR IIB | ANDES_2B_FV | 220.0 | -24.000723 | -68.575145 | OSM way 974171190 |
+| AS3 | Andes Solar III | 2322 | PFV Andes Solar III | ANDES_3_FV | 175.0 | -24.001486 | -68.565828 | OSM way 1296706747 |
+| AS4 | Andes Solar IV | 2076 | PFV ANDES SOLAR IV | ANDES_4_FV | 220.0 | -24.021944 | -68.573460 | OSM way 1144233017 |
+| BOL | PFV Bolero | 456 | PFV BOLERO | BOLERO_1_FV | 161.3 | -23.475195 | -69.408486 | Sierra Gorda, Antofagasta |
 
 ### Eólicos
 
-| Código | Nombre Display | id_central | llave_opreal | llave_PCP | P_max (MW) | Lat | Lon |
-|--------|---------------|-----------|-------------|----------|-----------|-----|-----|
-| CL | PE Campo Lindo | 1845 | PE CAMPO LINDO | CAMPO_LINDO_EO | 76.8 | -37.80 | -72.40 |
-| OLM | PE Los Olmos | 1757 | PE LOS OLMOS | LOS_OLMOS_EO | 115.92 | -36.20 | -72.60 |
-| CUR | PE Los Cururos | 318 | PE LOS CURUROS | LOS_CURUROS_EO | 115.08 | -30.30 | -71.00 |
-| STM | PE San Matías | 2091 | PE SAN MATIAS | SAN_MATIAS_EO | 87.5 | -38.10 | -72.50 |
-| MSM | PE Mesamavida | 1758 | PE MESAMÁVIDA | MESAMAVIDA_EO | 70.56 | -37.50 | -72.20 |
+| Código | Nombre Display | id_central | llave_opreal | llave_PCP | P_max (MW) | Lat | Lon | Referencia |
+|--------|---------------|-----------|-------------|----------|-----------|-----|-----|-----------|
+| CL | PE Campo Lindo | 1845 | PE CAMPO LINDO | CAMPO_LINDO_EO | 76.8 | -37.404179 | -72.494720 | Los Ángeles, Biobío |
+| OLM | PE Los Olmos | 1757 | PE LOS OLMOS | LOS_OLMOS_EO | 115.92 | -37.649278 | -72.473876 | Mulchén, Biobío |
+| CUR | PE Los Cururos | 318 | PE LOS CURUROS | LOS_CURUROS_EO | 115.08 | -31.012533 | -71.637465 | Los Cururos Sur, Coquimbo |
+| STM | PE San Matías | 2091 | PE SAN MATIAS | SAN_MATIAS_EO | 87.5 | -37.434120 | -72.552807 | Los Ángeles, Biobío |
+| MSM | PE Mesamavida | 1758 | PE MESAMÁVIDA | MESAMAVIDA_EO | 70.56 | -37.489984 | -72.459097 | Los Ángeles, Biobío |
 
-**Capacidad total:** ~1.358 MW Solar + ~466 MW Eólica = **~1.824 MW**
+**Capacidad total:** ~891 MW Solar + ~466 MW Eólica = **~1.357 MW**
 
-> ⚠️ Coordenadas aproximadas. Confirmar con AES Andes antes de producción.
+> Coordenadas confirmadas por Erick Herrera (2026-06-19) desde OSM y datos AES.
 
 ### BESS asociados (en API gen-real, id_central=None — ignorar en v1)
 AS2A, AS2B, AS3, AS4, BOL tienen BESS/SAE asociados que aparecen en la API.
@@ -451,5 +484,59 @@ texture = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 - Botón "Generar reporte PDF" en sidebar → genera en memoria → botón de descarga aparece debajo.
 - No requiere escribir archivos en disco — usa `io.BytesIO`.
 
-*Generado 2026-06-19 — Sesiones 1–7 completadas. Proyecto completo.*
+---
+
+## REDISEÑO VISUAL AES (2026-06-19)
+
+Cambios aplicados sobre la v1 original (dark theme, mapa 3D):
+
+1. **Tema claro** — fondo `#F5F7FA`, cards `#FFFFFF`, bordes `#E5E7EB`. `config.toml` con `base="light"`.
+2. **Paleta AES** — azul/cyan/violeta/verde según guía visual AES Andes.
+3. **Mapa 2D Carto Positron** — reemplazó TerrainLayer+ColumnLayer. ScatterplotLayer con halos de área, opacidad proporcional a FP, tooltip profesional sin emojis.
+4. **Sidebar navegación** — botones usan `st.session_state["parque_activo"]` + `st.rerun()`. `render_tab_solar()` y `render_tab_eolica()` reciben `parque_activo` y preseleccionan el selectbox.
+5. **Sin emojis** — reemplazados por texto y tipografía en todos los componentes.
+6. **Tooltips `help=`** — en todas las métricas: fórmula exacta, fuente, frecuencia de actualización.
+7. **Forecast vacío** — mensaje naranja claro con instrucciones cuando no hay `es_forecast=True` en DB.
+8. **Coordenadas exactas** — todas las 11 confirmadas por Erick (ver tabla PARQUES).
+9. **f-strings con dict** — NO usar backslash dentro del f-string (error Python < 3.12). Extraer a variable antes.
+
+---
+
+## DEPLOY EN PRODUCCIÓN (2026-06-19)
+
+### GitHub
+- Repo: `https://github.com/ukubrick/ernc-aes-dashboard` (público)
+- Push inicial: `git init` → `git add .` → `git commit` → `git push` ✅
+- Credenciales guardadas en Keychain Mac — no pidió token personal
+
+### Streamlit Cloud
+- Conectado con cuenta GitHub ukubrick
+- Main file: `app_ernc.py` | Branch: `main`
+- Secrets configurados en Settings → Secrets (SUPABASE_URL + anon SUPABASE_KEY) ✅
+- El repo debe ser público para Streamlit Cloud free tier
+
+### GitHub Actions ✅
+- Archivo: `.github/workflows/adquisicion_ernc.yml`
+- Cron: `"10 * * * *"` (minuto :10 de cada hora UTC)
+- Step 1: `python Adquisicion_ernc.py` | Step 2: `python Adquisicion_meteo_ernc.py`
+- 4 secrets configurados en repo → Settings → Secrets and variables → Actions
+
+### Para correr localmente
+```bash
+cd "/Users/erickosvaldoherrerakerr/Desktop/ML DATA/Dashboard ERNC/ernc-aes-dashboard"
+source .venv/bin/activate
+streamlit run app_ernc.py
+# Si el puerto está ocupado: kill $(lsof -ti:8501)
+```
+
+---
+
+## PENDIENTES
+
+- [ ] Confirmar nodo CMG correcto para eólicos sur (CHARRUA_______220 vs otro)
+- [ ] Verificar que GitHub Actions corra OK en producción (primer :10 UTC post-deploy)
+- [ ] Agregar logo AES Andes en sidebar cuando esté disponible (assets/logo_aes.png)
+- [ ] `st.segmented_control` requiere Streamlit >= 1.38 — verificar versión en Streamlit Cloud
+
+*Generado 2026-06-19 — Sesiones 1–7 + Rediseño AES + Deploy producción completados.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*
