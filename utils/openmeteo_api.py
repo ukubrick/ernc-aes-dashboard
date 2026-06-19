@@ -84,6 +84,7 @@ def _response_to_registros(response, parque: str, variables: list[str]) -> list[
         calcular_potencia_fv_estimada,
         interpolar_viento_100m,
         calcular_densidad_aire,
+        calcular_potencia_eolica_estimada,
     )
     from config import TECNOLOGIA, PMAX
 
@@ -143,6 +144,7 @@ def _response_to_registros(response, parque: str, variables: list[str]) -> list[
             row["wind_speed_100m"] = v100m
             row["wind_shear_alpha"] = alpha
             row["densidad_aire"] = rho
+            row["p_eolica_estimada_mw"] = calcular_potencia_eolica_estimada(v100m, rho, pmax)
 
         registros.append(row)
 
