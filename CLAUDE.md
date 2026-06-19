@@ -1,7 +1,7 @@
 # CLAUDE.md — Dashboard ERNC AES Andes
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-06-19 (Rediseño AES + Deploy producción completado).
+> Última actualización: 2026-06-19 (Sesión 8 — bugs producción resueltos).
 
 ---
 
@@ -287,6 +287,17 @@ Siempre `"YYYY-MM-DD HH:MM:SS"` hora **0-based** en `America/Santiago`.
 - Las tablas tienen RLS habilitado por defecto en Supabase
 - Escritura (adquisición): usar `service_role` key → omite RLS
 - Lectura (dashboard): usar `anon` key / `publishable` key → solo SELECT
+- **CRÍTICO:** El `anon key` necesita políticas RLS explícitas para poder leer. Sin ellas retorna `[]` silenciosamente (no lanza error). SQL ejecutado en producción (2026-06-19):
+
+```sql
+CREATE POLICY "anon_select" ON generacion_real_ernc       FOR SELECT USING (true);
+CREATE POLICY "anon_select" ON generacion_programada_ernc  FOR SELECT USING (true);
+CREATE POLICY "anon_select" ON meteo_ernc                  FOR SELECT USING (true);
+CREATE POLICY "anon_select" ON cmg_ernc                    FOR SELECT USING (true);
+CREATE POLICY "anon_select" ON limitaciones_ernc           FOR SELECT USING (true);
+CREATE POLICY "anon_select" ON sscc_ernc                   FOR SELECT USING (true);
+```
+Si se crea una tabla nueva, agregar su política antes de que el dashboard la consulte.
 
 ---
 
@@ -299,7 +310,7 @@ hora_0based = int(item["hora"]) - 1  # gen-real v3
 # PCP v4: fecha_hora ya viene 0-based, NO convertir
 fecha_hora = item["fecha_hora"][:19]  # solo truncar a segundos
 
-# fecha_hora en DB: siempre string "YYYY-MM-DD HH:MM:SS"
+# fecha_hora en DB: siempre string "YYYY-MM-DD HH:MM:SS" en hora America/Santiago
 # Gen = 0 horas nocturnas (solar): is_day=False → NO es error
 # BESS: id_central=None → ignorar en v1
 
@@ -308,6 +319,15 @@ fecha_hora = item["fecha_hora"][:19]  # solo truncar a segundos
 
 # Supabase: usar supabase-py, NO psycopg2
 # Conexión TCP directa (5432/6543) falla desde redes locales
+
+# TIMEZONE EN QUERIES: los fecha_hora en DB están en hora Santiago (UTC-3).
+# NUNCA usar datetime.now(timezone.utc) para filtrar — usar _ahora_santiago():
+#   from datetime import datetime, timezone, timedelta
+#   def _ahora_santiago(): return datetime.now(timezone(timedelta(hours=-3)))
+# Esta función ya existe en utils/db.py — usarla en cualquier query nueva.
+
+# st.plotly_chart: SIEMPRE agregar key= único explícito para evitar
+# StreamlitDuplicateElementId cuando hay múltiples gráficos en tabs/columnas.
 ```
 
 ---
@@ -356,6 +376,7 @@ Implementar en `utils/calculos.py`:
 | **5 — Tabs Solar y Eólica** | ✅ COMPLETA | `components/tab_solar.py`, `components/tab_eolica.py` (detalle_parque integrado en cada tab) |
 | **6 — Forecast e Insights** | ✅ COMPLETA | `components/tab_forecast.py`, `utils/insights.py`, `components/tab_insights.py` |
 | **7 — PDF y Deploy** | ✅ COMPLETA | `utils/pdf_report.py`, `.streamlit/config.toml`, deploy Streamlit Cloud, `db.py` soporta st.secrets |
+| **8 — Bugs producción** | ✅ COMPLETA | 3 bugs resueltos (ver sección BUGS CONOCIDOS Y RESUELTOS) |
 
 ---
 
@@ -531,12 +552,50 @@ streamlit run app_ernc.py
 
 ---
 
+## BUGS CONOCIDOS Y RESUELTOS (Sesión 8 — 2026-06-19)
+
+### Bug 1: StreamlitDuplicateElementId en st.plotly_chart
+- **Síntoma:** App crasheaba al navegar entre tabs con error `StreamlitDuplicateElementId`.
+- **Causa:** Todos los `st.plotly_chart()` carecían de `key=` explícito. Streamlit genera IDs automáticos que colisionan al re-renderizar dentro de tabs/columnas.
+- **Fix:** Agregar `key=` único a cada llamada. Convención usada:
+  - `key="solar_grafico_gen"`, `key="solar_grafico_ghi"`
+  - `key="eolica_grafico_gen"`, `key="eolica_grafico_viento"`
+  - `key="forecast_grafico_portfolio"`, `key=f"forecast_grafico_parque_{parque}"`
+  - `key="mapa_grafico_tendencia"`, `key="cmg_grafico_historico"`
+- **Regla:** Todo `st.plotly_chart` nuevo debe tener `key=` único. Si el gráfico depende de un selector (ej. parque), incluirlo en el key: `key=f"nombre_{variable}"`.
+
+### Bug 2: Queries retornaban vacío por timezone incorrecto
+- **Síntoma:** Dashboard mostraba 0.0 MW y `—` en todos los KPIs pese a haber datos en Supabase.
+- **Causa:** Las queries en `utils/db.py`, `tab_eolica.py`, `tab_solar.py` y `tab_forecast.py` usaban `datetime.now(timezone.utc)` para el filtro `gte("fecha_hora", desde)`. Los `fecha_hora` en DB están en hora local de Santiago (UTC-3), por lo que el filtro buscaba 3 horas hacia el futuro y no encontraba registros.
+- **Fix:** Reemplazar `datetime.now(timezone.utc)` por `_ahora_santiago()` definida en `utils/db.py`:
+  ```python
+  def _ahora_santiago():
+      from datetime import datetime, timezone, timedelta
+      return datetime.now(timezone(timedelta(hours=-3)))
+  ```
+- **Regla:** NUNCA usar `timezone.utc` para filtrar `fecha_hora` en este proyecto. Siempre `_ahora_santiago()`.
+
+### Bug 3: RLS bloqueaba lectura con anon key (dashboard sin datos)
+- **Síntoma:** Idéntico al Bug 2 — todos los valores `—` y `0.0 MW`. Se detectó después de corregir el Bug 2.
+- **Causa:** Supabase habilita RLS por defecto en todas las tablas. Sin políticas `SELECT` explícitas para `anon`, las queries retornan `[]` silenciosamente (sin error). El `anon key` del frontend no podía leer ninguna tabla.
+- **Fix:** Ejecutar en Supabase SQL Editor:
+  ```sql
+  CREATE POLICY "anon_select" ON generacion_real_ernc       FOR SELECT USING (true);
+  CREATE POLICY "anon_select" ON generacion_programada_ernc  FOR SELECT USING (true);
+  CREATE POLICY "anon_select" ON meteo_ernc                  FOR SELECT USING (true);
+  CREATE POLICY "anon_select" ON cmg_ernc                    FOR SELECT USING (true);
+  CREATE POLICY "anon_select" ON limitaciones_ernc           FOR SELECT USING (true);
+  CREATE POLICY "anon_select" ON sscc_ernc                   FOR SELECT USING (true);
+  ```
+- **Regla:** Al crear tabla nueva → agregar política antes de usar en el dashboard.
+
+---
+
 ## PENDIENTES
 
 - [ ] Confirmar nodo CMG correcto para eólicos sur (CHARRUA_______220 vs otro)
-- [ ] Verificar que GitHub Actions corra OK en producción (primer :10 UTC post-deploy)
 - [ ] Agregar logo AES Andes en sidebar cuando esté disponible (assets/logo_aes.png)
 - [ ] `st.segmented_control` requiere Streamlit >= 1.38 — verificar versión en Streamlit Cloud
 
-*Generado 2026-06-19 — Sesiones 1–7 + Rediseño AES + Deploy producción completados.*
+*Generado 2026-06-19 — Sesiones 1–8 + Rediseño AES + Deploy producción + Bugs resueltos.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*
