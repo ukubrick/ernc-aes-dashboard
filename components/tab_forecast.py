@@ -23,8 +23,9 @@ def _cargar_forecast() -> pd.DataFrame:
     try:
         from utils.db import get_client
         sb = get_client()
-        ahora = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        hasta = (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+        santiago = timezone(timedelta(hours=-3))
+        ahora = datetime.now(santiago).strftime("%Y-%m-%d %H:%M:%S")
+        hasta = (datetime.now(santiago) + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("meteo_ernc")
             .select(

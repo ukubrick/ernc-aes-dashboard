@@ -26,7 +26,7 @@ def _df_meteo(parque: str) -> pd.DataFrame:
     try:
         from utils.db import get_client
         sb = get_client()
-        desde = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
+        desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("meteo_ernc")
             .select("fecha_hora,ghi_wm2,gti_wm2,temp_2m,temp_celda_c,p_fv_estimada_mw,cloudcover_low_pct,cloud_cover_pct,is_day,es_forecast")

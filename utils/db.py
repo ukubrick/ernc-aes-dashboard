@@ -118,10 +118,15 @@ def upsert_sscc(registros: list[dict]) -> int:
 
 # ── Queries de lectura para el dashboard ──────────────────────────────────────
 
+def _ahora_santiago():
+    from datetime import datetime, timezone, timedelta
+    return datetime.now(timezone(timedelta(hours=-3)))
+
+
 def query_gen_real_ultimas_horas(horas: int = 48) -> list[dict]:
+    from datetime import timedelta
     sb = get_client()
-    from datetime import datetime, timedelta, timezone
-    desde = (datetime.now(timezone.utc) - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+    desde = (_ahora_santiago() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
     res = (sb.table("generacion_real_ernc")
              .select("*")
              .gte("fecha_hora", desde)
@@ -131,9 +136,9 @@ def query_gen_real_ultimas_horas(horas: int = 48) -> list[dict]:
 
 
 def query_gen_prog_ultimas_horas(horas: int = 48) -> list[dict]:
+    from datetime import timedelta
     sb = get_client()
-    from datetime import datetime, timedelta, timezone
-    desde = (datetime.now(timezone.utc) - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+    desde = (_ahora_santiago() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
     res = (sb.table("generacion_programada_ernc")
              .select("parque,fecha_hora,gen_programada_mw,capacidad_disponible_mw,costo_generacion_usd,fuente")
              .gte("fecha_hora", desde)
@@ -143,9 +148,9 @@ def query_gen_prog_ultimas_horas(horas: int = 48) -> list[dict]:
 
 
 def query_meteo_parque(parque: str, horas: int = 48) -> list[dict]:
+    from datetime import timedelta
     sb = get_client()
-    from datetime import datetime, timedelta, timezone
-    desde = (datetime.now(timezone.utc) - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+    desde = (_ahora_santiago() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
     res = (sb.table("meteo_ernc")
              .select("*")
              .eq("parque", parque)
@@ -156,10 +161,10 @@ def query_meteo_parque(parque: str, horas: int = 48) -> list[dict]:
 
 
 def query_meteo_forecast(dias: int = 7) -> list[dict]:
+    from datetime import timedelta
     sb = get_client()
-    from datetime import datetime, timedelta, timezone
-    ahora = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    hasta = (datetime.now(timezone.utc) + timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
+    ahora = _ahora_santiago().strftime("%Y-%m-%d %H:%M:%S")
+    hasta = (_ahora_santiago() + timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
     res = (sb.table("meteo_ernc")
              .select("*")
              .eq("es_forecast", True)
