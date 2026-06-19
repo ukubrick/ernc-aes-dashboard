@@ -1,0 +1,36 @@
+name: Adquisición ERNC
+
+on:
+  schedule:
+    - cron: "10 * * * *"   # Minuto :10 de cada hora UTC (distinto al CTM que va en el :05)
+  workflow_dispatch:        # Permite ejecución manual desde GitHub Actions UI
+
+jobs:
+  adquirir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Adquisición CEN (gen. real + PCP + CMG + limitaciones + SSCC)
+        run: python Adquisicion_ernc.py
+        env:
+          CEN_USER_KEY:  ${{ secrets.CEN_USER_KEY }}
+          CEN_OPS_KEY:   ${{ secrets.CEN_OPS_KEY }}
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+
+      - name: Adquisición Open-Meteo (meteorología + forecast 7 días)
+        run: python Adquisicion_meteo_ernc.py
+        env:
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
