@@ -91,7 +91,7 @@ def _grafico_portfolio(df: pd.DataFrame) -> None:
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="forecast_grafico_portfolio")
 
 
 def _grafico_parque(df: pd.DataFrame, parque: str) -> None:
@@ -132,7 +132,7 @@ def _grafico_parque(df: pd.DataFrame, parque: str) -> None:
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"forecast_grafico_parque_{parque}")
 
 
 def render_tab_forecast() -> None:

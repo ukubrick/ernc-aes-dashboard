@@ -117,7 +117,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="eolica_grafico_gen")
 
 
 def _grafico_viento(df_meteo: pd.DataFrame) -> None:
@@ -171,7 +171,7 @@ def _grafico_viento(df_meteo: pd.DataFrame) -> None:
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="eolica_grafico_viento")
 
 
 def render_tab_eolica(
