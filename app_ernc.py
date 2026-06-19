@@ -344,7 +344,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
             f"width:48px;height:48px;border-radius:14px;"
             f"background:linear-gradient(135deg,{AES_CYAN} 0%,{AES_AZUL} 100%);"
             f"margin-bottom:10px;box-shadow:0 4px 16px rgba(77,200,220,0.40)'>"
-            f"<span style='font-size:22px;color:white;font-weight:800;line-height:1'>⚡</span>"
+            f"<span style='font-size:16px;color:white;font-weight:800;line-height:1;letter-spacing:-1px'>AES</span>"
             f"</div>"
             f"<div style='font-size:17px;font-weight:800;color:white;letter-spacing:-0.3px'>AES Andes ERNC</div>"
             f"<div style='font-size:11px;color:rgba(255,255,255,0.50);margin-top:3px'>"
