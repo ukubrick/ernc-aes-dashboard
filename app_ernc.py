@@ -11,6 +11,7 @@ load_dotenv()
 
 # ── Paleta AES ────────────────────────────────────────────────────────────────
 AES_AZUL    = "#3B4CE8"
+AES_AZUL_OSC = "#2530B0"
 AES_CYAN    = "#4DC8DC"
 AES_VIOLETA = "#9B6FD4"
 AES_VERDE   = "#5AB848"
@@ -44,54 +45,56 @@ st.markdown(
     }}
     .block-container {{ padding-top: 1.2rem; padding-bottom: 1rem; max-width: 1400px; }}
 
-    /* Sidebar */
+    /* Sidebar — fondo oscuro AES con gradiente */
     [data-testid="stSidebar"] {{
-        background-color: {AES_BLANCO};
-        border-right: 1px solid {AES_BORDE};
+        background: linear-gradient(180deg, {AES_AZUL_OSC} 0%, #1a1f5e 100%);
+        border-right: none;
     }}
-    [data-testid="stSidebar"] * {{ color: {AES_TEXTO} !important; }}
-    [data-testid="stSidebar"] hr {{ border-color: {AES_BORDE}; }}
+    [data-testid="stSidebar"] * {{ color: rgba(255,255,255,0.90) !important; }}
+    [data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.15) !important; }}
 
     /* Botones sidebar parques */
     [data-testid="stSidebar"] .stButton button {{
-        background: {AES_GRIS};
-        border: 1px solid {AES_BORDE};
-        color: {AES_TEXTO};
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.15);
+        color: rgba(255,255,255,0.85) !important;
         font-size: 12px;
         text-align: left;
-        border-radius: 6px;
-        padding: 6px 10px;
+        border-radius: 8px;
+        padding: 7px 12px;
         transition: all 0.15s;
     }}
     [data-testid="stSidebar"] .stButton button:hover {{
-        background: {AES_AZUL};
-        color: white;
-        border-color: {AES_AZUL};
+        background: rgba(77,200,220,0.30);
+        border-color: {AES_CYAN};
+        color: white !important;
     }}
     .btn-activo button {{
-        background: {AES_AZUL} !important;
-        color: white !important;
-        border-color: {AES_AZUL} !important;
-        font-weight: 600 !important;
+        background: {AES_CYAN} !important;
+        color: {AES_AZUL_OSC} !important;
+        border-color: {AES_CYAN} !important;
+        font-weight: 700 !important;
     }}
 
-    /* Métricas */
+    /* Métricas — borde izquierdo AES azul */
     [data-testid="metric-container"] {{
         background: {AES_BLANCO};
         border-radius: 10px;
         padding: 14px 18px;
         border: 1px solid {AES_BORDE};
-        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        border-left: 4px solid {AES_AZUL};
+        box-shadow: 0 2px 8px rgba(59,76,232,0.10);
     }}
-    [data-testid="stMetricLabel"] {{ font-size: 11px; color: {AES_MUTED}; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }}
+    [data-testid="stMetricLabel"] {{ font-size: 11px; color: {AES_MUTED}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; }}
     [data-testid="stMetricValue"] {{ font-size: 22px; color: {AES_TEXTO}; font-weight: 700; }}
     [data-testid="stMetricDelta"] {{ font-size: 12px; }}
 
-    /* Tabs */
+    /* Tabs — barra superior coloreada */
     .stTabs [data-baseweb="tab-list"] {{
         background: {AES_BLANCO};
-        border-bottom: 2px solid {AES_BORDE};
-        gap: 4px;
+        border-bottom: 3px solid {AES_AZUL};
+        gap: 2px;
+        padding: 0 4px;
     }}
     .stTabs [data-baseweb="tab"] {{
         background: transparent;
@@ -99,13 +102,18 @@ st.markdown(
         color: {AES_MUTED};
         font-weight: 500;
         font-size: 13px;
-        padding: 8px 16px;
+        padding: 9px 18px;
+        transition: all 0.15s;
+    }}
+    .stTabs [data-baseweb="tab"]:hover {{
+        background: rgba(59,76,232,0.06);
+        color: {AES_AZUL};
     }}
     .stTabs [aria-selected="true"] {{
-        background: transparent;
-        color: {AES_AZUL};
-        border-bottom: 2px solid {AES_AZUL};
-        font-weight: 600;
+        background: {AES_AZUL} !important;
+        color: white !important;
+        font-weight: 700;
+        border-radius: 6px 6px 0 0;
     }}
 
     /* Cards */
@@ -114,7 +122,7 @@ st.markdown(
         border-radius: 10px;
         padding: 16px 20px;
         border: 1px solid {AES_BORDE};
-        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
         margin-bottom: 12px;
     }}
 
@@ -160,6 +168,7 @@ from utils.db import (
     query_cmg_ultimo,
     query_limitaciones_activas,
     query_ultima_hora_gen,
+    query_ultimas_actualizaciones,
 )
 from components.kpis_generales import render_kpis
 from components.mapa_ernc import render_mapa
@@ -179,7 +188,8 @@ def cargar_datos():
     cmg_rows    = query_cmg_ultimo()
     lim_rows    = query_limitaciones_activas()
     ultima_hora = query_ultima_hora_gen()
-    return gen_rows, prog_rows, cmg_rows, lim_rows, ultima_hora
+    actualizaciones = query_ultimas_actualizaciones()
+    return gen_rows, prog_rows, cmg_rows, lim_rows, ultima_hora, actualizaciones
 
 
 def ultima_gen_por_parque(gen_rows: list[dict]) -> dict[str, float | None]:
@@ -217,7 +227,17 @@ def cmg_crucero(cmg_rows: list[dict]) -> float | None:
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 
-def render_sidebar(gen_por_parque: dict[str, float | None]) -> str:
+def _fmt_hora(ts: str | None) -> str:
+    """Formatea timestamp 'YYYY-MM-DD HH:MM:SS' como 'DD/MM HH:MM'."""
+    if not ts:
+        return "—"
+    try:
+        return ts[8:10] + "/" + ts[5:7] + " " + ts[11:16]
+    except Exception:
+        return "—"
+
+
+def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dict | None = None) -> str:
     parque_activo = st.session_state.get("parque_activo", PARQUES_SOLAR[0])
 
     with st.sidebar:
@@ -305,6 +325,43 @@ def render_sidebar(gen_por_parque: dict[str, float | None]) -> str:
         if st.button("Generar reporte PDF", use_container_width=True, key="btn_pdf"):
             st.session_state["generar_pdf"] = True
 
+        # Fuentes de datos
+        act = actualizaciones or {}
+        st.markdown(
+            f"<div style='margin-top:18px;padding:12px 14px;background:rgba(255,255,255,0.07);"
+            f"border-radius:8px;border:1px solid rgba(255,255,255,0.12)'>"
+            f"<div style='font-size:10px;font-weight:700;color:{AES_CYAN};text-transform:uppercase;"
+            f"letter-spacing:1px;margin-bottom:10px'>Fuentes de datos</div>"
+            f"<div style='font-size:11px;color:rgba(255,255,255,0.75);line-height:2'>"
+            f"<div style='display:flex;justify-content:space-between'>"
+            f"<span>Gen. real CEN</span>"
+            f"<span style='color:rgba(255,255,255,0.55)'>{_fmt_hora(act.get('gen_real'))}</span></div>"
+            f"<div style='display:flex;justify-content:space-between'>"
+            f"<span>PCP programada</span>"
+            f"<span style='color:rgba(255,255,255,0.55)'>{_fmt_hora(act.get('gen_prog'))}</span></div>"
+            f"<div style='display:flex;justify-content:space-between'>"
+            f"<span>Meteo Open-Meteo</span>"
+            f"<span style='color:rgba(255,255,255,0.55)'>{_fmt_hora(act.get('meteo'))}</span></div>"
+            f"<div style='display:flex;justify-content:space-between'>"
+            f"<span>CMG CEN S3</span>"
+            f"<span style='color:rgba(255,255,255,0.55)'>{_fmt_hora(act.get('cmg'))}</span></div>"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+
+        # Firma
+        st.markdown(
+            f"<div style='margin-top:20px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.12);"
+            f"text-align:center'>"
+            f"<div style='font-size:10px;color:rgba(255,255,255,0.40);line-height:1.6'>"
+            f"Dashboard creado por</div>"
+            f"<div style='font-size:12px;font-weight:600;color:rgba(255,255,255,0.70)'>"
+            f"Erick Herrera</div>"
+            f"<div style='font-size:10px;color:rgba(255,255,255,0.35)'>AES Andes · {AES_CYAN[1:]}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     return st.session_state.get("parque_activo", PARQUES_SOLAR[0])
 
 
@@ -313,7 +370,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None]) -> str:
 def main():
     with st.spinner("Cargando datos..."):
         try:
-            gen_rows, prog_rows, cmg_rows, lim_rows, ultima_hora = cargar_datos()
+            gen_rows, prog_rows, cmg_rows, lim_rows, ultima_hora, actualizaciones = cargar_datos()
         except Exception as e:
             st.error(f"Error al conectar con Supabase: {e}")
             st.stop()
@@ -343,7 +400,7 @@ def main():
             st.session_state["pdf_bytes"] = pdf_bytes
         st.rerun()
 
-    parque_activo = render_sidebar(gen_por_parque)
+    parque_activo = render_sidebar(gen_por_parque, actualizaciones)
 
     # Header
     hora_label = ultima_hora[11:16] if ultima_hora else "—"
