@@ -340,13 +340,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
         # Header premium
         st.markdown(
             f"<div style='padding:16px 4px 12px;text-align:center'>"
-            f"<div style='display:inline-flex;align-items:center;justify-content:center;"
-            f"width:48px;height:48px;border-radius:14px;"
-            f"background:linear-gradient(135deg,{AES_CYAN} 0%,{AES_AZUL} 100%);"
-            f"margin-bottom:10px;box-shadow:0 4px 16px rgba(77,200,220,0.40)'>"
-            f"<span style='font-size:16px;color:white;font-weight:800;line-height:1;letter-spacing:-1px'>AES</span>"
-            f"</div>"
-            f"<div style='font-size:17px;font-weight:800;color:white;letter-spacing:-0.3px'>AES Andes ERNC</div>"
+            f"<div style='font-size:22px;font-weight:800;color:white;letter-spacing:-0.5px'>AES Andes ERNC</div>"
             f"<div style='font-size:11px;color:rgba(255,255,255,0.50);margin-top:3px'>"
             f"11 parques · ~1.824 MW instalados</div>"
             f"</div>",
@@ -510,7 +504,7 @@ def main():
     hora_label = ultima_hora[11:16] if ultima_hora else "—"
     st.markdown(
         f"<div style='display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px'>"
-        f"<h1 style='font-size:22px;font-weight:700;color:{AES_TEXTO};margin:0'>"
+        f"<h1 style='font-size:30px;font-weight:800;color:{AES_TEXTO};margin:0;letter-spacing:-0.5px'>"
         f"Dashboard ERNC — AES Andes</h1>"
         f"<span style='font-size:12px;color:{AES_MUTED}'>Ultima lectura: <b>{hora_label} hrs</b></span>"
         f"</div>",
