@@ -110,7 +110,7 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="solar_grafico_gen")
 
 
 def _grafico_ghi(df_meteo: pd.DataFrame) -> None:
@@ -152,7 +152,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame) -> None:
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="solar_grafico_ghi")
 
 
 def render_tab_solar(

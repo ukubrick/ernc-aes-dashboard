@@ -479,7 +479,7 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows):
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="mapa_grafico_tendencia")
 
 
 # ── Tab CMG ────────────────────────────────────────────────────────────────────
@@ -575,7 +575,7 @@ def _render_tab_cmg(cmg_rows):
             )
             fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
             fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="cmg_grafico_historico")
         else:
             st.info("Sin historico CMG en las ultimas 48 horas.")
     except Exception as e:
