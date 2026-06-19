@@ -199,6 +199,34 @@ def query_ultima_hora_gen() -> str | None:
     return None
 
 
+def query_ultimas_actualizaciones() -> dict[str, str | None]:
+    """Devuelve el timestamp más reciente de cada fuente de datos para el sidebar."""
+    sb = get_client()
+    resultado: dict[str, str | None] = {
+        "gen_real": None,
+        "gen_prog": None,
+        "meteo": None,
+        "cmg": None,
+    }
+    try:
+        r = sb.table("generacion_real_ernc").select("fecha_hora").order("fecha_hora", desc=True).limit(1).execute()
+        if r.data: resultado["gen_real"] = r.data[0]["fecha_hora"]
+    except Exception: pass
+    try:
+        r = sb.table("generacion_programada_ernc").select("fecha_hora").order("fecha_hora", desc=True).limit(1).execute()
+        if r.data: resultado["gen_prog"] = r.data[0]["fecha_hora"]
+    except Exception: pass
+    try:
+        r = sb.table("meteo_ernc").select("fecha_hora").order("fecha_hora", desc=True).limit(1).execute()
+        if r.data: resultado["meteo"] = r.data[0]["fecha_hora"]
+    except Exception: pass
+    try:
+        r = sb.table("cmg_ernc").select("fecha_hora").order("fecha_hora", desc=True).limit(1).execute()
+        if r.data: resultado["cmg"] = r.data[0]["fecha_hora"]
+    except Exception: pass
+    return resultado
+
+
 def query_cmg_ultimo() -> list[dict]:
     sb = get_client()
     # Trae el último registro de CMG por nodo (ordenado desc, 8 nodos máx)
