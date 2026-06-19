@@ -26,6 +26,7 @@ def render_kpis(
     cmg_crucero: float | None,
     n_limitaciones_activas: int,
     ultima_hora: str | None,
+    cmg_rows: list | None = None,
 ) -> None:
     gen_total  = sum(v for v in gen_por_parque.values() if v is not None)
     gen_solar  = sum(gen_por_parque.get(p) or 0 for p in PARQUES_SOLAR)
@@ -38,9 +39,14 @@ def render_kpis(
     desvio     = calcular_desvio(gen_total, prog_total)
     semaforo   = desvio["semaforo"]
     desvio_pct = desvio["desvio_pct"]
-    ingreso    = round(gen_total * (cmg_crucero or 0) / 1000, 1) if cmg_crucero else None
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    # CMG por nodo desde cmg_rows
+    cmg_idx = {r["nodo"]: r.get("cmg_usd_mwh") for r in (cmg_rows or [])}
+    cmg_charrua = cmg_idx.get("CHARRUA_______220")
+    ingreso_solar  = round(gen_solar  * (cmg_crucero or 0) / 1000, 1) if cmg_crucero else None
+    ingreso_eolica = round(gen_eolica * (cmg_charrua or 0) / 1000, 1) if cmg_charrua else None
+
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
 
     with c1:
         st.metric(
@@ -107,17 +113,28 @@ def render_kpis(
         st.metric(
             label="CMG Crucero 220",
             value=f"{cmg_crucero:.1f} USD/MWh" if cmg_crucero else "—",
-            delta=f"~{ingreso:.0f} kUSD/h" if ingreso else None,
+            delta=f"~{ingreso_solar:.0f} kUSD/h solar" if ingreso_solar else None,
             help=(
-                "Costo Marginal Local del nodo CRUCERO_______220 (referencia parques solares norte). "
-                "Ingreso estimado = Gen.total x CMG / 1000 (kUSD/hora). "
-                "Fuente: JSON S3 Coordinador Electrico Nacional, actualiza cada ~15 min. "
-                "URL: cen-template-graph-pweb-prod.s3.us-east-1.amazonaws.com"
+                "Costo Marginal Local nodo CRUCERO_______220 — referencia parques solares norte. "
+                "Ingreso estimado solar = Gen.solar x CMG / 1000 (kUSD/hora). "
+                "Fuente: JSON S3 Coordinador Electrico Nacional, actualiza cada ~15 min."
             ),
         )
 
     with c6:
-        lim_color = AES_ROJO if n_limitaciones_activas > 0 else AES_VERDE
+        st.metric(
+            label="CMG Charrua 220",
+            value=f"{cmg_charrua:.1f} USD/MWh" if cmg_charrua else "—",
+            delta=f"~{ingreso_eolica:.0f} kUSD/h eolica" if ingreso_eolica else None,
+            help=(
+                "Costo Marginal Local nodo CHARRUA_______220 — referencia parques eolicos sur. "
+                "Ingreso estimado eolica = Gen.eolica x CMG / 1000 (kUSD/hora). "
+                "Pendiente confirmar nodo correcto con AES Andes. "
+                "Fuente: JSON S3 Coordinador Electrico Nacional."
+            ),
+        )
+
+    with c7:
         lim_delta = "activas" if n_limitaciones_activas > 0 else "sin restricciones"
         st.metric(
             label="Limitaciones",
@@ -127,7 +144,6 @@ def render_kpis(
             help=(
                 "Limitaciones de transmision activas que afectan al portfolio. "
                 "Activa = fecha_efectiva_retorno IS NULL. "
-                "Fuente: CEN limitaciones-transmision/v4, ventana 30 dias. "
-                "Campo correlativo llega como float, se castea a int."
+                "Fuente: CEN limitaciones-transmision/v4, ventana 30 dias."
             ),
         )

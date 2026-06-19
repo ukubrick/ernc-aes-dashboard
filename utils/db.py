@@ -138,11 +138,13 @@ def query_gen_real_ultimas_horas(horas: int = 48) -> list[dict]:
 def query_gen_prog_ultimas_horas(horas: int = 48) -> list[dict]:
     from datetime import timedelta
     sb = get_client()
-    desde = (_ahora_santiago() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+    # PCP puede venir en hora UTC (servidor GitHub Actions) — ampliar ventana en 6h para cubrir desfase
+    desde = (_ahora_santiago() - timedelta(hours=horas + 6)).strftime("%Y-%m-%d %H:%M:%S")
     res = (sb.table("generacion_programada_ernc")
              .select("parque,fecha_hora,gen_programada_mw,capacidad_disponible_mw,costo_generacion_usd,fuente")
              .gte("fecha_hora", desde)
              .order("fecha_hora", desc=True)
+             .limit(1000)
              .execute())
     return res.data or []
 
