@@ -1,7 +1,7 @@
 # CLAUDE.md — Dashboard ERNC AES Andes
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-06-19 (Sesión 8 — bugs producción resueltos).
+> Última actualización: 2026-06-19 (Sesión 9 — mejoras visuales, forecast eólica, PCP en forecast, sidebar fuentes de datos).
 
 ---
 
@@ -28,17 +28,18 @@ Dashboard operacional para **11 parques de energías renovables (ERNC) de AES An
 ## PALETA DE COLORES AES (aplicada en todo el proyecto)
 
 ```python
-AES_AZUL    = "#3B4CE8"   # azul primario AES — Solar FV
-AES_CYAN    = "#4DC8DC"   # cyan — Eólica
-AES_VIOLETA = "#9B6FD4"   # violeta — modelo estimado
-AES_VERDE   = "#5AB848"   # verde — positivo / OK
-AES_AMBAR   = "#F59E0B"   # ambar — PCP programada / alerta
-AES_ROJO    = "#EF4444"   # rojo — crítico
-AES_GRIS    = "#F5F7FA"   # fondo general (tema claro)
-AES_TEXTO   = "#1A1F36"   # texto principal
-AES_MUTED   = "#6B7280"   # texto secundario
-AES_BORDE   = "#E5E7EB"   # bordes / separadores
-AES_BLANCO  = "#FFFFFF"   # fondo cards
+AES_AZUL     = "#3B4CE8"   # azul primario AES — Solar FV, acción principal
+AES_AZUL_OSC = "#2530B0"   # azul oscuro — base sidebar
+AES_CYAN     = "#4DC8DC"   # cyan — Eólica, acentos sidebar
+AES_VIOLETA  = "#9B6FD4"   # violeta — CMG, datos secundarios
+AES_VERDE    = "#5AB848"   # verde — positivo / OK
+AES_AMBAR    = "#F59E0B"   # ambar — PCP programada / alerta
+AES_ROJO     = "#EF4444"   # rojo — crítico / limitaciones
+AES_GRIS     = "#F5F7FA"   # fondo general (tema claro) — NUNCA blanco puro como fondo
+AES_TEXTO    = "#1A1F36"   # texto principal (azul muy oscuro, no negro puro)
+AES_MUTED    = "#6B7280"   # texto secundario
+AES_BORDE    = "#E5E7EB"   # bordes / separadores
+AES_BLANCO   = "#FFFFFF"   # fondo de cards
 ```
 
 ---
@@ -376,7 +377,8 @@ Implementar en `utils/calculos.py`:
 | **5 — Tabs Solar y Eólica** | ✅ COMPLETA | `components/tab_solar.py`, `components/tab_eolica.py` (detalle_parque integrado en cada tab) |
 | **6 — Forecast e Insights** | ✅ COMPLETA | `components/tab_forecast.py`, `utils/insights.py`, `components/tab_insights.py` |
 | **7 — PDF y Deploy** | ✅ COMPLETA | `utils/pdf_report.py`, `.streamlit/config.toml`, deploy Streamlit Cloud, `db.py` soporta st.secrets |
-| **8 — Bugs producción** | ✅ COMPLETA | 3 bugs resueltos (ver sección BUGS CONOCIDOS Y RESUELTOS) |
+| **8 — Bugs producción** | ✅ COMPLETA | StreamlitDuplicateElementId, timezone UTC vs Santiago, RLS sin políticas anon, key rotado |
+| **9 — Mejoras visuales + fixes** | ✅ COMPLETA | Ver sección SESIÓN 9 |
 
 ---
 
@@ -507,19 +509,174 @@ texture = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
 ---
 
-## REDISEÑO VISUAL AES (2026-06-19)
+## SISTEMA DE DISEÑO VISUAL (actualizado Sesión 9)
 
-Cambios aplicados sobre la v1 original (dark theme, mapa 3D):
+El diseño del dashboard está documentado aquí como referencia para replicar en otros dashboards (ej. CTM).
 
-1. **Tema claro** — fondo `#F5F7FA`, cards `#FFFFFF`, bordes `#E5E7EB`. `config.toml` con `base="light"`.
-2. **Paleta AES** — azul/cyan/violeta/verde según guía visual AES Andes.
-3. **Mapa 2D Carto Positron** — reemplazó TerrainLayer+ColumnLayer. ScatterplotLayer con halos de área, opacidad proporcional a FP, tooltip profesional sin emojis.
-4. **Sidebar navegación** — botones usan `st.session_state["parque_activo"]` + `st.rerun()`. `render_tab_solar()` y `render_tab_eolica()` reciben `parque_activo` y preseleccionan el selectbox.
-5. **Sin emojis** — reemplazados por texto y tipografía en todos los componentes.
-6. **Tooltips `help=`** — en todas las métricas: fórmula exacta, fuente, frecuencia de actualización.
-7. **Forecast vacío** — mensaje naranja claro con instrucciones cuando no hay `es_forecast=True` en DB.
-8. **Coordenadas exactas** — todas las 11 confirmadas por Erick (ver tabla PARQUES).
-9. **f-strings con dict** — NO usar backslash dentro del f-string (error Python < 3.12). Extraer a variable antes.
+### Principios generales
+- **Fondo**: `#F5F7FA` (gris muy suave), **nunca blanco puro como fondo de página**
+- **Cards**: siempre `#FFFFFF` con `border-radius: 10-12px`
+- **Sin emojis** en ningún componente
+- **Sin comentarios** de "qué hace" en el código — solo comentarios del WHY
+- Todo `st.plotly_chart()` lleva `key=` único explícito
+- Timezone siempre `America/Santiago` (UTC-3), nunca `timezone.utc`
+- **f-strings**: NO usar backslash dentro del f-string (error Python < 3.12) — extraer a variable antes
+- **Fuente**: Inter (Google Fonts), pesos 400/500/600/700/800
+
+### Sidebar
+```css
+/* Gradiente de 3 tonos azul muy oscuro */
+background: linear-gradient(160deg, #2530B0 0%, #111540 60%, #0d1035 100%);
+box-shadow: 4px 0 20px rgba(0,0,0,0.25);
+
+/* Título empresa */
+font-size: 22px; font-weight: 800; color: white; letter-spacing: -0.5px;
+
+/* Etiquetas de sección (SOLAR FV / EÓLICA) */
+font-size: 10px; font-weight: 700; color: #4DC8DC;
+text-transform: uppercase; letter-spacing: 1.2px;
+
+/* Botón normal */
+background: rgba(255,255,255,0.06);
+border: 1px solid rgba(255,255,255,0.12);
+border-radius: 8px; transition: all 0.20s cubic-bezier(0.4,0,0.2,1);
+
+/* Botón hover */
+background: rgba(77,200,220,0.22); border-color: #4DC8DC;
+transform: translateX(3px);
+
+/* Botón activo */
+background: linear-gradient(90deg, #4DC8DC 0%, #38b5cc 100%);
+color: #2530B0; font-weight: 700;
+box-shadow: 0 4px 12px rgba(77,200,220,0.40);
+```
+
+### KPI cards (métricas Streamlit)
+```css
+background: #FFFFFF; border-radius: 12px;
+border: 1px solid #E5E7EB;
+border-top: 4px solid [color por posición];   /* diferenciador visual principal */
+box-shadow: 0 2px 12px rgba(59,76,232,0.08);
+transition: transform 0.20s ease, box-shadow 0.20s ease;
+
+/* Hover lift */
+transform: translateY(-3px);
+box-shadow: 0 8px 24px rgba(59,76,232,0.15);
+
+/* Color borde-top por posición (7 KPIs) */
+1º Gen Total    → #3B4CE8  azul
+2º Solar FV     → #3B4CE8  azul
+3º Eólica       → #4DC8DC  cyan
+4º Desvío PCP   → #F59E0B  ámbar
+5º CMG Crucero  → #9B6FD4  violeta
+6º CMG Charrua  → #4DC8DC  cyan
+7º Limitaciones → #EF4444  rojo
+
+/* Tipografía interna */
+Label:  10px, 700, uppercase, letter-spacing 0.8px, color #6B7280
+Valor:  22px, 800, color #1A1F36
+Delta:  12px, 600
+```
+
+### Tabs
+```css
+/* Barra contenedora */
+background: #FFFFFF; border-bottom: 3px solid #3B4CE8;
+border-radius: 8px 8px 0 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+
+/* Tab inactiva */
+color: #6B7280; font-size: 13px; font-weight: 500; padding: 9px 18px;
+transition: all 0.20s cubic-bezier(0.4,0,0.2,1);
+
+/* Tab activa */
+background: linear-gradient(135deg, #3B4CE8 0%, #2530B0 100%);
+color: white; font-weight: 700;
+box-shadow: 0 -2px 10px rgba(59,76,232,0.30);
+
+/* Contenido del tab */
+animation: fadeInUp 0.35s ease both;
+```
+
+### Gráficos Plotly
+```python
+# Configuración estándar en update_layout
+fig.update_layout(
+    template="plotly_white",
+    paper_bgcolor="#FFFFFF",
+    plot_bgcolor="#F5F7FA",
+    transition=dict(duration=500, easing="cubic-in-out"),  # animación entre datos
+)
+
+# Colores de trazas por tipo
+Solar FV estimada    → #3B4CE8  (fill tozeroy rgba(59,76,232,0.10))
+Eólica estimada      → #4DC8DC  (fill tozeroy rgba(77,200,220,0.12))
+PCP programada       → #F59E0B  (línea dash, sin fill)
+Gen real             → color primario de tecnología
+Viento / GHI         → #6B7280  (dot, eje secundario y2)
+```
+```css
+/* Wrapper CSS del gráfico */
+border-radius: 12px; overflow: hidden;
+box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+animation: fadeInUp 0.5s ease both;
+transition: box-shadow 0.2s ease;
+/* Hover */
+box-shadow: 0 6px 20px rgba(59,76,232,0.12);
+```
+
+### Animaciones CSS (keyframes definidos en app_ernc.py)
+```css
+fadeInUp:     opacity 0→1, translateY 16px→0  — página, gráficos, tablas, cards
+fadeInLeft:   opacity 0→1, translateX -12px→0 — cards de insights (escalonado)
+pulse-border: box-shadow pulsante rojo         — insight crítico
+dot-pulse:    scale 1→1.5→1                   — punto indicador en crítico
+```
+- Delay escalonado en insights: `animation-delay: idx * 0.06s`
+- KPI cards con delay: `nth-child(n) { animation-delay: n*0.05s }`
+
+### Cards de insights
+```css
+critico:  bg #FEF2F2, borde-izq #EF4444, badge rgba(239,68,68,0.12)
+alerta:   bg #FFFBEB, borde-izq #F59E0B, badge rgba(245,158,11,0.12)
+positivo: bg #F0FDF4, borde-izq #5AB848, badge rgba(90,184,72,0.10)
+info:     bg #EFF6FF, borde-izq #3B4CE8, badge rgba(59,76,232,0.10)
+border-radius: 0 10px 10px 0;  /* solo esquinas derechas redondeadas */
+```
+
+### Mapa pydeck
+```css
+border-radius: 14px; overflow: hidden;
+box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+animation: fadeInUp 0.6s ease both;
+```
+- Estilo mapa: Carto Positron (light), NO Dark Matter
+- Vista Chile completo: lat=-33.5, lon=-70.8, zoom=4.6
+- Vista por parque: zoom=8.5, centrado en coordenadas del parque
+
+### Tipografía
+```
+Título principal:  30px, 800, letter-spacing -0.5px, color #1A1F36
+Subtítulos:        13px, 600, color #1A1F36
+Texto secundario:  11-12px, 400/500, color #6B7280
+Labels uppercase:  10-11px, 700, letter-spacing 0.8-1.2px
+```
+
+### Sidebar — sección fuentes de datos
+Al final del sidebar, antes de la firma:
+- Bloque con `background: rgba(255,255,255,0.07)`, borde sutil
+- Título "FUENTES DE DATOS" en cyan 10px uppercase
+- 4 filas: Gen. real CEN / PCP programada / Meteo Open-Meteo / CMG CEN S3
+- Hora en formato `DD/MM HH:MM` — función `_fmt_hora(ts)` en `app_ernc.py`
+- Query: `utils/db.query_ultimas_actualizaciones()` — devuelve dict con keys `gen_real`, `gen_prog`, `meteo`, `cmg`
+
+### Firma al pie del sidebar
+```html
+<div style='border-top:1px solid rgba(255,255,255,0.12); text-align:center'>
+  Dashboard creado por
+  <b>Erick Herrera</b>
+  AES Andes
+</div>
+```
 
 ---
 
@@ -591,11 +748,41 @@ streamlit run app_ernc.py
 
 ---
 
+## SESIÓN 9 — MEJORAS VISUALES Y FIXES (2026-06-19)
+
+### Fixes
+1. **Forecast eólica = 0**: `openmeteo_api.py` nunca llamaba a `calcular_potencia_eolica_estimada()` en el bloque eólico. Fix: agregar llamada con `(v100m, rho, pmax)` al final del bloque `else`. Requiere re-ejecutar el workflow para repoblar `p_eolica_estimada_mw` en DB.
+
+2. **PCP en forecast**: nueva función `_cargar_pcp_forecast()` en `tab_forecast.py` que carga `generacion_programada_ernc` desde ahora hasta `+2 días`. Se muestra como línea amber dash en gráfico portfolio y por parque. No requiere datos adicionales — usa tabla ya existente.
+
+### Nuevas funcionalidades
+3. **Sidebar — fuentes de datos**: nueva función `query_ultimas_actualizaciones()` en `utils/db.py` que consulta el `MAX(fecha_hora)` de las 4 tablas principales. Se muestra en el sidebar con hora en formato `DD/MM HH:MM`.
+
+4. **Sidebar — firma**: "Dashboard creado por Erick Herrera" al pie, con separador y estilo sutil.
+
+5. **Pestaña Estadísticas** (`components/tab_estadisticas.py`): MWh acumulado, FP ranking, desvío vs PCP, ingreso USD estimado.
+
+6. **Mapa auto-center**: `render_mapa(gen_por_parque, parque_activo)` centra en el parque seleccionado desde sidebar (zoom 8.5 vs 4.6 en vista general Chile).
+
+7. **KPIs duales CMG**: 7 columnas — CRUCERO 220 (solar norte) + CHARRUA 220 (eólica sur), ingreso separado por tecnología.
+
+### Rediseño visual completo
+- Sidebar con gradiente oscuro AES, botones con efecto hover translateX, activo en cyan
+- KPI cards con borde-top de color diferente por tipo, hover lift
+- Tabs con gradiente azul en activa, fadeInUp en contenido
+- Gráficos con `transition 500ms`, border-radius, shadow y hover glow
+- Insights con fadeInLeft escalonado, dot-pulse en críticos, badge coloreado
+- Título principal agrandado a 30px/800
+- Título sidebar "AES Andes ERNC" a 22px/800, sin ícono
+
+---
+
 ## PENDIENTES
 
 - [ ] Confirmar nodo CMG correcto para eólicos sur (CHARRUA_______220 vs otro)
 - [ ] Agregar logo AES Andes en sidebar cuando esté disponible (assets/logo_aes.png)
 - [ ] `st.segmented_control` requiere Streamlit >= 1.38 — verificar versión en Streamlit Cloud
+- [ ] Correr workflow manual para repoblar `p_eolica_estimada_mw` en `meteo_ernc` (fix sesión 9)
 
-*Generado 2026-06-19 — Sesiones 1–8 + Rediseño AES + Deploy producción + Bugs resueltos.*
+*Generado 2026-06-19 — Sesiones 1–9 + Sistema de diseño AES documentado + Deploy producción.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*
