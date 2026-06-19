@@ -167,6 +167,7 @@ from components.tab_solar import render_tab_solar
 from components.tab_eolica import render_tab_eolica
 from components.tab_forecast import render_tab_forecast
 from components.tab_insights import render_tab_insights
+from components.tab_estadisticas import render_tab_estadisticas
 
 
 # ── Carga de datos ─────────────────────────────────────────────────────────────
@@ -361,20 +362,20 @@ def main():
         cmg_crucero=cmg_val,
         n_limitaciones_activas=n_lim,
         ultima_hora=ultima_hora,
+        cmg_rows=cmg_rows,
     )
 
     st.divider()
 
     st.session_state.pop("tab_forzado", None)
-    tab_labels = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d", "Insights", "CMG", "Limitaciones"]
+    tab_labels = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d", "Estadisticas", "Insights", "CMG", "Limitaciones"]
 
-    tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_insights, tab_cmg, tab_limitaciones = st.tabs(tab_labels)
+    tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(tab_labels)
 
-    # Mostrar detalle del parque activo si viene desde sidebar
     parque_tec = TECNOLOGIA.get(parque_activo, "Solar")
 
     with tab_resumen:
-        _render_tab_resumen(gen_por_parque, gen_rows, prog_rows)
+        _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo)
 
     with tab_solar:
         render_tab_solar(gen_por_parque, prog_por_parque, gen_rows, prog_rows, parque_activo if parque_tec == "Solar" else None)
@@ -384,6 +385,9 @@ def main():
 
     with tab_forecast:
         render_tab_forecast()
+
+    with tab_stats:
+        render_tab_estadisticas(gen_rows=gen_rows, prog_rows=prog_rows, cmg_rows=cmg_rows)
 
     with tab_insights:
         render_tab_insights(
@@ -402,7 +406,7 @@ def main():
 
 # ── Tab Resumen ───────────────────────────────────────────────────────────────
 
-def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows):
+def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None):
     import plotly.graph_objects as go
     import pandas as pd
 
@@ -414,7 +418,7 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows):
             f"Generacion actual por parque</div>",
             unsafe_allow_html=True,
         )
-        render_mapa(gen_por_parque)
+        render_mapa(gen_por_parque, parque_activo=parque_activo)
 
     with col_tabla:
         st.markdown(

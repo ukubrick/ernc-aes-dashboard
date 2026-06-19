@@ -13,6 +13,33 @@ _COLOR = {
 
 MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 
+# Bounds de Chile continental (lon_min, lat_min, lon_max, lat_max)
+# Excluye Isla de Pascua y territorio antártico
+_CHILE_BOUNDS = {
+    "lat_min": -55.9,
+    "lat_max": -17.5,
+    "lon_min": -75.7,
+    "lon_max": -66.0,
+}
+
+# Vista por defecto: Chile completo mostrando todos los parques
+_VIEW_DEFAULT = pdk.ViewState(
+    latitude=-33.5,
+    longitude=-70.8,
+    zoom=4.6,
+    pitch=0,
+    bearing=0,
+)
+
+# Vista por parque: zoom centrado al seleccionar desde sidebar
+_VIEW_PARQUE = {p: pdk.ViewState(
+    latitude=COORDENADAS[p]["lat"],
+    longitude=COORDENADAS[p]["lon"],
+    zoom=8.5,
+    pitch=0,
+    bearing=0,
+) for p in PARQUES_TODOS}
+
 
 def _df(gen_por_parque: dict[str, float | None]) -> pd.DataFrame:
     filas = []
@@ -23,7 +50,6 @@ def _df(gen_por_parque: dict[str, float | None]) -> pd.DataFrame:
         fp    = round(gen / pmax * 100, 1) if pmax > 0 else 0.0
         tec   = TECNOLOGIA[p]
         col   = _COLOR[tec]
-        # Radio proporcional a capacidad instalada (visual), min 35km
         radio = max(35000, pmax * 250)
         filas.append({
             "parque":     p,
@@ -35,17 +61,24 @@ def _df(gen_por_parque: dict[str, float | None]) -> pd.DataFrame:
             "factor_pct": fp,
             "tecnologia": tec,
             "r": col[0], "g": col[1], "b": col[2],
-            # Opacidad proporcional a generacion (min 80, max 230)
             "alpha": max(80, min(230, int(80 + fp * 1.5))) if fp > 0 else 60,
             "radio": radio,
         })
     return pd.DataFrame(filas)
 
 
-def render_mapa(gen_por_parque: dict[str, float | None]) -> None:
+def render_mapa(
+    gen_por_parque: dict[str, float | None],
+    parque_activo: str | None = None,
+) -> None:
     df = _df(gen_por_parque)
 
-    # Capa de halo exterior (area de influencia visual)
+    # Vista: zoom al parque activo si viene del sidebar, sino Chile completo
+    if parque_activo and parque_activo in _VIEW_PARQUE:
+        view = _VIEW_PARQUE[parque_activo]
+    else:
+        view = _VIEW_DEFAULT
+
     halo = pdk.Layer(
         "ScatterplotLayer",
         data=df,
@@ -56,7 +89,6 @@ def render_mapa(gen_por_parque: dict[str, float | None]) -> None:
         pickable=False,
     )
 
-    # Capa principal — circulo relleno con opacidad segun generacion
     circles = pdk.Layer(
         "ScatterplotLayer",
         data=df,
@@ -71,7 +103,6 @@ def render_mapa(gen_por_parque: dict[str, float | None]) -> None:
         highlight_color=[255, 255, 255, 120],
     )
 
-    # Etiquetas con nombre y MW
     labels = pdk.Layer(
         "TextLayer",
         data=df,
@@ -82,14 +113,6 @@ def render_mapa(gen_por_parque: dict[str, float | None]) -> None:
         get_alignment_baseline="'bottom'",
         get_pixel_offset=[0, -28],
         pickable=False,
-    )
-
-    view = pdk.ViewState(
-        latitude=-33.5,
-        longitude=-70.8,
-        zoom=4.6,
-        pitch=0,
-        bearing=0,
     )
 
     tooltip = {
@@ -128,6 +151,10 @@ def render_mapa(gen_por_parque: dict[str, float | None]) -> None:
         initial_view_state=view,
         tooltip=tooltip,
         map_style=MAP_STYLE,
+        views=[pdk.View(
+            type="MapView",
+            controller={"scrollZoom": True, "dragPan": True},
+        )],
     )
 
-    st.pydeck_chart(deck, use_container_width=True)
+    st.pydeck_chart(deck, use_container_width=True, key=f"mapa_ernc_{parque_activo or 'all'}")
