@@ -192,11 +192,12 @@ def fetch_gen_programada(start_date: str = None, end_date: str = None) -> list[d
                 "fuente":                   "CEN_PCP",
             })
 
-        total = data.get("total", len(items)) if isinstance(data, dict) else len(items)
-        if page * 5000 >= total:
+        # API v4 usa "totalPages" (no "total") — controlar paginación con eso
+        total_pages = data.get("totalPages", 1) if isinstance(data, dict) else 1
+        if page >= total_pages:
             break
         page += 1
-        print(f"[PCP] Página {page - 1} procesada — {len(registros)} registros acumulados")
+        print(f"[PCP] Página {page - 1}/{total_pages} procesada — {len(registros)} registros acumulados")
 
     return registros
 
