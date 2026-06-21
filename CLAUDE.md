@@ -1002,5 +1002,53 @@ con viento en m/s, nodos CMG nuevos y más histórico para los modelos ML.
 
 ---
 
-*Actualizado 2026-06-21 — Sesiones 1–14.*
+## SESIÓN 15 — INSIGHTS, MAPA, ESTADÍSTICAS, METEO/SISTEMA Y FIX ADQUISICIÓN (2026-06-21)
+
+### Fix crítico: paginación de limitaciones (mismo bug que PCP v4)
+`fetch_limitaciones` usaba `data.get("total", len(items))` y cortaba en la página 1 → solo
+aparecía 1 limitación. La API v4 publica `totalPages`, no `total`. Corregido en `utils/cen_api.py`
+con paginación robusta (totalPages → total → página incompleta) y page size 500. **Validado
+contra la API real: pasó de 1 → 4 limitaciones** (Campo Lindo, Los Olmos, Bolero, Mesamávida).
+Mismo patrón aplicado a `fetch_gen_real`. El matching de nombres ahora normaliza tildes.
+
+### Adquisición más confiable (`_get_with_retry`)
+Sesión HTTP reutilizable, reintenta en 429/5xx además de red, respeta `Retry-After`, backoff
+exponencial con jitter. **OJO PCP:** la query de 5 días del sistema completo puede degradarse en
+la API (se observó page 1 colgada >25 min). El cron se auto-corrige; evaluar bajar la ventana PCP
+a 1-2 días si reincide.
+
+### Insights nuevos (`utils/insights.py`)
+CMG negativo (vertimiento forzado, crítico), parque FV caído con buen GHI (ratio<25%, crítico),
+generación eólica baja con buen viento (curtailment/falla), y "sin telemetría reciente".
+
+### Botones de central clicables + reorden (puntos 4 y 5)
+Las tarjetas KPI de Solar/Eólica eran markdown con `cursor:pointer` falso → ahora son `st.button`
+reales que setean el selectbox (escribir la key antes de crear el widget + rerun). Reordenado:
+series de tiempo primero, leyenda + fórmulas al final.
+
+### Sidebar (punto 9)
+Bloque "Fuentes de datos" movido arriba (bajo el título) con semáforo de conexión palpitante
+(`pulse-green`/`pulse-red`) y estado global Conectado/Parcial/Sin conexión. Helper
+`_estado_fuente(ts, horas_max)`.
+
+### Estadísticas (punto 6)
+Donut de mix solar/eólica, área apilada por tecnología en el tiempo, heatmap de FP por hora del día.
+
+### Nueva pestaña Meteo & Sistema (`components/tab_meteo_sistema.py`)
+Alertas meteo anticipadas (forecast 48h), heatmaps de nubosidad y viento hub pronosticados, y
+contexto de mercado CMG nacional (spread Norte-Sur + ranking). Reutiliza `meteo_ernc`/`cmg_ernc` —
+sin tablas nuevas.
+
+### Mapa (`components/mapa_ernc.py`)
+Selector **Claro / Detallado** (Voyager) + ciudades de referencia. **Satélite descartado:** pydeck
+no renderiza TileLayer raster (necesita callback JS) y el map_style raster exige token Mapbox. El
+style ESRI quedó dormido por si se agrega un token gratuito a futuro.
+
+### Demanda CEN: NO disponible en el plan SIP
+Todas las variantes (`demanda-real`, `demanda`, v1-v5) dan 404. `costo-marginal-real/v4` existe
+pero publica con días de rezago y son ~260k páginas. No usable en tiempo real.
+
+---
+
+*Actualizado 2026-06-21 — Sesiones 1–15.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*

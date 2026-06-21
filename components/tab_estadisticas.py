@@ -176,6 +176,98 @@ def render_tab_estadisticas(
 
     st.divider()
 
+    # ── Mix energético + perfil horario ─────────────────────────────────────
+    df_gen["tec"] = df_gen["parque"].map(TECNOLOGIA)
+    col_mix, col_perfil = st.columns([1, 2])
+
+    with col_mix:
+        st.markdown(
+            f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:8px'>"
+            f"Mix de produccion (MWh)</div>",
+            unsafe_allow_html=True,
+        )
+        fig_mix = go.Figure(go.Pie(
+            labels=["Solar FV", "Eolica"],
+            values=[solar_mwh, eolica_mwh],
+            hole=0.58,
+            marker_colors=[AES_AZUL, AES_CYAN],
+            textinfo="percent",
+            hovertemplate="%{label}: %{value:,.0f} MWh (%{percent})<extra></extra>",
+        ))
+        fig_mix.update_layout(
+            template="plotly_white", paper_bgcolor=AES_BLANCO,
+            height=300, margin=dict(l=0, r=0, t=10, b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.1, x=0.5, xanchor="center"),
+            annotations=[dict(text=f"{total_mwh:,.0f}<br>MWh", x=0.5, y=0.5,
+                              font_size=15, showarrow=False, font_color=AES_TEXTO)],
+        )
+        st.plotly_chart(fig_mix, use_container_width=True, key="stats_mix_donut")
+
+    with col_perfil:
+        st.markdown(
+            f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:8px'>"
+            f"Produccion horaria del portfolio por tecnologia (MW)</div>",
+            unsafe_allow_html=True,
+        )
+        piv = df_gen.groupby(["fecha_hora", "tec"])["gen_real_mw"].sum().reset_index()
+        fig_area = go.Figure()
+        for tec, color, fill in [
+            ("Solar", AES_AZUL, "rgba(59,76,232,0.35)"),
+            ("Eólica", AES_CYAN, "rgba(77,200,220,0.40)"),
+        ]:
+            sub = piv[piv["tec"] == tec].sort_values("fecha_hora")
+            if sub.empty:
+                continue
+            fig_area.add_trace(go.Scatter(
+                x=sub["fecha_hora"], y=sub["gen_real_mw"],
+                name="Solar FV" if tec == "Solar" else "Eolica",
+                mode="lines", stackgroup="one",
+                line=dict(width=0.5, color=color),
+                fillcolor=fill,
+                hovertemplate="%{y:,.0f} MW<extra>" + tec + "</extra>",
+            ))
+        fig_area.update_layout(
+            template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+            height=300, margin=dict(l=0, r=0, t=10, b=0),
+            xaxis_title=None, yaxis_title="MW",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            hovermode="x unified",
+        )
+        fig_area.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+        fig_area.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+        st.plotly_chart(fig_area, use_container_width=True, key="stats_area_tec")
+
+    # ── Heatmap factor de planta por hora del día ───────────────────────────
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:16px 0 8px'>"
+        f"Factor de planta promedio por hora del dia (%) — patron diario por parque</div>",
+        unsafe_allow_html=True,
+    )
+    df_gen["hora_dia"] = df_gen["fecha_hora"].dt.hour
+    hm = df_gen.groupby(["parque", "hora_dia"])["gen_real_mw"].mean().reset_index()
+    hm["fp"] = hm.apply(
+        lambda r: (r["gen_real_mw"] / PMAX[r["parque"]] * 100) if PMAX.get(r["parque"]) else None,
+        axis=1,
+    )
+    orden = [p for p in PARQUES_TODOS if p in hm["parque"].unique()]
+    pivot = hm.pivot(index="parque", columns="hora_dia", values="fp").reindex(orden)
+    if not pivot.empty:
+        fig_hm = go.Figure(go.Heatmap(
+            z=pivot.values,
+            x=[f"{h:02d}h" for h in pivot.columns],
+            y=[NOMBRE_DISPLAY[p] for p in pivot.index],
+            colorscale=[[0, "#F5F7FA"], [0.5, AES_CYAN], [1, AES_AZUL]],
+            colorbar=dict(title="FP %"),
+            hovertemplate="%{y} · %{x}: %{z:.0f}%<extra></extra>",
+        ))
+        fig_hm.update_layout(
+            template="plotly_white", paper_bgcolor=AES_BLANCO,
+            height=360, margin=dict(l=0, r=0, t=10, b=0),
+        )
+        st.plotly_chart(fig_hm, use_container_width=True, key="stats_heatmap_fp")
+
+    st.divider()
+
     # ── Tabla completa ──────────────────────────────────────────────────────
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:8px'>"

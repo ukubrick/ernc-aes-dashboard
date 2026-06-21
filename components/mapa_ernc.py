@@ -13,6 +13,49 @@ _COLOR = {
 
 MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 
+# Estilos de mapa base SIN token. Claro/Detallado usan estilos GL de Carto (string URL).
+# Satélite se renderiza aparte como TileLayer raster de ESRI (ver render_mapa), porque
+# pydeck exige token de Mapbox si el map_style se pasa como style-JSON dict.
+MAP_STYLES = {
+    "Claro":    "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+    "Detallado": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+}
+
+# Style raster MapLibre token-free: imagen satelital ESRI + etiquetas Carto encima.
+# Se usa con map_provider="mapbox" (el token de Mapbox sólo se valida para fuentes
+# mapbox://; estas son tiles https públicas, así que renderizan sin token).
+_ESRI_SAT_STYLE = {
+    "version": 8,
+    "sources": {
+        "esri": {
+            "type": "raster",
+            "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/"
+                      "World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+            "tileSize": 256,
+            "attribution": "Tiles © Esri — World Imagery",
+        },
+        "labels": {
+            "type": "raster",
+            "tiles": ["https://basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}.png"],
+            "tileSize": 256,
+        },
+    },
+    "layers": [
+        {"id": "esri", "type": "raster", "source": "esri"},
+        {"id": "labels", "type": "raster", "source": "labels"},
+    ],
+}
+
+# Ciudades de referencia para dar contexto geográfico al mapa
+_CIUDADES = [
+    {"nombre": "Antofagasta", "lat": -23.65, "lon": -70.40},
+    {"nombre": "Calama",      "lat": -22.46, "lon": -68.93},
+    {"nombre": "La Serena",   "lat": -29.90, "lon": -71.25},
+    {"nombre": "Santiago",    "lat": -33.45, "lon": -70.66},
+    {"nombre": "Concepción",  "lat": -36.83, "lon": -73.05},
+    {"nombre": "Los Ángeles", "lat": -37.47, "lon": -72.35},
+]
+
 # Bounds de Chile continental (lon_min, lat_min, lon_max, lat_max)
 # Excluye Isla de Pascua y territorio antártico
 _CHILE_BOUNDS = {
@@ -71,8 +114,21 @@ def _df(gen_por_parque: dict[str, float | None]) -> pd.DataFrame:
 def render_mapa(
     gen_por_parque: dict[str, float | None],
     parque_activo: str | None = None,
+    estilo: str = "Claro",
 ) -> None:
     df = _df(gen_por_parque)
+    es_satelite = estilo == "Satelite"
+    # Satelital: style raster MapLibre con provider mapbox (token-free, ver nota arriba).
+    if es_satelite:
+        map_style = _ESRI_SAT_STYLE
+        map_provider = "mapbox"
+    else:
+        map_style = MAP_STYLES.get(estilo, MAP_STYLES["Claro"])
+        map_provider = "carto"
+    # En satelital el texto va en blanco para contrastar con el fondo oscuro
+    txt_color = [255, 255, 255, 235] if es_satelite else [26, 31, 54, 230]
+    ciudad_color = [255, 255, 255, 150] if es_satelite else [107, 114, 128, 200]
+    df_ciudades = pd.DataFrame(_CIUDADES)
 
     # Vista: zoom al parque activo si viene del sidebar, sino Chile completo
     if parque_activo and parque_activo in _VIEW_PARQUE:
@@ -110,9 +166,32 @@ def render_mapa(
         get_position=["lon", "lat"],
         get_text="nombre",
         get_size=12,
-        get_color=[26, 31, 54, 200],
+        get_color=txt_color,
         get_alignment_baseline="'bottom'",
         get_pixel_offset=[0, -28],
+        background=True,
+        get_background_color=[0, 0, 0, 120] if es_satelite else [255, 255, 255, 160],
+        pickable=False,
+    )
+
+    # Ciudades de referencia — contexto geográfico
+    ciudades = pdk.Layer(
+        "TextLayer",
+        data=df_ciudades,
+        get_position=["lon", "lat"],
+        get_text="nombre",
+        get_size=10,
+        get_color=ciudad_color,
+        get_alignment_baseline="'top'",
+        get_pixel_offset=[0, 6],
+        pickable=False,
+    )
+    ciudades_dot = pdk.Layer(
+        "ScatterplotLayer",
+        data=df_ciudades,
+        get_position=["lon", "lat"],
+        get_radius=2200,
+        get_fill_color=ciudad_color,
         pickable=False,
     )
 
@@ -148,14 +227,15 @@ def render_mapa(
     }
 
     deck = pdk.Deck(
-        layers=[halo, circles, labels],
+        layers=[ciudades_dot, ciudades, halo, circles, labels],
         initial_view_state=view,
         tooltip=tooltip,
-        map_style=MAP_STYLE,
+        map_style=map_style,
+        map_provider=map_provider,
         views=[pdk.View(
             type="MapView",
             controller={"scrollZoom": True, "dragPan": True},
         )],
     )
 
-    st.pydeck_chart(deck, use_container_width=True, key=f"mapa_ernc_{parque_activo or 'all'}")
+    st.pydeck_chart(deck, use_container_width=True, key=f"mapa_ernc_{parque_activo or 'all'}_{estilo}")
