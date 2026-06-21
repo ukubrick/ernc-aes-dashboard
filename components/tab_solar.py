@@ -323,12 +323,14 @@ def render_tab_solar(
 
     # ── Gráfico generación — ancho completo ──
     nombre_ventana = "ultima semana" if horas_ventana == 168 else f"ultimas {horas_ventana} h"
-    st.markdown(
-        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:6px'>"
-        f"Generacion — {NOMBRE_DISPLAY[parque_sel]} ({nombre_ventana})</div>",
-        unsafe_allow_html=True,
-    )
-    _grafico_gen(df_gen, df_prog, df_meteo, parque_sel, corte, x_min_global)
+    grafico_container = st.container()
+    with grafico_container:
+        st.markdown(
+            f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:6px'>"
+            f"Generacion — {NOMBRE_DISPLAY[parque_sel]} ({nombre_ventana})</div>",
+            unsafe_allow_html=True,
+        )
+        _grafico_gen(df_gen, df_prog, df_meteo, parque_sel, corte, x_min_global)
 
     # ── Métricas entre los dos gráficos ──
     _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
