@@ -80,7 +80,7 @@ def _kpis_eolica(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str
             )
 
 
-def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque: str, horas_ventana: int) -> None:
+def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque: str, horas_ventana: int, x_min: pd.Timestamp | None = None) -> None:
     fig = go.Figure()
 
     corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
@@ -141,7 +141,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        xaxis=dict(range=[_xmin(df_meteo) or corte, ahora]),
+        xaxis=dict(range=[x_min or corte, ahora]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -150,12 +150,13 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
     st.plotly_chart(fig, use_container_width=True, key=f"eolica_grafico_gen_{parque}")
 
 
-def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
+def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min: pd.Timestamp | None = None) -> None:
     """Gráfico de viento separado en dos subplots: velocidad arriba, shear abajo."""
     if df_meteo.empty:
         return
 
     ahora = pd.Timestamp.now()
+    x_inicio = x_min or corte
 
     # Subplot superior: velocidades (10m, 100m, rafagas)
     fig_v = go.Figure()
@@ -201,7 +202,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="m/s",
-        xaxis=dict(range=[_xmin(df_meteo) or corte, ahora]),
+        xaxis=dict(range=[x_inicio, ahora]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
     )
@@ -239,7 +240,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
                 margin=dict(l=0, r=0, t=10, b=0),
                 xaxis_title=None,
                 yaxis_title="α (shear)",
-                xaxis=dict(range=[_xmin(df_sh) or corte, ahora]),
+                xaxis=dict(range=[x_inicio, ahora]),
                 hovermode="x unified",
                 showlegend=False,
             )
@@ -354,13 +355,20 @@ def render_tab_eolica(
     if not df_meteo.empty:
         df_meteo = df_meteo[df_meteo["fecha_hora"] >= corte_meteo]
 
+    # x_min calculado desde gen_rows completo (todos los parques eólicos) — robusto ante
+    # df_meteo vacío en el primer render del parque por defecto
+    df_gen_all = pd.DataFrame(gen_rows) if gen_rows else pd.DataFrame()
+    if not df_gen_all.empty:
+        df_gen_all["fecha_hora"] = pd.to_datetime(df_gen_all["fecha_hora"]).dt.tz_localize(None)
+    x_min_global = _xmin(df_gen_all, df_meteo)
+
     nombre_ventana = "ultima semana" if horas_ventana == 168 else f"ultimas {horas_ventana} h"
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:6px'>"
         f"Generacion — {NOMBRE_DISPLAY[parque_sel]} ({nombre_ventana})</div>",
         unsafe_allow_html=True,
     )
-    _grafico_gen(gen_rows, prog_rows, df_meteo, parque_sel, horas_ventana)
+    _grafico_gen(gen_rows, prog_rows, df_meteo, parque_sel, horas_ventana, x_min_global)
 
     # ── Métricas entre los dos gráficos ──
     _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
@@ -406,4 +414,4 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
         f"Velocidad de viento — {NOMBRE_DISPLAY[parque_sel]}</div>",
         unsafe_allow_html=True,
     )
-    _grafico_viento(df_meteo, parque_sel, corte_meteo)
+    _grafico_viento(df_meteo, parque_sel, corte_meteo, x_min_global)

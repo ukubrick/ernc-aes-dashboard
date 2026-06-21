@@ -76,9 +76,10 @@ def _xmin(*dfs_fecha) -> pd.Timestamp | None:
     return min(mins) if mins else None
 
 
-def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
+def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min: pd.Timestamp | None = None) -> None:
     fig = go.Figure()
     ahora = pd.Timestamp.now()
+    x_inicio = x_min or corte
 
     # Modelo FV: solo histórico (es_forecast=False) y solo horas diurnas
     if not df_meteo.empty and "p_fv_estimada_mw" in df_meteo.columns:
@@ -137,8 +138,7 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        # Rango X: desde el primer dato real (no el corte teórico que puede ser anterior a los datos)
-        xaxis=dict(range=[_xmin(df_gen[df_gen["parque"] == parque] if not df_gen.empty else pd.DataFrame(), df_meteo) or corte, ahora]),
+        xaxis=dict(range=[x_inicio, ahora]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -147,11 +147,12 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
     st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_gen_{parque}")
 
 
-def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
+def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min: pd.Timestamp | None = None) -> None:
     if df_meteo.empty or "ghi_wm2" not in df_meteo.columns:
         return
 
     ahora = pd.Timestamp.now()
+    x_inicio = x_min or corte
     fig = go.Figure()
     # Solo histórico en esta vista — el forecast va en el tab Forecast 7d
     hist = df_meteo[df_meteo["es_forecast"] != True]
@@ -190,7 +191,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="W/m²",
-        xaxis=dict(range=[_xmin(hist, fore) or corte, ahora]),
+        xaxis=dict(range=[x_inicio, ahora]),
         yaxis2=dict(title="Nubosidad %", overlaying="y", side="right", range=[0, 100], showgrid=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
@@ -315,6 +316,9 @@ def render_tab_solar(
     if not df_meteo.empty:
         df_meteo = df_meteo[df_meteo["fecha_hora"] >= corte]
 
+    # x_min desde df_gen completo (todos los parques solares) — robusto ante df_meteo vacío
+    x_min_global = _xmin(df_gen, df_meteo)
+
     # ── Gráfico generación — ancho completo ──
     nombre_ventana = "ultima semana" if horas_ventana == 168 else f"ultimas {horas_ventana} h"
     st.markdown(
@@ -322,7 +326,7 @@ def render_tab_solar(
         f"Generacion — {NOMBRE_DISPLAY[parque_sel]} ({nombre_ventana})</div>",
         unsafe_allow_html=True,
     )
-    _grafico_gen(df_gen, df_prog, df_meteo, parque_sel, corte)
+    _grafico_gen(df_gen, df_prog, df_meteo, parque_sel, corte, x_min_global)
 
     # ── Métricas entre los dos gráficos ──
     _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
@@ -364,4 +368,4 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
         f"Irradiancia GHI + nubosidad baja — {NOMBRE_DISPLAY[parque_sel]}</div>",
         unsafe_allow_html=True,
     )
-    _grafico_ghi(df_meteo, parque_sel, corte)
+    _grafico_ghi(df_meteo, parque_sel, corte, x_min_global)
