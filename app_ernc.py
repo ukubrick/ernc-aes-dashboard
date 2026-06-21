@@ -279,8 +279,9 @@ from components.tab_estadisticas import render_tab_estadisticas
 
 @st.cache_data(ttl=300)
 def cargar_datos():
-    gen_rows    = query_gen_real_ultimas_horas(48)
-    prog_rows   = query_gen_prog_ultimas_horas(48)
+    # 168h = 7 días para soportar la ventana máxima del selector en Solar/Eólica
+    gen_rows    = query_gen_real_ultimas_horas(168)
+    prog_rows   = query_gen_prog_ultimas_horas(168)
     cmg_rows    = query_cmg_ultimo()
     lim_rows    = query_limitaciones_activas()
     ultima_hora = query_ultima_hora_gen()

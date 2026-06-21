@@ -26,7 +26,7 @@ def _df_meteo(parque: str) -> pd.DataFrame:
     try:
         from utils.db import get_client
         sb = get_client()
-        desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=120)).strftime("%Y-%m-%d %H:%M:%S")
+        desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=168)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("meteo_ernc")
             .select(
@@ -42,7 +42,7 @@ def _df_meteo(parque: str) -> pd.DataFrame:
         )
         if res.data:
             df = pd.DataFrame(res.data)
-            df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+            df["fecha_hora"] = pd.to_datetime(df["fecha_hora"]).dt.tz_localize(None)
             return df
     except Exception:
         pass
@@ -186,7 +186,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str) -> None:
         paper_bgcolor=AES_BLANCO,
         plot_bgcolor=AES_GRIS,
         transition=dict(duration=500, easing="cubic-in-out"),
-        height=240,
+        height=300,
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="m/s",
@@ -197,40 +197,43 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str) -> None:
     fig_v.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
     st.plotly_chart(fig_v, use_container_width=True, key=f"eolica_grafico_viento_{parque}")
 
-    # Subplot inferior: shear alpha (en gráfico aparte, más pequeño)
+    # Shear α en gráfico propio — eje Y automático
     if "wind_shear_alpha" in df_meteo.columns:
-        fig_s = go.Figure()
-        fig_s.add_trace(go.Scatter(
-            x=df_meteo["fecha_hora"], y=df_meteo["wind_shear_alpha"],
-            name="Wind shear alpha",
-            line=dict(color=AES_VIOLETA, width=1.5),
-            fill="tozeroy", fillcolor="rgba(155,111,212,0.06)",
-            hovertemplate=(
-                "%{y:.3f}<extra>Wind shear α"
-                "<br>Ley de potencia: v(h) = v_ref × (h/h_ref)^α"
-                "<br>α > 0.30 → atm. estable, estelas persistentes"
-                "<br>Calculado de v80m y v120m</extra>"
-            ),
-        ))
-        fig_s.add_hline(
-            y=0.30, line_dash="dot", line_color=AES_AMBAR, line_width=1,
-            annotation_text="α = 0.30 (umbral)", annotation_position="right",
-            annotation_font_size=9, annotation_font_color=AES_AMBAR,
-        )
-        fig_s.update_layout(
-            template="plotly_white",
-            paper_bgcolor=AES_BLANCO,
-            plot_bgcolor=AES_GRIS,
-            height=160,
-            margin=dict(l=0, r=0, t=10, b=0),
-            xaxis_title=None,
-            yaxis_title="α (shear)",
-            hovermode="x unified",
-            showlegend=False,
-        )
-        fig_s.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
-        fig_s.update_yaxes(showgrid=True, gridcolor=AES_BORDE, range=[0, 0.6])
-        st.plotly_chart(fig_s, use_container_width=True, key=f"eolica_grafico_shear_{parque}")
+        df_sh = df_meteo[df_meteo["wind_shear_alpha"].notna()]
+        if not df_sh.empty:
+            fig_s = go.Figure()
+            fig_s.add_trace(go.Scatter(
+                x=df_sh["fecha_hora"], y=df_sh["wind_shear_alpha"],
+                name="Wind shear alpha",
+                line=dict(color=AES_VIOLETA, width=1.5),
+                fill="tozeroy", fillcolor="rgba(155,111,212,0.06)",
+                hovertemplate=(
+                    "%{y:.3f}<extra>Wind shear α"
+                    "<br>Ley de potencia: v(h) = v_ref x (h/h_ref)^α"
+                    "<br>α > 0.30 → atm. estable, estelas persistentes"
+                    "<br>Calculado de v80m y v120m</extra>"
+                ),
+            ))
+            fig_s.add_hline(
+                y=0.30, line_dash="dot", line_color=AES_AMBAR, line_width=1,
+                annotation_text="α = 0.30 (umbral)", annotation_position="right",
+                annotation_font_size=9, annotation_font_color=AES_AMBAR,
+            )
+            fig_s.update_layout(
+                template="plotly_white",
+                paper_bgcolor=AES_BLANCO,
+                plot_bgcolor=AES_GRIS,
+                height=200,
+                margin=dict(l=0, r=0, t=10, b=0),
+                xaxis_title=None,
+                yaxis_title="α (shear)",
+                hovermode="x unified",
+                showlegend=False,
+            )
+            fig_s.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+            # Eje Y automático con mínimo en 0
+            fig_s.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
+            st.plotly_chart(fig_s, use_container_width=True, key=f"eolica_grafico_shear_{parque}")
 
 
 def _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel):
@@ -324,15 +327,19 @@ def render_tab_eolica(
     with col_ventana:
         horas_ventana = st.selectbox(
             "Ventana",
-            [24, 48, 72, 120],
-            index=1,
-            format_func=lambda h: f"Ultimas {h} h",
+            [24, 48, 72, 168],
+            index=3,
+            format_func=lambda h: "Ultima semana" if h == 168 else f"Ultimas {h} h",
             key="eolica_ventana_horas",
         )
 
     df_meteo = _df_meteo(parque_sel)
+    corte_meteo = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
+    # Filtrar meteo a la misma ventana — tz_localize(None) para comparar con Timestamp naive
+    if not df_meteo.empty:
+        df_meteo = df_meteo[df_meteo["fecha_hora"] >= corte_meteo]
 
-    nombre_ventana = f"ultimas {horas_ventana} h"
+    nombre_ventana = "ultima semana" if horas_ventana == 168 else f"ultimas {horas_ventana} h"
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:6px'>"
         f"Generacion — {NOMBRE_DISPLAY[parque_sel]} ({nombre_ventana})</div>",
