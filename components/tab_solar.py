@@ -278,22 +278,19 @@ def render_tab_solar(
     if "solar_ventana_horas" not in st.session_state:
         st.session_state["solar_ventana_horas"] = 168
 
-    col_sel, col_ventana = st.columns([3, 1])
-    with col_sel:
-        parque_sel = st.selectbox(
-            "Parque solar",
-            PARQUES_SOLAR,
-            index=PARQUES_SOLAR.index(parque_activo) if parque_activo in PARQUES_SOLAR else 0,
-            format_func=lambda p: NOMBRE_DISPLAY[p],
-            key="solar_parque_sel",
-        )
-    with col_ventana:
-        horas_ventana = st.selectbox(
-            "Ventana",
-            [24, 48, 72, 168],
-            format_func=lambda h: "Ultima semana" if h == 168 else f"Ultimas {h} h",
-            key="solar_ventana_horas",
-        )
+    parque_sel = st.selectbox(
+        "Parque solar",
+        PARQUES_SOLAR,
+        index=PARQUES_SOLAR.index(parque_activo) if parque_activo in PARQUES_SOLAR else 0,
+        format_func=lambda p: NOMBRE_DISPLAY[p],
+        key="solar_parque_sel",
+    )
+    horas_ventana = st.selectbox(
+        "Ventana",
+        [24, 48, 72, 168],
+        format_func=lambda h: "Ultima semana" if h == 168 else f"Ultimas {h} h",
+        key="solar_ventana_horas",
+    )
 
     corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
 
