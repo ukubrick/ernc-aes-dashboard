@@ -253,11 +253,13 @@ def query_ultimas_actualizaciones() -> dict[str, str | None]:
 
 def query_cmg_ultimo() -> list[dict]:
     sb = get_client()
-    # Trae el último registro de CMG por nodo (ordenado desc, 8 nodos máx)
+    # Trae registros recientes y se queda con el último por nodo.
+    # limit alto (no 20) para que TODOS los nodos aparezcan aunque algunos
+    # publiquen con menor frecuencia que CRUCERO/CHARRUA.
     res = (sb.table("cmg_ernc")
              .select("nodo,cmg_usd_mwh,fecha_hora")
              .order("fecha_hora", desc=True)
-             .limit(20)
+             .limit(400)
              .execute())
     # Deduplicar por nodo — quedarse con el más reciente
     vistos: set[str] = set()

@@ -145,16 +145,18 @@ CMG_NODO = {
     "MSM":  "CHARRUA_______220",
 }
 
-# Todos los nodos CMG que se guardan en DB (se persisten aunque no estén mapeados a parque)
+# Todos los nodos CMG que se guardan en DB — nombres EXACTOS del feed S3 del CEN
+# (confirmados 2026-06-21: el feed publica estos 8 nodos y no otros).
+# OJO: el número de guiones bajos importa, debe calzar carácter a carácter con el JSON.
 CMG_NODOS_TODOS = [
-    "CRUCERO_______220",   # norte, parques solares
-    "CHARRUA_______220",   # sur, parques eólicos (probable)
-    "QUILLOTA_____220",
-    "PAN_DE_AZUCAR_220",
-    "CARDONES_____220",
-    "NOGALES______220",
-    "ANCOA________220",
-    "POLPAICO_____220",
+    "CRUCERO_______220",   # norte (Antofagasta) — parques solares
+    "ATACAMA_______220",   # norte (Atacama) — referencia solar alternativa
+    "TARAPACA______220",   # norte extremo
+    "CARDONES______220",   # norte-centro (Atacama/Coquimbo)
+    "P.AZUCAR______220",   # Pan de Azúcar (Coquimbo) — cercano a Los Cururos
+    "QUILLOTA______220",   # centro
+    "CHARRUA_______220",   # sur (Biobío) — parques eólicos
+    "P.MONTT_______220",   # sur extremo
 ]
 
 # ── SSCC: centralUnidad API → código interno ───────────────────────────────────
@@ -198,6 +200,18 @@ PANEL_TILT_DEG = 20.0    # ° — inclinación promedio de paneles
 PANEL_AZIMUTH  = 0.0     # ° — 0=norte verdadero (hemisferio sur)
 
 # ── Parámetros eólicos ─────────────────────────────────────────────────────────
-TURBINA_CP      = 0.45    # Coef. de potencia (Betz ~0.593, real ~0.40-0.48)
-TURBINA_V_RATED = 12.0    # Velocidad nominal típica [m/s] — velocidad a la que se alcanza Pmax
-AIRE_R          = 287.05  # J/(kg·K) — constante gas ideal aire seco
+# Curva de potencia simplificada de turbina típica onshore (clase IEC II/III):
+#   v < cut-in            → 0
+#   cut-in ≤ v < rated    → rampa cúbica P = Pmax·((v³-v_in³)/(v_rated³-v_in³))
+#   rated ≤ v ≤ cut-out   → Pmax (corregido por densidad)
+#   v > cut-out           → 0 (turbina se detiene por seguridad)
+TURBINA_CP       = 0.45    # Coef. de potencia (Betz ~0.593, real ~0.40-0.48)
+TURBINA_V_CUTIN  = 3.0     # [m/s] velocidad de arranque
+TURBINA_V_RATED  = 12.0    # [m/s] velocidad nominal — se alcanza Pmax
+TURBINA_V_CUTOUT = 25.0    # [m/s] velocidad de corte — la turbina se detiene
+AIRE_R           = 287.05  # J/(kg·K) — constante gas ideal aire seco
+
+# Rango físico plausible del exponente de cizalle (wind shear α). Fuera de esto
+# el dato meteorológico es ruido (viento muy bajo) y se descarta.
+SHEAR_ALPHA_MIN  = -0.10
+SHEAR_ALPHA_MAX  = 0.60

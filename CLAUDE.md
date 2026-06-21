@@ -960,5 +960,47 @@ tab_resumen, tab_solar, ... = st.tabs(tab_labels, key=_key, default=_default)
 - `843289a` fix: rango X calculado desde datos reales (x_min/x_max) en tab_solar y tab_eolica
 - `d5fa6d7` fix: navegación sidebar restaurada — key dinámico con default= al tab correcto
 
-*Actualizado 2026-06-21 — Sesiones 1–13.*
+## SESIÓN 14 — FÓRMULAS, MODELOS CORREGIDOS, CMG Y PESTAÑA ML (2026-06-21)
+
+### Correcciones de fórmulas / adquisición
+- **Viento en m/s (bug crítico):** Open-Meteo entrega viento en **km/h** por defecto. Se trataba
+  como m/s → el modelo eólico sobreestimaba (mostraba Pmax casi siempre). Fix: `wind_speed_unit:"ms"`
+  en `_params_solar` y `_params_eolica` (`openmeteo_api.py`). **Requiere re-correr adquisición meteo.**
+- **Curva de potencia eólica realista:** `calcular_potencia_eolica_estimada` ahora usa cut-in (3 m/s),
+  rampa cúbica hasta rated (12 m/s), meseta a Pmax hasta cut-out (25 m/s) y **0 sobre cut-out**.
+  Constantes nuevas en `config.py`: `TURBINA_V_CUTIN/RATED/CUTOUT`.
+- **Wind shear α acotado:** se limita a `[-0.10, 0.60]` (`SHEAR_ALPHA_MIN/MAX`) y se ignora con vientos
+  <1.5 m/s (antes daba α>2 absurdos). `interpolar_viento_100m` corregido.
+- **Modelo FV de noche:** en `tab_solar._grafico_gen` la noche se marca NaN con `connectgaps=False`,
+  eliminando la diagonal falsa. Ya NO se filtran los puntos nocturnos (eso causaba el artefacto).
+- **Saneamiento gen real:** `cen_api.fetch_gen_real` descarta valores > 110% Pmax (físicamente
+  imposibles). El resto se auto-corrige con el upsert horario de ventana 5 días (sistema tipo CTM).
+
+### CMG — nodos reales del feed S3
+Los nombres en `CMG_NODOS_TODOS` no calzaban con el feed (n.º de guiones bajos). Solo CRUCERO y
+CHARRUA matcheaban. Nombres reales confirmados (8): `CRUCERO/ATACAMA/TARAPACA/CARDONES/P.AZUCAR/
+QUILLOTA/CHARRUA/P.MONTT` + `______220`. `query_cmg_ultimo` ahora usa `limit(400)` para que todos
+aparezcan. **Los nodos nuevos se poblarán al correr la adquisición CMG.**
+
+### Leyendas y hovers
+- Fórmulas movidas a expander "Fórmulas del modelo" con `st.latex` (tipografía científica elegante).
+- Hovers de las series simplificados a solo valor + nombre corto (antes la fórmula tapaba el valor).
+
+### Nueva pestaña ML Analysis (`components/tab_ml.py`)
+Sub-navegación con `st.radio` (no `st.tabs`, para no reintroducir el bug de compresión). Modelos
+entrenados en vivo con histórico de Supabase. Requiere `scikit-learn>=1.4.0` (agregado a requirements):
+1. **Forecast de generación** — RandomForest meteo→gen por parque; R²/MAE, comparación con modelo
+   físico, importancia de variables y pronóstico aplicado al forecast meteo. (Solar AS1: R²≈0.95.)
+2. **Detección de anomalías** — residuos del modelo (z-score>3) + IsolationForest; marca horas raras.
+3. **Predicción de CMG** — RandomForest con rezagos por nodo + pronóstico recursivo 12h.
+4. **Análisis de eficiencia** — performance ratio real/teórico por parque + clustering KMeans.
+Todas las secciones degradan con mensaje claro si faltan datos (umbral ≥48 registros).
+
+### Pendiente operativo
+Correr `Adquisicion_meteo_ernc.py` y `Adquisicion_ernc.py` (o esperar el cron) para repoblar la DB
+con viento en m/s, nodos CMG nuevos y más histórico para los modelos ML.
+
+---
+
+*Actualizado 2026-06-21 — Sesiones 1–14.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*

@@ -97,12 +97,20 @@ def fetch_gen_real(parque: str, start_date: str = None, end_date: str = None) ->
             hora_cen = int(item.get("hora", 1))
             fecha_hora = _hora_cen_a_dt(item["fecha_hora"], hora_cen)
 
+            # Saneamiento: descartar valores físicamente imposibles (> 110% de Pmax).
+            # Los demás se auto-corrigen al re-descargar la ventana (upsert horario).
+            gen_mw = item.get("gen_real_mw", 0.0)
+            _pmax_parque = PMAX.get(parque)
+            if gen_mw is not None and _pmax_parque and gen_mw > _pmax_parque * 1.10:
+                print(f"[GEN-REAL] Valor anómalo descartado {parque} {fecha_hora}: {gen_mw} > Pmax {_pmax_parque}")
+                continue
+
             registros.append({
                 "parque":          parque,
                 "id_central":      item.get("id_central"),
                 "llave_opreal":    item.get("llave_opreal"),
                 "central":         item.get("central"),
-                "gen_real_mw":     item.get("gen_real_mw", 0.0),
+                "gen_real_mw":     gen_mw,
                 "potencia_max":    item.get("potencia_maxima"),
                 "factor_ernc":     item.get("factor_ernc"),
                 "valor_ernc":      item.get("valor_ernc"),

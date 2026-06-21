@@ -39,6 +39,7 @@ def _params_solar(lat: float, lon: float, start: str, end: str) -> dict:
         "timezone": "America/Santiago",
         "tilt": PANEL_TILT_DEG,
         "azimuth": PANEL_AZIMUTH,
+        "wind_speed_unit": "ms",   # CRÍTICO: por defecto Open-Meteo entrega km/h
     }
 
 
@@ -50,6 +51,7 @@ def _params_eolica(lat: float, lon: float, start: str, end: str) -> dict:
         "start_date": start,
         "end_date": end,
         "timezone": "America/Santiago",
+        "wind_speed_unit": "ms",   # CRÍTICO: por defecto Open-Meteo entrega km/h → modelo sobreestimaba
     }
 
 

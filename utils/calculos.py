@@ -1,6 +1,10 @@
 """Fórmulas derivadas para parques ERNC — temperatura celda, potencias estimadas, KPIs."""
 import math
-from config import PANEL_NOCT, PANEL_GAMMA, TURBINA_CP, TURBINA_V_RATED, AIRE_R, PMAX
+from config import (
+    PANEL_NOCT, PANEL_GAMMA, AIRE_R, PMAX,
+    TURBINA_CP, TURBINA_V_CUTIN, TURBINA_V_RATED, TURBINA_V_CUTOUT,
+    SHEAR_ALPHA_MIN, SHEAR_ALPHA_MAX,
+)
 
 
 # ── Solar FV ──────────────────────────────────────────────────────────────────
@@ -47,16 +51,24 @@ def calcular_eficiencia_real(gen_real_mw: float, p_estimada_mw: float) -> float 
 def interpolar_viento_100m(v_80m: float, v_120m: float) -> tuple[float, float]:
     """
     Interpolación ley de potencia entre 80m y 120m → v100m y α (wind shear).
-    Retorna (v100m, alpha).
+    Retorna (v100m, alpha). Unidades de entrada: m/s.
+
+    A vientos muy bajos (<1.5 m/s) la razón v120/v80 es ruido y el exponente α se
+    dispara a valores no físicos; en ese caso se interpola linealmente y α=0.
     """
     if not v_80m or not v_120m or v_80m <= 0 or v_120m <= 0:
-        return (v_80m or 0.0, 0.0)
+        return (round(v_80m or 0.0, 3), 0.0)
+    # Con vientos despreciables, el cizalle no es informativo
+    if v_80m < 1.5 or v_120m < 1.5:
+        v100m = v_80m + (v_120m - v_80m) * (100.0 - 80.0) / (120.0 - 80.0)
+        return (round(max(0.0, v100m), 3), 0.0)
     try:
         alpha = math.log(v_120m / v_80m) / math.log(120.0 / 80.0)
+        alpha = max(SHEAR_ALPHA_MIN, min(alpha, SHEAR_ALPHA_MAX))  # acotar a rango físico
         v100m = v_80m * (100.0 / 80.0) ** alpha
         return (round(v100m, 3), round(alpha, 4))
     except (ValueError, ZeroDivisionError):
-        return (v_80m, 0.0)
+        return (round(v_80m, 3), 0.0)
 
 
 def calcular_densidad_aire(temp_c: float, presion_hpa: float) -> float:
@@ -72,15 +84,32 @@ def calcular_potencia_eolica_estimada(
     v100m: float,
     densidad: float,
     pmax_mw: float,
+    v_cutin: float = TURBINA_V_CUTIN,
     v_rated: float = TURBINA_V_RATED,
+    v_cutout: float = TURBINA_V_CUTOUT,
 ) -> float:
     """
-    P = pmax × (ρ/ρ_ref) × (v/v_rated)³, cap a pmax_mw.
-    Derivado de P=½ρACpv³ asumiendo que a v_rated y ρ_ref=1.225 se alcanza pmax.
+    Curva de potencia simplificada de turbina (v en m/s):
+      v < cut-in            → 0       (no arranca)
+      cut-in ≤ v < rated    → rampa cúbica P = Pmax·(v³−v_in³)/(v_rated³−v_in³)
+      rated ≤ v ≤ cut-out   → Pmax    (corregido por densidad del aire)
+      v > cut-out           → 0       (parada de seguridad)
+
+    La corrección por densidad ρ/ρ_ref solo se aplica en la zona rampa/nominal,
+    no extiende la potencia más allá de Pmax.
     """
     if not v100m or v100m <= 0:
         return 0.0
-    p_mw = pmax_mw * (densidad / 1.225) * (v100m / v_rated) ** 3
+    v = float(v100m)
+    if v < v_cutin or v > v_cutout:
+        return 0.0
+
+    rho_factor = max(0.5, min(densidad / 1.225, 1.15))  # corrección acotada
+    if v >= v_rated:
+        p_mw = pmax_mw * rho_factor
+    else:
+        frac = (v ** 3 - v_cutin ** 3) / (v_rated ** 3 - v_cutin ** 3)
+        p_mw = pmax_mw * rho_factor * max(0.0, frac)
     return round(max(0.0, min(p_mw, pmax_mw)), 4)
 
 

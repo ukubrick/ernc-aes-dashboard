@@ -84,28 +84,26 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
 
     fig = go.Figure()
 
-    # Modelo FV: solo histórico (es_forecast=False) y solo horas diurnas
+    # Modelo FV: histórico, con la línea ROTA de noche (NaN + connectgaps=False).
+    # Antes se filtraban los puntos nocturnos y Plotly los unía con una diagonal
+    # que simulaba "potencia de noche" — artefacto, no dato real.
     if not df_meteo.empty and "p_fv_estimada_mw" in df_meteo.columns:
         df_mod = df_meteo[df_meteo["es_forecast"] != True].copy() if "es_forecast" in df_meteo.columns else df_meteo.copy()
+        df_mod = df_mod.sort_values("fecha_hora")
         if "is_day" in df_mod.columns:
             is_day_mask = df_mod["is_day"].apply(
                 lambda v: bool(v) if not isinstance(v, str) else v.lower() == "true"
             )
-            df_dia = df_mod[is_day_mask & df_mod["p_fv_estimada_mw"].notna()]
-        else:
-            df_dia = df_mod[df_mod["p_fv_estimada_mw"].notna()]
-        if not df_dia.empty:
+            # Noche → NaN para que la traza se corte en vez de dibujar diagonal
+            df_mod.loc[~is_day_mask, "p_fv_estimada_mw"] = float("nan")
+        if df_mod["p_fv_estimada_mw"].notna().any():
             fig.add_trace(go.Scatter(
-                x=df_dia["fecha_hora"], y=df_dia["p_fv_estimada_mw"],
+                x=df_mod["fecha_hora"], y=df_mod["p_fv_estimada_mw"],
                 name="Modelo FV",
                 line=dict(color=AES_VIOLETA, width=1.2, dash="dot"),
+                connectgaps=False,
                 fill="tozeroy", fillcolor="rgba(155,111,212,0.04)",
-                hovertemplate=(
-                    "%{y:.1f} MW"
-                    "<extra>Modelo FV: P = Ppico x GTI/1000 x [1+gamma(Tc-25)]"
-                    "<br>gamma=-0.4%/C | NOCT=45C | GTI=irradiancia plano inclinado"
-                    "</extra>"
-                ),
+                hovertemplate="%{y:.1f} MW<extra>Modelo FV</extra>",
             ))
 
     # PCP encima del modelo — ámbar más grueso y opaco para distinguirse del real
@@ -359,8 +357,8 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
   <b>PCP programada</b> — potencia declarada D-1 ante el Coordinador (SIPUB pcp/v4).</div>
   <div><span style='display:inline-block;width:28px;height:1px;background:{AES_VIOLETA};
   vertical-align:middle;margin-right:7px;border-radius:2px;border-bottom:2px dotted {AES_VIOLETA}'></span>
-  <b>Modelo FV</b> — estimacion: P = Ppico × GTI/1000 × [1 + γ(Tc−25)].
-  γ=−0.4%/°C, NOCT=45°C. Solo horas diurnas.</div>
+  <b>Modelo FV</b> — potencia estimada por irradiancia y temperatura de celda
+  (fórmulas en el panel inferior). Solo horas diurnas.</div>
   <div><span style='display:inline-block;width:28px;height:3px;background:{AES_AMBAR};
   vertical-align:middle;margin-right:7px;border-radius:2px'></span>
   <b>GHI historico</b> — irradiancia global horizontal [W/m²] (Open-Meteo).</div>
@@ -375,6 +373,19 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
 </div>""",
         unsafe_allow_html=True,
     )
+
+    with st.expander("Fórmulas del modelo FV"):
+        st.latex(r"T_c \;=\; T_{amb} \;+\; \frac{NOCT - 20}{800}\;\cdot\;GHI\;\cdot\;f_{viento}")
+        st.latex(r"P_{FV} \;=\; P_{pico}\;\cdot\;\frac{GTI}{1000}\;\cdot\;\bigl[\,1 + \gamma\,(T_c - 25)\,\bigr]")
+        st.markdown(
+            f"<div style='font-size:11.5px;color:{AES_MUTED};line-height:1.7'>"
+            r"$NOCT = 45\,^{\circ}\mathrm{C}$ (Normal Operating Cell Temperature) &nbsp;·&nbsp; "
+            r"$\gamma = -0.4\,\%/^{\circ}\mathrm{C}$ (coef. de temperatura, silicio cristalino) &nbsp;·&nbsp; "
+            r"$GTI$ = irradiancia sobre el plano inclinado $[\mathrm{W/m^2}]$ &nbsp;·&nbsp; "
+            r"$f_{viento}$ corrige la convección. Potencia acotada a $P_{pico}$ y a horas diurnas."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:4px 0 6px'>"

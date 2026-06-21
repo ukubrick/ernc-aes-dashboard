@@ -269,6 +269,7 @@ from components.tab_eolica import render_tab_eolica
 from components.tab_forecast import render_tab_forecast
 from components.tab_insights import render_tab_insights
 from components.tab_estadisticas import render_tab_estadisticas
+from components.tab_ml import render_tab_ml
 
 
 # ── Carga de datos ─────────────────────────────────────────────────────────────
@@ -466,7 +467,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 # ── Navegación principal (vista única) ──────────────────────────────────────────
 
 VISTAS = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d",
-          "Estadisticas", "Insights", "CMG", "Limitaciones"]
+          "Estadisticas", "ML Analysis", "Insights", "CMG", "Limitaciones"]
 
 
 def _navegacion() -> str:
@@ -575,6 +576,8 @@ def main():
         render_tab_forecast()
     elif vista == "Estadisticas":
         render_tab_estadisticas(gen_rows=gen_rows, prog_rows=prog_rows, cmg_rows=cmg_rows)
+    elif vista == "ML Analysis":
+        render_tab_ml()
     elif vista == "Insights":
         render_tab_insights(
             gen_por_parque=gen_por_parque,
