@@ -825,7 +825,46 @@ if page >= total_pages:
 - [ ] Agregar logo AES Andes en sidebar cuando esté disponible (assets/logo_aes.png)
 - [ ] `st.segmented_control` requiere Streamlit >= 1.38 — verificar versión en Streamlit Cloud
 - [ ] Correr workflow manual para repoblar `p_eolica_estimada_mw` en `meteo_ernc` (fix sesión 9)
-- [ ] Gráficos comprimidos en primer render de tab (ver Sesión 12) — pendiente solución definitiva
+- [x] Gráficos comprimidos en primer render de tab — RESUELTO en Sesión 13 (navegación de vista única)
+
+---
+
+## SESIÓN 13 — FIX DEFINITIVO COMPRESIÓN GRÁFICOS + NAVEGACIÓN (2026-06-21)
+
+### Bug raíz: gráficos Plotly comprimidos al abrir un tab por primera vez
+
+**Causa confirmada:** `st.tabs` renderiza TODOS los paneles en el DOM simultáneamente
+y oculta los inactivos con `display:none`. Un `st.plotly_chart(use_container_width=True)`
+dentro de un panel oculto se inicializa midiendo el ancho del contenedor como ~0px →
+el gráfico queda comprimido. Al cambiar el selectbox/parque/fecha se dispara un rerun
+que re-renderiza el gráfico con el tab ya visible → recién ahí mide bien. El fix de
+`range=[x_min,x_max]` (Sesión 12) atacaba el espacio vacío del eje, NO este problema de ancho.
+
+**Fix definitivo — navegación de vista única:** se eliminó `st.tabs` del layout principal.
+- `app_ernc.py`: nueva `_navegacion()` + estado `st.session_state["vista"]` (variable normal,
+  no key de widget) + barra de botones (`type="primary"` = activo). Se renderiza SOLO la vista
+  activa. El gráfico siempre se monta en un contenedor visible y a ancho real → nunca se comprime.
+- Se eliminó el hack frágil de `key` dinámico + `default=` en `st.tabs` (`tab_forzado`,
+  `_tabs_key`, `_tab_map`) que además rompía la navegación del sidebar.
+
+**Regla:** NUNCA poner `st.plotly_chart` en paneles de `st.tabs` inactivos. Para vistas
+con gráficos, usar navegación de vista única (renderizar solo la activa).
+
+### Bug: navegación del sidebar no cambiaba de central
+Resuelto por el mismo cambio: el sidebar escribe `st.session_state["vista"]` directamente
+(variable normal, no widget) → navegación 100% fiable.
+
+### Selección de parque (one-shot)
+El sidebar fuerza el selectbox de Solar/Eólica una sola vez vía `st.session_state["_sync_parque"]`,
+consumido con `pop()` en el tab. Después el desplegable es dueño de su estado y el usuario puede
+cambiar la central libremente sin que se revierta. Antes la lógica forzaba el selectbox en cada
+rerun, revirtiendo la elección manual.
+
+### Refactor / limpieza
+- Eliminado helper `_xmin()` sin uso en `tab_solar.py` y `tab_eolica.py`.
+- Eliminado CSS muerto de `.stTabs`; reemplazado por estilo de botones de navegación
+  (`.block-container .stButton button[kind=primary|secondary]`).
+- `tab_insights.py` conserva `st.tabs` interno (solo tablas/métricas, sin Plotly → no sufre el bug).
 
 ---
 
@@ -921,5 +960,5 @@ tab_resumen, tab_solar, ... = st.tabs(tab_labels, key=_key, default=_default)
 - `843289a` fix: rango X calculado desde datos reales (x_min/x_max) en tab_solar y tab_eolica
 - `d5fa6d7` fix: navegación sidebar restaurada — key dinámico con default= al tab correcto
 
-*Actualizado 2026-06-21 — Sesiones 1–12.*
+*Actualizado 2026-06-21 — Sesiones 1–13.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*

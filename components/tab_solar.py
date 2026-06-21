@@ -70,12 +70,6 @@ def _kpis_solar(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str 
             )
 
 
-def _xmin(*dfs_fecha) -> pd.Timestamp | None:
-    """Mínimo real de fecha_hora entre todos los DataFrames con datos."""
-    mins = [df["fecha_hora"].min() for df in dfs_fecha if not df.empty and "fecha_hora" in df.columns]
-    return min(mins) if mins else None
-
-
 def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
     # Rango X desde datos reales — evita espacio vacío si la ventana supera los datos disponibles
     _xmins, _xmaxs = [], []
@@ -283,37 +277,34 @@ def render_tab_solar(
     prog_rows: list[dict],
     parque_activo: str | None = None,
 ) -> None:
-    if parque_activo is None:
-        parque_activo = PARQUES_SOLAR[0]
-
-    _kpis_solar(gen_por_parque, prog_por_parque, parque_activo)
-    st.divider()
-
     _ventanas = [24, 48, 72, 168]
 
-    # Si viene parque_activo del sidebar, tiene prioridad sobre el selectbox previo.
-    # Si no, preservar lo que el usuario eligió en el dropdown.
-    if parque_activo and parque_activo in PARQUES_SOLAR:
-        _parque_idx = PARQUES_SOLAR.index(parque_activo)
-        st.session_state["solar_parque_sel"] = parque_activo
-    else:
-        _prev = st.session_state.get("solar_parque_sel", PARQUES_SOLAR[0])
-        _parque_idx = PARQUES_SOLAR.index(_prev) if _prev in PARQUES_SOLAR else 0
+    # Selección de parque: el sidebar fuerza el selectbox una sola vez (one-shot);
+    # luego el desplegable es dueño de su estado y el usuario puede cambiarlo libremente.
+    _sync = st.session_state.pop("_sync_parque", None)
+    if _sync in PARQUES_SOLAR:
+        st.session_state["solar_parque_sel"] = _sync
+    if st.session_state.get("solar_parque_sel") not in PARQUES_SOLAR:
+        st.session_state["solar_parque_sel"] = (
+            parque_activo if parque_activo in PARQUES_SOLAR else PARQUES_SOLAR[0]
+        )
 
-    _ventana_prev = st.session_state.get("solar_ventana_horas", 168)
-    _ventana_idx  = _ventanas.index(_ventana_prev) if _ventana_prev in _ventanas else 3
+    if st.session_state.get("solar_ventana_horas") not in _ventanas:
+        st.session_state["solar_ventana_horas"] = 168
+
+    # KPIs resaltan el parque actualmente seleccionado (coherente con el gráfico)
+    _kpis_solar(gen_por_parque, prog_por_parque, st.session_state["solar_parque_sel"])
+    st.divider()
 
     parque_sel = st.selectbox(
         "Parque solar",
         PARQUES_SOLAR,
-        index=_parque_idx,
         format_func=lambda p: NOMBRE_DISPLAY[p],
         key="solar_parque_sel",
     )
     horas_ventana = st.selectbox(
         "Ventana",
         _ventanas,
-        index=_ventana_idx,
         format_func=lambda h: "Ultima semana" if h == 168 else f"Ultimas {h} h",
         key="solar_ventana_horas",
     )
