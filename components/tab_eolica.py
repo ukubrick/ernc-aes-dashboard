@@ -96,10 +96,11 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
             ))
 
     # PCP — ámbar más grueso y visible
+    corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
+
     if prog_rows:
         df_p = pd.DataFrame(prog_rows)
-        df_p["fecha_hora"] = pd.to_datetime(df_p["fecha_hora"])
-        corte = pd.Timestamp.now(tz="America/Santiago") - pd.Timedelta(hours=horas_ventana)
+        df_p["fecha_hora"] = pd.to_datetime(df_p["fecha_hora"]).dt.tz_localize(None)
         df_p = df_p[(df_p["parque"] == parque) & (df_p["fecha_hora"] >= corte)].sort_values("fecha_hora")
         if not df_p.empty:
             fig.add_trace(go.Scatter(
@@ -109,11 +110,9 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
                 hovertemplate="%{y:.1f} MW<extra>PCP programada — declarada D-1 ante CEN</extra>",
             ))
 
-    # Real al tope — cyan sólido con fill muy suave
     if gen_rows:
         df_r = pd.DataFrame(gen_rows)
-        df_r["fecha_hora"] = pd.to_datetime(df_r["fecha_hora"])
-        corte = pd.Timestamp.now(tz="America/Santiago") - pd.Timedelta(hours=horas_ventana)
+        df_r["fecha_hora"] = pd.to_datetime(df_r["fecha_hora"]).dt.tz_localize(None)
         df_r = df_r[(df_r["parque"] == parque) & (df_r["fecha_hora"] >= corte)].sort_values("fecha_hora")
         df_r = df_r[df_r["gen_real_mw"] >= 0]
         if not df_r.empty:
