@@ -324,10 +324,7 @@ def render_tab_eolica(
     _kpis_eolica(gen_por_parque, prog_por_parque, parque_activo)
     st.divider()
 
-    # Inicializar ventana en session_state para que el primer render ya use 168h
-    if "eolica_ventana_horas" not in st.session_state:
-        st.session_state["eolica_ventana_horas"] = 168
-
+    _ventanas = [24, 48, 72, 168]
     parque_sel = st.selectbox(
         "Parque eolico",
         PARQUES_EOLICA,
@@ -337,7 +334,8 @@ def render_tab_eolica(
     )
     horas_ventana = st.selectbox(
         "Ventana",
-        [24, 48, 72, 168],
+        _ventanas,
+        index=3,
         format_func=lambda h: "Ultima semana" if h == 168 else f"Ultimas {h} h",
         key="eolica_ventana_horas",
     )
