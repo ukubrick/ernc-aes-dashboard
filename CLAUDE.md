@@ -825,6 +825,7 @@ if page >= total_pages:
 - [ ] Agregar logo AES Andes en sidebar cuando esté disponible (assets/logo_aes.png)
 - [ ] `st.segmented_control` requiere Streamlit >= 1.38 — verificar versión en Streamlit Cloud
 - [ ] Correr workflow manual para repoblar `p_eolica_estimada_mw` en `meteo_ernc` (fix sesión 9)
+- [ ] Gráficos comprimidos en primer render de tab (ver Sesión 12) — pendiente solución definitiva
 
 ---
 
@@ -861,5 +862,64 @@ Ahora incluyen el parque en el key para evitar StreamlitDuplicateElementId al ca
 - `solar_grafico_gen_{parque}`, `solar_grafico_ghi_{parque}`
 - `eolica_grafico_gen_{parque}`, `eolica_grafico_viento_{parque}`, `eolica_grafico_shear_{parque}`
 
-*Generado 2026-06-20 — Sesiones 1–11.*
+---
+
+## SESIÓN 12 — FIXES NAVEGACIÓN Y EJE X (2026-06-21)
+
+### Bug: gráficos comprimidos en primer render de tab
+
+**Síntoma:** Al abrir por primera vez una pestaña (Solar FV, Eólica, Forecast, Estadísticas), los datos del gráfico aparecen apilados hacia la derecha (o izquierda) con espacio vacío.
+
+**Causa investigada:** Se descartó que fuera un problema de ancho SVG (Streamlit 1.58.0 mide 940px correctamente desde el primer render). La causa real son **dos fuentes de espacio vacío en el eje X**:
+1. **Lado derecho:** `xaxis=dict(range=[corte, None])` — `None` hace que Plotly extienda el eje hasta el tiempo actual del sistema. Si los datos tienen lag (ej. datos hasta las 20:00 pero son las 03:00 del día siguiente), el eje muestra 7 horas vacías a la derecha.
+2. **Lado izquierdo:** `corte = ahora - ventana` puede ser anterior al primer dato en DB (ej. ventana=7d pero datos desde hace 5d), dejando 2 días vacíos al inicio.
+
+**Fix aplicado en `tab_solar.py` y `tab_eolica.py`:**
+```python
+# Calcular x_min y x_max desde los datos reales — no desde la ventana teórica
+_xmins, _xmaxs = [], []
+if not df_gen.empty:
+    _xmins.append(df_gen["fecha_hora"].min())
+    _xmaxs.append(df_gen["fecha_hora"].max())
+if not df_prog.empty:
+    _xmins.append(df_prog["fecha_hora"].min())
+    _xmaxs.append(df_prog["fecha_hora"].max())
+x_min = min(_xmins) if _xmins else corte
+x_max = max(_xmaxs) if _xmaxs else None
+# ...
+xaxis=dict(range=[x_min, x_max])  # reemplaza range=[corte, None]
+```
+El mismo patrón aplica a `_grafico_ghi()`, `_grafico_viento()` y `_grafico_shear()`.
+
+**Estado:** El fix reduce el problema pero no lo elimina completamente en producción (datos en DB con lag > 1 día pueden seguir causando compresión visual al primer render). Queda pendiente investigación adicional.
+
+### Bug: navegación sidebar rota
+
+**Síntoma:** Botones del sidebar no cambiaban de tab activo.
+
+**Causa:** `st.session_state["main_tabs"] = valor` es ignorado silenciosamente por Streamlit cuando la key ya está asociada a un widget activo. No se puede escribir sobre el state de un widget vivo.
+
+**Fix aplicado en `app_ernc.py`:**
+```python
+# Estrategia: key dinámica por destino fuerza recreación del componente con default= correcto
+if tab_forzado and tab_forzado in _tab_map:
+    _key = f"tabs_{tab_forzado}_{parque_activo}"   # key nueva → Streamlit recrea st.tabs
+    st.session_state["_tabs_key"] = _key
+    _default = _tab_map[tab_forzado]               # default= activa el tab correcto
+else:
+    _key = st.session_state.get("_tabs_key", "tabs_default")  # reutiliza key actual
+    _default = None                                 # sin default → mantiene posición actual
+
+tab_resumen, tab_solar, ... = st.tabs(tab_labels, key=_key, default=_default)
+```
+
+**Por qué funciona:** Al cambiar el key, Streamlit crea un componente nuevo y respeta `default=`. En reruns siguientes (cambio de ventana, parque), la key no cambia → el tab activo se preserva. El `tab_forzado` se consume con `pop()` en cada rerun.
+
+**Regla:** Para navegar programáticamente entre tabs en Streamlit, NUNCA escribir en `session_state[tab_key]` directamente. Usar key dinámica + `default=`.
+
+### Commits sesión 12
+- `843289a` fix: rango X calculado desde datos reales (x_min/x_max) en tab_solar y tab_eolica
+- `d5fa6d7` fix: navegación sidebar restaurada — key dinámico con default= al tab correcto
+
+*Actualizado 2026-06-21 — Sesiones 1–12.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*
