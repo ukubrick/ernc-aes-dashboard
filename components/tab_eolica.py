@@ -77,9 +77,14 @@ def _kpis_eolica(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str
 def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque: str, horas_ventana: int) -> None:
     fig = go.Figure()
 
-    # Modelo eólico primero (fondo) — muy tenue para no tapar PCP ni real
+    corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
+    ahora = pd.Timestamp.now()
+
+    # Modelo eólico primero (fondo) — solo histórico para no estirar el eje X al futuro
     if not df_meteo.empty and "p_eolica_estimada_mw" in df_meteo.columns:
-        df_mod = df_meteo[df_meteo["p_eolica_estimada_mw"].notna()].copy()
+        df_mod = df_meteo[
+            (df_meteo["es_forecast"] != True) & df_meteo["p_eolica_estimada_mw"].notna()
+        ].copy() if "es_forecast" in df_meteo.columns else df_meteo[df_meteo["p_eolica_estimada_mw"].notna()].copy()
         if not df_mod.empty:
             fig.add_trace(go.Scatter(
                 x=df_mod["fecha_hora"], y=df_mod["p_eolica_estimada_mw"],
@@ -94,9 +99,6 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
                     "</extra>"
                 ),
             ))
-
-    # PCP — ámbar más grueso y visible
-    corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
 
     if prog_rows:
         df_p = pd.DataFrame(prog_rows)
@@ -133,6 +135,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
+        xaxis=dict(range=[corte, ahora]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -141,10 +144,12 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
     st.plotly_chart(fig, use_container_width=True, key=f"eolica_grafico_gen_{parque}")
 
 
-def _grafico_viento(df_meteo: pd.DataFrame, parque: str) -> None:
+def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
     """Gráfico de viento separado en dos subplots: velocidad arriba, shear abajo."""
     if df_meteo.empty:
         return
+
+    ahora = pd.Timestamp.now()
 
     # Subplot superior: velocidades (10m, 100m, rafagas)
     fig_v = go.Figure()
@@ -190,6 +195,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str) -> None:
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="m/s",
+        xaxis=dict(range=[corte, ahora]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
     )
@@ -227,11 +233,11 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str) -> None:
                 margin=dict(l=0, r=0, t=10, b=0),
                 xaxis_title=None,
                 yaxis_title="α (shear)",
+                xaxis=dict(range=[corte, ahora]),
                 hovermode="x unified",
                 showlegend=False,
             )
             fig_s.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
-            # Eje Y automático con mínimo en 0
             fig_s.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
             st.plotly_chart(fig_s, use_container_width=True, key=f"eolica_grafico_shear_{parque}")
 
@@ -394,4 +400,4 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
         f"Velocidad de viento — {NOMBRE_DISPLAY[parque_sel]}</div>",
         unsafe_allow_html=True,
     )
-    _grafico_viento(df_meteo, parque_sel)
+    _grafico_viento(df_meteo, parque_sel, corte_meteo)
