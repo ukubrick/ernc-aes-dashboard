@@ -77,6 +77,17 @@ def _xmin(*dfs_fecha) -> pd.Timestamp | None:
 
 
 def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
+    # Rango X desde datos reales — evita espacio vacío si la ventana supera los datos disponibles
+    _xmins, _xmaxs = [], []
+    _dr = df_gen[df_gen["parque"] == parque] if not df_gen.empty else pd.DataFrame()
+    if not _dr.empty:
+        _xmins.append(_dr["fecha_hora"].min()); _xmaxs.append(_dr["fecha_hora"].max())
+    _dp = df_prog[df_prog["parque"] == parque] if not df_prog.empty else pd.DataFrame()
+    if not _dp.empty:
+        _xmins.append(_dp["fecha_hora"].min()); _xmaxs.append(_dp["fecha_hora"].max())
+    x_min = min(_xmins) if _xmins else corte
+    x_max = max(_xmaxs) if _xmaxs else None
+
     fig = go.Figure()
 
     # Modelo FV: solo histórico (es_forecast=False) y solo horas diurnas
@@ -137,13 +148,13 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        xaxis=dict(range=[corte, None]),
+        xaxis=dict(range=[x_min, x_max]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
-    st.plotly_chart(fig, width="stretch", key=f"solar_grafico_gen_{parque}", config={"responsive": True})
+    st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_gen_{parque}")
 
 
 def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
@@ -153,6 +164,8 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
     fig = go.Figure()
     hist = df_meteo[df_meteo["es_forecast"] != True]
     fore = df_meteo[df_meteo["es_forecast"] == True]
+    x_min = df_meteo["fecha_hora"].min() if not df_meteo.empty else corte
+    x_max = df_meteo["fecha_hora"].max() if not df_meteo.empty else None
 
     if not hist.empty:
         fig.add_trace(go.Scatter(
@@ -188,14 +201,14 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="W/m²",
-        xaxis=dict(range=[corte, None]),
+        xaxis=dict(range=[x_min, x_max]),
         yaxis2=dict(title="Nubosidad %", overlaying="y", side="right", range=[0, 100], showgrid=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-    st.plotly_chart(fig, width="stretch", key=f"solar_grafico_ghi_{parque}", config={"responsive": True})
+    st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_ghi_{parque}")
 
 
 def _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel):

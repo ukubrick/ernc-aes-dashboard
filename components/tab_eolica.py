@@ -85,6 +85,23 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
 
     corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
 
+    # Rango X desde datos reales — evita espacio vacío si la ventana supera los datos disponibles
+    _xmins, _xmaxs = [], []
+    if gen_rows:
+        _dr = pd.DataFrame(gen_rows)
+        _dr["fecha_hora"] = pd.to_datetime(_dr["fecha_hora"]).dt.tz_localize(None)
+        _dr = _dr[(_dr["parque"] == parque) & (_dr["fecha_hora"] >= corte)]
+        if not _dr.empty:
+            _xmins.append(_dr["fecha_hora"].min()); _xmaxs.append(_dr["fecha_hora"].max())
+    if prog_rows:
+        _dp = pd.DataFrame(prog_rows)
+        _dp["fecha_hora"] = pd.to_datetime(_dp["fecha_hora"]).dt.tz_localize(None)
+        _dp = _dp[(_dp["parque"] == parque) & (_dp["fecha_hora"] >= corte)]
+        if not _dp.empty:
+            _xmins.append(_dp["fecha_hora"].min()); _xmaxs.append(_dp["fecha_hora"].max())
+    x_min_gen = min(_xmins) if _xmins else corte
+    x_max_gen = max(_xmaxs) if _xmaxs else None
+
     # Modelo eólico primero (fondo) — solo histórico para no estirar el eje X al futuro
     if not df_meteo.empty and "p_eolica_estimada_mw" in df_meteo.columns:
         df_mod = df_meteo[
@@ -141,19 +158,22 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        xaxis=dict(range=[corte, None]),
+        xaxis=dict(range=[x_min_gen, x_max_gen]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
-    st.plotly_chart(fig, width="stretch", key=f"eolica_grafico_gen_{parque}", config={"responsive": True})
+    st.plotly_chart(fig, use_container_width=True, key=f"eolica_grafico_gen_{parque}")
 
 
 def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
     """Gráfico de viento separado en dos subplots: velocidad arriba, shear abajo."""
     if df_meteo.empty:
         return
+
+    x_min = df_meteo["fecha_hora"].min() if not df_meteo.empty else corte
+    x_max = df_meteo["fecha_hora"].max() if not df_meteo.empty else None
 
     # Subplot superior: velocidades (10m, 100m, rafagas)
     fig_v = go.Figure()
@@ -200,13 +220,13 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="m/s",
-        xaxis=dict(range=[corte, None]),
+        xaxis=dict(range=[x_min, x_max]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
     )
     fig_v.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig_v.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
-    st.plotly_chart(fig_v, width="stretch", key=f"eolica_grafico_viento_{parque}", config={"responsive": True})
+    st.plotly_chart(fig_v, use_container_width=True, key=f"eolica_grafico_viento_{parque}")
 
     # Shear α en gráfico propio — eje Y automático
     if "wind_shear_alpha" in df_meteo.columns:
@@ -239,13 +259,13 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
                 margin=dict(l=0, r=0, t=10, b=0),
                 xaxis_title=None,
                 yaxis_title="α (shear)",
-                xaxis=dict(range=[corte, None]),
+                xaxis=dict(range=[x_min, x_max]),
                 hovermode="x unified",
                 showlegend=False,
             )
             fig_s.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
             fig_s.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
-            st.plotly_chart(fig_s, width="stretch", key=f"eolica_grafico_shear_{parque}", config={"responsive": True})
+            st.plotly_chart(fig_s, use_container_width=True, key=f"eolica_grafico_shear_{parque}")
 
 
 def _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel):
