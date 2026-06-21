@@ -75,7 +75,14 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
 
     # Modelo FV primero (fondo) — solo horas diurnas, muy tenue para no tapar las otras series
     if not df_meteo.empty and "p_fv_estimada_mw" in df_meteo.columns:
-        df_dia = df_meteo[df_meteo["is_day"] == True].copy() if "is_day" in df_meteo.columns else df_meteo.copy()
+        # is_day puede venir como bool, int (1/0) o string ("true"/"false") desde Supabase
+        if "is_day" in df_meteo.columns:
+            is_day_mask = df_meteo["is_day"].apply(
+                lambda v: bool(v) if not isinstance(v, str) else v.lower() == "true"
+            )
+            df_dia = df_meteo[is_day_mask & df_meteo["p_fv_estimada_mw"].notna()].copy()
+        else:
+            df_dia = df_meteo[df_meteo["p_fv_estimada_mw"].notna()].copy()
         if not df_dia.empty:
             fig.add_trace(go.Scatter(
                 x=df_dia["fecha_hora"], y=df_dia["p_fv_estimada_mw"],
@@ -259,6 +266,10 @@ def render_tab_solar(
     _kpis_solar(gen_por_parque, prog_por_parque, parque_activo)
     st.divider()
 
+    # Inicializar ventana en session_state para que el primer render ya use 168h
+    if "solar_ventana_horas" not in st.session_state:
+        st.session_state["solar_ventana_horas"] = 168
+
     col_sel, col_ventana = st.columns([3, 1])
     with col_sel:
         parque_sel = st.selectbox(
@@ -272,7 +283,6 @@ def render_tab_solar(
         horas_ventana = st.selectbox(
             "Ventana",
             [24, 48, 72, 168],
-            index=3,
             format_func=lambda h: "Ultima semana" if h == 168 else f"Ultimas {h} h",
             key="solar_ventana_horas",
         )

@@ -41,9 +41,10 @@ def _get_with_retry(url: str, params: dict, max_retries: int = 3) -> dict:
 
 
 def _ventana_fechas(dias: int = DIAS_VENTANA) -> tuple[str, str]:
-    """Retorna (startDate, endDate) en formato YYYY-MM-DD para la ventana de adquisición."""
+    """Retorna (startDate, endDate) en formato YYYY-MM-DD para la ventana de adquisición.
+    endDate = mañana para capturar datos del día actual aunque la API publique con delay."""
     hoy = datetime.now(TZ_CHILE).date()
-    return (hoy - timedelta(days=dias - 1)).isoformat(), hoy.isoformat()
+    return (hoy - timedelta(days=dias - 1)).isoformat(), (hoy + timedelta(days=1)).isoformat()
 
 
 def _hora_cen_a_dt(fecha_hora_str: str, hora_cen: int) -> str:
