@@ -76,14 +76,8 @@ def _xmin(*dfs_fecha) -> pd.Timestamp | None:
     return min(mins) if mins else None
 
 
-def _ahora_stgo() -> pd.Timestamp:
-    from datetime import datetime, timezone, timedelta
-    return pd.Timestamp(datetime.now(timezone(timedelta(hours=-3)))).tz_localize(None)
-
-
 def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
     fig = go.Figure()
-    ahora = _ahora_stgo()
 
     # Modelo FV: solo histórico (es_forecast=False) y solo horas diurnas
     if not df_meteo.empty and "p_fv_estimada_mw" in df_meteo.columns:
@@ -137,12 +131,12 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
         template="plotly_white",
         paper_bgcolor=AES_BLANCO,
         plot_bgcolor=AES_GRIS,
-        transition=dict(duration=500, easing="cubic-in-out"),
+        transition=dict(duration=0),
         height=320,
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        xaxis=dict(range=[corte, ahora]),
+        xaxis=dict(range=[corte, None]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -187,7 +181,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
         template="plotly_white",
         paper_bgcolor=AES_BLANCO,
         plot_bgcolor=AES_GRIS,
-        transition=dict(duration=500, easing="cubic-in-out"),
+        transition=dict(duration=0),
         height=220,
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
