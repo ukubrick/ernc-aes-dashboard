@@ -149,7 +149,6 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
     if df_meteo.empty or "ghi_wm2" not in df_meteo.columns:
         return
 
-    x_inicio = x_min or corte
     fig = go.Figure()
     hist = df_meteo[df_meteo["es_forecast"] != True]
     fore = df_meteo[df_meteo["es_forecast"] == True]
