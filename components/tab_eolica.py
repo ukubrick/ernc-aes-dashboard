@@ -328,17 +328,26 @@ def render_tab_eolica(
     st.divider()
 
     _ventanas = [24, 48, 72, 168]
+
+    # Preservar selección entre reruns (el rerun de corrección de ancho resetea index=)
+    _parque_prev = st.session_state.get("eolica_parque_sel", parque_activo)
+    _parque_idx  = PARQUES_EOLICA.index(_parque_prev) if _parque_prev in PARQUES_EOLICA else (
+        PARQUES_EOLICA.index(parque_activo) if parque_activo in PARQUES_EOLICA else 0
+    )
+    _ventana_prev = st.session_state.get("eolica_ventana_horas", 168)
+    _ventana_idx  = _ventanas.index(_ventana_prev) if _ventana_prev in _ventanas else 3
+
     parque_sel = st.selectbox(
         "Parque eolico",
         PARQUES_EOLICA,
-        index=PARQUES_EOLICA.index(parque_activo) if parque_activo in PARQUES_EOLICA else 0,
+        index=_parque_idx,
         format_func=lambda p: NOMBRE_DISPLAY[p],
         key="eolica_parque_sel",
     )
     horas_ventana = st.selectbox(
         "Ventana",
         _ventanas,
-        index=3,
+        index=_ventana_idx,
         format_func=lambda h: "Ultima semana" if h == 168 else f"Ultimas {h} h",
         key="eolica_ventana_horas",
     )
