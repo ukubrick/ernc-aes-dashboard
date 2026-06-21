@@ -136,40 +136,35 @@ st.markdown(
     [data-testid="metric-container"]:nth-child(6) {{ animation-delay: 0.30s; border-top-color: {AES_CYAN}; }}
     [data-testid="metric-container"]:nth-child(7) {{ animation-delay: 0.35s; border-top-color: #EF4444; }}
 
-    /* ── Tabs ─────────────────────────────────────────────────────────────── */
-    .stTabs [data-baseweb="tab-list"] {{
+    /* ── Barra de navegación (botones tipo tab) ────────────────────────────── */
+    /* Solo afecta botones del área principal — los del sidebar tienen su propio scope */
+    .block-container .stButton button {{
+        font-size: 12.5px;
+        font-weight: 600;
+        padding: 8px 10px;
+        border-radius: 8px;
+        transition: all 0.18s cubic-bezier(0.4,0,0.2,1);
+    }}
+    /* Botón inactivo (secondary) — aspecto de tab en reposo */
+    .block-container .stButton button[kind="secondary"],
+    .block-container .stButton button[data-testid="stBaseButton-secondary"] {{
         background: {AES_BLANCO};
-        border-bottom: 3px solid {AES_AZUL};
-        gap: 2px;
-        padding: 0 4px;
-        border-radius: 8px 8px 0 0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }}
-    .stTabs [data-baseweb="tab"] {{
-        background: transparent;
-        border-radius: 6px 6px 0 0;
         color: {AES_MUTED};
-        font-weight: 500;
-        font-size: 13px;
-        padding: 9px 18px;
-        transition: all 0.20s cubic-bezier(0.4,0,0.2,1);
-        position: relative;
+        border: 1px solid {AES_BORDE};
     }}
-    .stTabs [data-baseweb="tab"]:hover {{
-        background: rgba(59,76,232,0.07);
+    .block-container .stButton button[kind="secondary"]:hover,
+    .block-container .stButton button[data-testid="stBaseButton-secondary"]:hover {{
+        background: rgba(59,76,232,0.06);
         color: {AES_AZUL};
+        border-color: {AES_AZUL};
     }}
-    .stTabs [aria-selected="true"] {{
-        background: linear-gradient(135deg, {AES_AZUL} 0%, #2530B0 100%) !important;
-        color: white !important;
-        font-weight: 700;
-        border-radius: 6px 6px 0 0;
-        box-shadow: 0 -2px 10px rgba(59,76,232,0.30);
-    }}
-
-    /* Contenido de tab: aparece con fade */
-    [data-testid="stTabsContent"] {{
-        animation: fadeInUp 0.35s ease both;
+    /* Botón activo (primary) — gradiente azul AES */
+    .block-container .stButton button[kind="primary"],
+    .block-container .stButton button[data-testid="stBaseButton-primary"] {{
+        background: linear-gradient(135deg, {AES_AZUL} 0%, {AES_AZUL_OSC} 100%);
+        color: white;
+        border: 1px solid {AES_AZUL_OSC};
+        box-shadow: 0 4px 12px rgba(59,76,232,0.28);
     }}
 
     /* ── Cards genéricas ──────────────────────────────────────────────────── */
@@ -376,7 +371,8 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
                     st.markdown("</div>", unsafe_allow_html=True)
                 if clicked:
                     st.session_state["parque_activo"] = p
-                    st.session_state["tab_forzado"] = "solar"
+                    st.session_state["vista"] = "Solar FV"
+                    st.session_state["_sync_parque"] = p   # one-shot: fuerza el selectbox una vez
                     st.rerun()
 
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
@@ -404,7 +400,8 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
                 st.markdown("</div>", unsafe_allow_html=True)
             if clicked:
                 st.session_state["parque_activo"] = p
-                st.session_state["tab_forzado"] = "eolica"
+                st.session_state["vista"] = "Eolica"
+                st.session_state["_sync_parque"] = p   # one-shot: fuerza el selectbox una vez
                 st.rerun()
 
         st.divider()
@@ -464,6 +461,38 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
         )
 
     return st.session_state.get("parque_activo", None)
+
+
+# ── Navegación principal (vista única) ──────────────────────────────────────────
+
+VISTAS = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d",
+          "Estadisticas", "Insights", "CMG", "Limitaciones"]
+
+
+def _navegacion() -> str:
+    """Barra de navegación con botones. Devuelve la vista activa.
+
+    Usa una variable de estado normal (`vista`), no la key de un widget, para
+    que el sidebar pueda forzar la vista escribiendo en session_state.
+    """
+    vista = st.session_state.get("vista", VISTAS[0])
+    if vista not in VISTAS:
+        vista = VISTAS[0]
+
+    cols = st.columns(len(VISTAS))
+    for i, v in enumerate(VISTAS):
+        with cols[i]:
+            if st.button(
+                v,
+                key=f"nav_{v}",
+                use_container_width=True,
+                type="primary" if v == vista else "secondary",
+            ):
+                st.session_state["vista"] = v
+                st.rerun()
+
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    return vista
 
 
 # ── Layout principal ──────────────────────────────────────────────────────────
@@ -526,60 +555,36 @@ def main():
 
     st.divider()
 
-    tab_forzado = st.session_state.pop("tab_forzado", None)
-    _tab_map = {"solar": "Solar FV", "eolica": "Eolica"}
-    tab_labels = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d", "Estadisticas", "Insights", "CMG", "Limitaciones"]
-
-    # Cuando el sidebar fuerza un tab, usar key único para recrear el componente
-    # con default= activo. El key se guarda en session_state y se reutiliza en todos
-    # los reruns siguientes (cambio ventana, parque) sin recrear el componente.
-    if tab_forzado and tab_forzado in _tab_map:
-        _key = f"tabs_{tab_forzado}_{parque_activo}"
-        st.session_state["_tabs_key"] = _key
-        _default = _tab_map[tab_forzado]
-    else:
-        _key = st.session_state.get("_tabs_key", "tabs_default")
-        _default = None
-
-    tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(
-        tab_labels,
-        key=_key,
-        default=_default,
-    )
-
+    # ── Navegación de vista única ────────────────────────────────────────────
+    # Se renderiza SOLO la vista activa. Esto evita el bug de Plotly dentro de
+    # st.tabs: los paneles de tabs inactivos quedan con display:none, el gráfico
+    # se inicializa midiendo ancho 0 y aparece comprimido hasta el siguiente
+    # rerun. Con vista única el gráfico siempre se monta visible y a ancho real.
+    vista = _navegacion()
     parque_tec = TECNOLOGIA.get(parque_activo, "Solar") if parque_activo else None
-    tab_activo = st.session_state.get(_key, _default or "Mapa & Resumen")
 
-    with tab_resumen:
-        _parque_mapa = parque_activo if tab_activo == "Mapa & Resumen" else None
-        _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, _parque_mapa)
-
-    with tab_solar:
+    if vista == "Mapa & Resumen":
+        _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo)
+    elif vista == "Solar FV":
         solar_activo = parque_activo if parque_tec == "Solar" else None
         render_tab_solar(gen_por_parque, prog_por_parque, gen_rows, prog_rows, solar_activo)
-
-    with tab_eolica:
+    elif vista == "Eolica":
         eolica_activo = parque_activo if parque_tec == "Eólica" else None
         render_tab_eolica(gen_por_parque, prog_por_parque, gen_rows, prog_rows, eolica_activo)
-
-    with tab_forecast:
+    elif vista == "Forecast 7d":
         render_tab_forecast()
-
-    with tab_stats:
+    elif vista == "Estadisticas":
         render_tab_estadisticas(gen_rows=gen_rows, prog_rows=prog_rows, cmg_rows=cmg_rows)
-
-    with tab_insights:
+    elif vista == "Insights":
         render_tab_insights(
             gen_por_parque=gen_por_parque,
             prog_por_parque=prog_por_parque,
             cmg_crucero=cmg_val,
             lim_rows=lim_rows,
         )
-
-    with tab_cmg:
+    elif vista == "CMG":
         _render_tab_cmg(cmg_rows)
-
-    with tab_limitaciones:
+    elif vista == "Limitaciones":
         _render_tab_limitaciones(lim_rows)
 
 
