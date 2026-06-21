@@ -266,28 +266,46 @@ _components.html("""
 
     function resizePlots(panel) {
         var Plotly = pwin.Plotly;
-        if (!Plotly) return;
-        panel.querySelectorAll('.js-plotly-plot').forEach(function(p) {
-            try { Plotly.Plots.resize(p); } catch(e) {}
+        panel.querySelectorAll('.js-plotly-plot').forEach(function(gd) {
+            // Limpiar width fijo en todos los SVG y contenedores del gráfico
+            gd.querySelectorAll('svg').forEach(function(svg) {
+                svg.removeAttribute('width');
+                svg.style.width = '100%';
+            });
+            var sc = gd.querySelector('.svg-container');
+            if (sc) { sc.removeAttribute('width'); sc.style.width = '100%'; }
+            // Ahora resize funciona porque no hay width fijo
+            if (Plotly) {
+                try { Plotly.Plots.resize(gd); } catch(e) {}
+            }
         });
     }
 
-    function attach() {
-        var panels = pdoc.querySelectorAll('[role="tabpanel"]');
-        if (!panels.length) { setTimeout(attach, 400); return; }
-        panels.forEach(function(panel) {
-            new MutationObserver(function(muts) {
+    var panelObservers = new WeakMap();
+
+    function attachToPanels() {
+        pdoc.querySelectorAll('[role="tabpanel"]').forEach(function(panel) {
+            if (panelObservers.has(panel)) return; // ya tiene observer
+            var obs = new MutationObserver(function(muts) {
                 muts.forEach(function(m) {
                     if (m.attributeName === 'hidden' && !panel.hasAttribute('hidden')) {
                         setTimeout(function(){ resizePlots(panel); }, 100);
-                        setTimeout(function(){ resizePlots(panel); }, 500);
+                        setTimeout(function(){ resizePlots(panel); }, 600);
                     }
                 });
-            }).observe(panel, { attributes: true, attributeFilter: ['hidden'] });
+            });
+            obs.observe(panel, { attributes: true, attributeFilter: ['hidden'] });
+            panelObservers.set(panel, obs);
         });
     }
 
-    attach();
+    // Re-enganchar cada vez que Streamlit recrea el DOM (rerun)
+    new MutationObserver(function() {
+        attachToPanels();
+    }).observe(pdoc.body, { childList: true, subtree: true });
+
+    // Primera vez
+    attachToPanels();
 })();
 </script>
 """, height=0)
