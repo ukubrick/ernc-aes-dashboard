@@ -45,29 +45,24 @@ def _df_meteo(parque: str) -> pd.DataFrame:
 
 
 def _kpis_solar(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str | None) -> None:
+    """Tarjetas-botón: clic selecciona el parque (actualiza el selectbox y el gráfico)."""
     cols = st.columns(len(PARQUES_SOLAR))
     for i, p in enumerate(PARQUES_SOLAR):
         gen    = gen_por_parque.get(p)
-        prog   = prog_por_parque.get(p)
         fp     = calcular_factor_planta(gen, PMAX[p])
         nombre = NOMBRE_DISPLAY[p]
         gen_str = "—" if gen is None else f"{gen:.1f}"
-        fp_str  = "—" if fp  is None else f"{fp:.1f}%"
+        fp_str  = "—" if fp  is None else f"{fp:.0f}%"
         is_sel  = (p == parque_activo)
-        borde_color = AES_AZUL if is_sel else AES_BORDE
-        bg_color    = "#EEF1FD" if is_sel else AES_BLANCO
         with cols[i]:
-            st.markdown(
-                f"<div style='background:{bg_color};border-radius:8px;padding:10px 12px;"
-                f"border:1px solid {borde_color};cursor:pointer'>"
-                f"<div style='font-size:10px;color:{AES_MUTED};margin-bottom:2px;text-transform:uppercase;letter-spacing:0.5px'>{nombre}</div>"
-                f"<div style='font-size:19px;font-weight:700;color:{AES_TEXTO}'>"
-                f"{gen_str} <span style='font-size:11px;font-weight:400;color:{AES_MUTED}'>MW</span></div>"
-                f"<div style='font-size:11px;color:{AES_MUTED}'>FP: "
-                f"<b style='color:{AES_AZUL}'>{fp_str}</b></div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+            if st.button(
+                f"{nombre}\n\n{gen_str} MW · FP {fp_str}",
+                key=f"kpi_solar_{p}",
+                use_container_width=True,
+                type="primary" if is_sel else "secondary",
+            ):
+                st.session_state["solar_parque_sel"] = p
+                st.rerun()
 
 
 def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
@@ -342,7 +337,15 @@ def render_tab_solar(
     # ── Métricas entre los dos gráficos ──
     _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
 
-    # ── Glosario de series — tarjeta siempre visible ──
+    # ── Segunda serie de tiempo: GHI + nubosidad (antes que leyenda/fórmulas) ──
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:10px 0 6px'>"
+        f"Irradiancia GHI + nubosidad baja — {NOMBRE_DISPLAY[parque_sel]}</div>",
+        unsafe_allow_html=True,
+    )
+    _grafico_ghi(df_meteo, parque_sel, corte)
+
+    # ── Glosario de series — al final, tras los gráficos ──
     st.markdown(
         f"""<div style='background:{AES_BLANCO};border:1px solid {AES_BORDE};border-radius:10px;
 padding:14px 20px;margin:10px 0 14px;font-size:11.5px;color:{AES_TEXTO};line-height:1.7'>
@@ -386,10 +389,3 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
             "</div>",
             unsafe_allow_html=True,
         )
-
-    st.markdown(
-        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:4px 0 6px'>"
-        f"Irradiancia GHI + nubosidad baja — {NOMBRE_DISPLAY[parque_sel]}</div>",
-        unsafe_allow_html=True,
-    )
-    _grafico_ghi(df_meteo, parque_sel, corte)

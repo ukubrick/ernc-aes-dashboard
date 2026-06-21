@@ -120,7 +120,20 @@ def _check_eficiencia_solar(parque: str, gen_por_parque: dict, insights: list[In
         return
 
     ratio = gen / p_est * 100
-    if ratio < 75:
+    if ratio < 25:
+        insights.append(Insight(
+            severidad="critico",
+            parque=parque,
+            titulo="Parque FV caído o fuertemente limitado",
+            detalle=(
+                f"GHI={ghi:.0f} W/m² (recurso bueno) pero la generación real es {gen:.1f} MW "
+                f"vs {p_est:.1f} MW del modelo (ratio {ratio:.0f}%). Revisar inversores/limitación."
+            ),
+            valor=ratio,
+            unidad="%",
+            categoria="operacional",
+        ))
+    elif ratio < 75:
         insights.append(Insight(
             severidad="alerta",
             parque=parque,
@@ -213,6 +226,45 @@ def _check_wind_shear(parque: str, insights: list[Insight]) -> None:
         ))
 
 
+def _check_eficiencia_eolica(parque: str, gen_por_parque: dict, insights: list[Insight]) -> None:
+    """Genera muy por debajo del modelo eólico con viento útil → posible falla/limitación."""
+    meteo = _get_meteo_actual(parque)
+    if not meteo:
+        return
+    p_est = meteo.get("p_eolica_estimada_mw") or 0
+    v100 = meteo.get("wind_speed_100m") or 0
+    gen = gen_por_parque.get(parque)
+    # Solo evaluar con viento por sobre cut-in y modelo significativo
+    if v100 < 4 or p_est < 2 or gen is None:
+        return
+    ratio = gen / p_est * 100
+    if ratio < 50:
+        insights.append(Insight(
+            severidad="alerta",
+            parque=parque,
+            titulo="Generación eólica baja con buen viento",
+            detalle=(
+                f"Viento hub {v100:.1f} m/s, modelo estima {p_est:.1f} MW pero real {gen:.1f} MW "
+                f"(ratio {ratio:.0f}%). Posible curtailment, mantenimiento o turbinas detenidas."
+            ),
+            valor=ratio,
+            unidad="%",
+            categoria="operacional",
+        ))
+
+
+def _check_sin_telemetria(parque: str, gen_por_parque: dict, insights: list[Insight]) -> None:
+    """El parque no reporta generación reciente (None) → sin telemetría / dato faltante."""
+    if parque in gen_por_parque and gen_por_parque.get(parque) is None:
+        insights.append(Insight(
+            severidad="info",
+            parque=parque,
+            titulo="Sin telemetría reciente",
+            detalle="No hay lectura de generación en la última ventana. Verificar adquisición CEN.",
+            categoria="operacional",
+        ))
+
+
 def _check_factor_planta_alto(parque: str, gen_por_parque: dict, insights: list[Insight]) -> None:
     gen = gen_por_parque.get(parque)
     fp = calcular_factor_planta(gen, PMAX[parque])
@@ -231,7 +283,20 @@ def _check_factor_planta_alto(parque: str, gen_por_parque: dict, insights: list[
 def _check_cmg_bajo(cmg_crucero: float | None, insights: list[Insight]) -> None:
     if cmg_crucero is None:
         return
-    if cmg_crucero < 5:
+    if cmg_crucero < 0:
+        insights.append(Insight(
+            severidad="critico",
+            parque=None,
+            titulo="CMG negativo — riesgo de vertimiento",
+            detalle=(
+                f"CMG CRUCERO {cmg_crucero:.1f} USD/MWh. Precio negativo: conviene reducir "
+                "inyección, posible vertimiento forzado de ERNC en el norte."
+            ),
+            valor=cmg_crucero,
+            unidad="USD/MWh",
+            categoria="mercado",
+        ))
+    elif cmg_crucero < 5:
         insights.append(Insight(
             severidad="alerta",
             parque=None,
@@ -289,6 +354,7 @@ def evaluar_insights(
 
     # Reglas por parque solar
     for p in PARQUES_SOLAR:
+        _check_sin_telemetria(p, gen_por_parque, insights)
         _check_desvio(p, gen_por_parque, prog_por_parque, insights)
         _check_eficiencia_solar(p, gen_por_parque, insights)
         _check_camanchaca(p, insights)
@@ -296,9 +362,11 @@ def evaluar_insights(
 
     # Reglas por parque eólico
     for p in PARQUES_EOLICA:
+        _check_sin_telemetria(p, gen_por_parque, insights)
         _check_desvio(p, gen_por_parque, prog_por_parque, insights)
         _check_viento_cut_out(p, insights)
         _check_wind_shear(p, insights)
+        _check_eficiencia_eolica(p, gen_por_parque, insights)
         _check_factor_planta_alto(p, gen_por_parque, insights)
 
     # Ordenar: crítico → alerta → info → positivo

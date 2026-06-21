@@ -59,6 +59,22 @@ st.markdown(
         0%, 100% {{ transform: scale(1); opacity: 1; }}
         50%       {{ transform: scale(1.5); opacity: 0.6; }}
     }}
+    @keyframes pulse-green {{
+        0%   {{ box-shadow: 0 0 0 0 rgba(90,184,72,0.7); }}
+        70%  {{ box-shadow: 0 0 0 7px rgba(90,184,72,0.0); }}
+        100% {{ box-shadow: 0 0 0 0 rgba(90,184,72,0.0); }}
+    }}
+    @keyframes pulse-red {{
+        0%   {{ box-shadow: 0 0 0 0 rgba(239,68,68,0.7); }}
+        70%  {{ box-shadow: 0 0 0 7px rgba(239,68,68,0.0); }}
+        100% {{ box-shadow: 0 0 0 0 rgba(239,68,68,0.0); }}
+    }}
+    .status-dot {{
+        display:inline-block; width:9px; height:9px; border-radius:50%;
+        flex-shrink:0; margin-right:8px;
+    }}
+    .status-dot.ok   {{ background:#5AB848; animation: pulse-green 1.8s infinite; }}
+    .status-dot.bad  {{ background:#EF4444; animation: pulse-red 1.8s infinite; }}
 
     /* ── Base ─────────────────────────────────────────────────────────────── */
     html, body, .stApp {{
@@ -270,6 +286,7 @@ from components.tab_forecast import render_tab_forecast
 from components.tab_insights import render_tab_insights
 from components.tab_estadisticas import render_tab_estadisticas
 from components.tab_ml import render_tab_ml
+from components.tab_meteo_sistema import render_tab_meteo_sistema
 
 
 # ── Carga de datos ─────────────────────────────────────────────────────────────
@@ -331,6 +348,58 @@ def _fmt_hora(ts: str | None) -> str:
         return "—"
 
 
+def _estado_fuente(ts: str | None, horas_max: float = 12.0) -> str:
+    """Devuelve 'ok' si la fuente tiene datos recientes (<= horas_max), si no 'bad'.
+
+    Sirve como semáforo de conexión: verde palpitante = datos fluyendo en el cron.
+    """
+    if not ts:
+        return "bad"
+    try:
+        from datetime import datetime, timezone, timedelta
+        dt = datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
+        ahora = datetime.now(timezone(timedelta(hours=-3))).replace(tzinfo=None)
+        return "ok" if (ahora - dt) <= timedelta(hours=horas_max) else "bad"
+    except Exception:
+        return "bad"
+
+
+def _bloque_fuentes(act: dict) -> str:
+    """HTML del panel 'Fuentes de datos' con semáforo de conexión palpitante."""
+    fuentes = [
+        ("Gen. real CEN",   act.get("gen_real"), 12.0),
+        ("PCP programada",  act.get("gen_prog"), 24.0),
+        ("Meteo Open-Meteo", act.get("meteo"),   12.0),
+        ("CMG CEN S3",      act.get("cmg"),       6.0),
+    ]
+    filas = ""
+    n_ok = 0
+    for label, ts, hmax in fuentes:
+        estado = _estado_fuente(ts, hmax)
+        if estado == "ok":
+            n_ok += 1
+        filas += (
+            f"<div style='display:flex;align-items:center;margin-bottom:7px'>"
+            f"<span class='status-dot {estado}'></span>"
+            f"<span style='font-size:11px;color:rgba(255,255,255,0.80)'>{label}</span>"
+            f"<span style='margin-left:auto;font-size:10px;color:rgba(255,255,255,0.50)'>"
+            f"{_fmt_hora(ts)}</span></div>"
+        )
+    estado_global = "Conectado" if n_ok == len(fuentes) else (
+        "Parcial" if n_ok > 0 else "Sin conexion")
+    color_global = "#5AB848" if n_ok == len(fuentes) else ("#F59E0B" if n_ok else "#EF4444")
+    return (
+        f"<div style='padding:12px 14px;background:rgba(255,255,255,0.07);"
+        f"border-radius:8px;border:1px solid rgba(255,255,255,0.12);margin-bottom:6px'>"
+        f"<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:10px'>"
+        f"<span style='font-size:10px;font-weight:700;color:{AES_CYAN};text-transform:uppercase;"
+        f"letter-spacing:1px'>Fuentes de datos</span>"
+        f"<span style='font-size:9px;font-weight:700;color:{color_global};text-transform:uppercase;"
+        f"letter-spacing:0.5px'>{estado_global}</span></div>"
+        f"{filas}</div>"
+    )
+
+
 def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dict | None = None) -> str:
     # None = ningún parque seleccionado explícitamente → el mapa muestra Chile completo
     parque_activo = st.session_state.get("parque_activo", None)
@@ -345,6 +414,10 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
             f"</div>",
             unsafe_allow_html=True,
         )
+
+        # Fuentes de datos — semáforo de conexión palpitante, en la parte alta
+        st.markdown(_bloque_fuentes(actualizaciones or {}), unsafe_allow_html=True)
+
         st.divider()
 
         # Parques solares
@@ -424,30 +497,6 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
         if st.button("Generar reporte PDF", use_container_width=True, key="btn_pdf"):
             st.session_state["generar_pdf"] = True
 
-        # Fuentes de datos
-        act = actualizaciones or {}
-        st.markdown(
-            f"<div style='margin-top:18px;padding:12px 14px;background:rgba(255,255,255,0.07);"
-            f"border-radius:8px;border:1px solid rgba(255,255,255,0.12)'>"
-            f"<div style='font-size:10px;font-weight:700;color:{AES_CYAN};text-transform:uppercase;"
-            f"letter-spacing:1px;margin-bottom:10px'>Fuentes de datos</div>"
-            f"<div style='font-size:11px;color:rgba(255,255,255,0.75);line-height:2'>"
-            f"<div style='display:flex;justify-content:space-between'>"
-            f"<span>Gen. real CEN</span>"
-            f"<span style='color:rgba(255,255,255,0.55)'>{_fmt_hora(act.get('gen_real'))}</span></div>"
-            f"<div style='display:flex;justify-content:space-between'>"
-            f"<span>PCP programada</span>"
-            f"<span style='color:rgba(255,255,255,0.55)'>{_fmt_hora(act.get('gen_prog'))}</span></div>"
-            f"<div style='display:flex;justify-content:space-between'>"
-            f"<span>Meteo Open-Meteo</span>"
-            f"<span style='color:rgba(255,255,255,0.55)'>{_fmt_hora(act.get('meteo'))}</span></div>"
-            f"<div style='display:flex;justify-content:space-between'>"
-            f"<span>CMG CEN S3</span>"
-            f"<span style='color:rgba(255,255,255,0.55)'>{_fmt_hora(act.get('cmg'))}</span></div>"
-            f"</div></div>",
-            unsafe_allow_html=True,
-        )
-
         # Firma
         st.markdown(
             f"<div style='margin-top:20px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.12);"
@@ -467,7 +516,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 # ── Navegación principal (vista única) ──────────────────────────────────────────
 
 VISTAS = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d",
-          "Estadisticas", "ML Analysis", "Insights", "CMG", "Limitaciones"]
+          "Estadisticas", "ML Analysis", "Insights", "Meteo & Sistema", "CMG", "Limitaciones"]
 
 
 def _navegacion() -> str:
@@ -585,6 +634,8 @@ def main():
             cmg_crucero=cmg_val,
             lim_rows=lim_rows,
         )
+    elif vista == "Meteo & Sistema":
+        render_tab_meteo_sistema(cmg_rows)
     elif vista == "CMG":
         _render_tab_cmg(cmg_rows)
     elif vista == "Limitaciones":
@@ -600,12 +651,19 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
     col_mapa, col_tabla = st.columns([3, 2])
 
     with col_mapa:
-        st.markdown(
-            f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:8px'>"
-            f"Generacion actual por parque</div>",
-            unsafe_allow_html=True,
-        )
-        render_mapa(gen_por_parque, parque_activo=parque_activo)
+        cab_l, cab_r = st.columns([2, 1])
+        with cab_l:
+            st.markdown(
+                f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:8px'>"
+                f"Generacion actual por parque</div>",
+                unsafe_allow_html=True,
+            )
+        with cab_r:
+            estilo = st.selectbox(
+                "Estilo de mapa", ["Claro", "Detallado"],
+                key="mapa_estilo", label_visibility="collapsed",
+            )
+        render_mapa(gen_por_parque, parque_activo=parque_activo, estilo=estilo)
 
     with col_tabla:
         st.markdown(

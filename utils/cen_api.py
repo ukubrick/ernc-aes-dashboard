@@ -1,5 +1,6 @@
 import os
 import time
+import random
 import requests
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -14,6 +15,11 @@ from config import (
 _KEY_SIP: str | None = None
 _KEY_OPS: str | None = None
 
+# Sesión HTTP reutilizable: reusa la conexión TCP/TLS entre llamadas (más rápido y
+# estable que abrir un socket nuevo por request).
+_SESSION = requests.Session()
+_SESSION.headers.update({"Accept": "application/json"})
+
 
 def _get_keys():
     global _KEY_SIP, _KEY_OPS
@@ -24,20 +30,34 @@ def _get_keys():
     return _KEY_SIP, _KEY_OPS
 
 
-def _get_with_retry(url: str, params: dict, max_retries: int = 3) -> dict:
-    """GET con backoff exponencial: 10s → 20s → 40s."""
+def _get_with_retry(url: str, params: dict, max_retries: int = 4, timeout: int = 40) -> dict:
+    """GET resiliente.
+
+    - Reintenta en 429 (rate limit) y 5xx, además de errores de red/timeout.
+    - En 429 respeta el header `Retry-After` si viene; si no, backoff exponencial.
+    - Backoff con jitter (8s, 16s, 32s ± aleatorio) para no sincronizar reintentos.
+    - 4xx distintos de 429 fallan rápido (no tiene sentido reintentar un 400/404).
+    """
+    last_exc = None
     for attempt in range(max_retries):
         try:
-            r = requests.get(url, params=params, timeout=30)
+            r = _SESSION.get(url, params=params, timeout=timeout)
+            if r.status_code == 429 or r.status_code >= 500:
+                retry_after = r.headers.get("Retry-After")
+                wait = (float(retry_after) if retry_after and retry_after.isdigit()
+                        else 8 * (2 ** attempt) + random.uniform(0, 3))
+                print(f"[RETRY] {r.status_code} en {url} (intento {attempt + 1}). Esperando {wait:.0f}s...")
+                last_exc = requests.HTTPError(f"{r.status_code}")
+                time.sleep(wait)
+                continue
             r.raise_for_status()
             return r.json()
-        except Exception as e:
-            if attempt < max_retries - 1:
-                wait = 10 * (2 ** attempt)
-                print(f"[RETRY] Intento {attempt + 1} fallido ({url}): {e}. Esperando {wait}s...")
-                time.sleep(wait)
-            else:
-                raise
+        except (requests.ConnectionError, requests.Timeout) as e:
+            last_exc = e
+            wait = 8 * (2 ** attempt) + random.uniform(0, 3)
+            print(f"[RETRY] Red fallida ({url}) intento {attempt + 1}: {e}. Esperando {wait:.0f}s...")
+            time.sleep(wait)
+    raise last_exc if last_exc else RuntimeError(f"GET agotó reintentos: {url}")
 
 
 def _ventana_fechas(dias: int = DIAS_VENTANA) -> tuple[str, str]:
@@ -119,8 +139,15 @@ def fetch_gen_real(parque: str, start_date: str = None, end_date: str = None) ->
                 "hora":            hora_cen - 1,
             })
 
-        total = data.get("total", len(items)) if isinstance(data, dict) else len(items)
-        if page * 5000 >= total:
+        # Paginación robusta: la API v3 puede devolver "totalPages" o "total".
+        # Si no hay metadato, cortar cuando la página viene incompleta (< pageSize).
+        if isinstance(data, dict) and data.get("totalPages") is not None:
+            if page >= data["totalPages"]:
+                break
+        elif isinstance(data, dict) and data.get("total") is not None:
+            if page * 5000 >= data["total"]:
+                break
+        elif len(items) < 5000:
             break
         page += 1
 
@@ -278,12 +305,25 @@ def fetch_limitaciones(start_date: str = None, end_date: str = None) -> list[dic
     url = f"{API_BASE_SIP}/limitaciones-transmision/v4/findByDate"
     registros = []
     page = 1
+    _PAGE_SIZE = 500   # subir el page size reduce el nº de páginas y de llamadas 429
+
+    # Índice de fragmentos de nombre a buscar dentro de instalacion_nombre.
+    # Se quita el prefijo PFV/PE y se normalizan tildes para hacer match parcial robusto.
+    def _norm(s: str) -> str:
+        return (s.upper()
+                .replace("Á", "A").replace("É", "E").replace("Í", "I")
+                .replace("Ó", "O").replace("Ú", "U"))
+
+    frag_a_parque = {}
+    for codigo, llave in LLAVES_OPREAL.items():
+        frag = _norm(llave).replace("PFV ", "").replace("PE ", "").strip()
+        frag_a_parque[frag] = codigo
 
     while True:
         params = {
             "startDate": start_date,
             "endDate":   end_date,
-            "limit":     100,
+            "limit":     _PAGE_SIZE,
             "page":      page,
             "user_key":  key_sip,
         }
@@ -294,13 +334,11 @@ def fetch_limitaciones(start_date: str = None, end_date: str = None) -> list[dic
             break
 
         for item in items:
-            instalacion = (item.get("instalacion_nombre") or "").upper()
+            instalacion = _norm(item.get("instalacion_nombre") or "")
             # Buscar si alguno de nuestros parques aparece en el nombre de la instalación
             parque_match = None
-            for codigo, llave in LLAVES_OPREAL.items():
-                # Comparar por fragmento del nombre
-                nombre_frag = llave.upper().replace("PFV ", "").replace("PE ", "")
-                if nombre_frag in instalacion:
+            for frag, codigo in frag_a_parque.items():
+                if frag and frag in instalacion:
                     parque_match = codigo
                     break
 
@@ -329,10 +367,17 @@ def fetch_limitaciones(start_date: str = None, end_date: str = None) -> list[dic
                 "modified":                 item.get("modified"),
             })
 
-        total = data.get("total", len(items)) if isinstance(data, dict) else len(items)
-        if page * 100 >= total:
+        # Paginación robusta — la API v4 publica "totalPages", no "total".
+        if isinstance(data, dict) and data.get("totalPages") is not None:
+            if page >= data["totalPages"]:
+                break
+        elif isinstance(data, dict) and data.get("total") is not None:
+            if page * _PAGE_SIZE >= data["total"]:
+                break
+        elif len(items) < _PAGE_SIZE:
             break
         page += 1
+        print(f"[LIM] Página {page - 1} procesada — {len(registros)} limitaciones de parques acumuladas")
 
     return registros
 
