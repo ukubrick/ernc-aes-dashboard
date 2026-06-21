@@ -1,7 +1,7 @@
 # CLAUDE.md — Dashboard ERNC AES Andes
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-06-19 (Sesión 9 — mejoras visuales, forecast eólica, PCP en forecast, sidebar fuentes de datos).
+> Última actualización: 2026-06-20 (Sesión 10 — fix paginación PCP v4, ventana adquisición 5 días).
 
 ---
 
@@ -777,6 +777,46 @@ streamlit run app_ernc.py
 
 ---
 
+## SESIÓN 10 — FIX PAGINACIÓN PCP Y VENTANA 5 DÍAS (2026-06-20)
+
+### Bug crítico corregido: paginación PCP v4 cortaba en página 1
+
+**Síntoma:** Solo ~33 registros en `generacion_programada_ernc` (1 hora por parque) pese a haber datos en la API.
+
+**Causa:** En `utils/cen_api.py`, función `fetch_gen_programada()`, la lógica de corte del loop usaba:
+```python
+total = data.get("total", len(items))   # "total" no existe en la respuesta v4
+if page * 5000 >= total:                # fallback a 5000 → 1*5000 >= 5000 → True → corta en pag 1
+    break
+```
+La API PCP v4 devuelve `totalPages` (no `total`). Como `total` era `None`, el fallback `len(items) = 5000` hacía que la condición se cumpliera siempre en la primera página.
+
+**Fix aplicado** (`utils/cen_api.py:195`):
+```python
+total_pages = data.get("totalPages", 1) if isinstance(data, dict) else 1
+if page >= total_pages:
+    break
+```
+
+**Estructura real de respuesta PCP v4:**
+```json
+{ "data": [...], "totalPages": 63, "page": 1, "limit": 5000 }
+```
+- Cada página = una hora del sistema completo (~5000 generadores)
+- Ventana 2 días = ~63 páginas | Ventana 5 días = ~244 páginas
+- ~5s por página → 2 días ≈ 5 min | 5 días ≈ 19 min
+
+### Ampliación de ventana
+
+- `DIAS_VENTANA` cambiado de `2` a `5` en `config.py` — aplica a gen-real, PCP, meteo y SSCC
+- `timeout-minutes` del workflow subido de `40` a `60` para cubrir los ~19 min de PCP
+
+### Commits
+- `5c92280` fix: corregir paginación PCP v4 — usar totalPages en vez de total
+- `0e6e51d` config: ampliar ventana adquisición PCP a 5 días, timeout workflow a 60 min
+
+---
+
 ## PENDIENTES
 
 - [ ] Confirmar nodo CMG correcto para eólicos sur (CHARRUA_______220 vs otro)
@@ -784,5 +824,5 @@ streamlit run app_ernc.py
 - [ ] `st.segmented_control` requiere Streamlit >= 1.38 — verificar versión en Streamlit Cloud
 - [ ] Correr workflow manual para repoblar `p_eolica_estimada_mw` en `meteo_ernc` (fix sesión 9)
 
-*Generado 2026-06-19 — Sesiones 1–9 + Sistema de diseño AES documentado + Deploy producción.*
+*Generado 2026-06-20 — Sesiones 1–10 + Fix paginación PCP + Ventana 5 días.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*
