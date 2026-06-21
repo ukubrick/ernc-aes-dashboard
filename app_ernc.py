@@ -530,22 +530,27 @@ def main():
     _tab_map = {"solar": "Solar FV", "eolica": "Eolica"}
     tab_labels = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d", "Estadisticas", "Insights", "CMG", "Limitaciones"]
 
-    # Estrategia: key fijo siempre. Cuando viene tab_forzado desde el sidebar,
-    # escribir directamente en session_state["main_tabs"] antes de crear st.tabs.
-    # Streamlit respeta este valor como estado inicial del widget en el mismo rerun.
+    # Cuando el sidebar fuerza un tab, usar key único para recrear el componente
+    # con default= activo. El key se guarda en session_state y se reutiliza en todos
+    # los reruns siguientes (cambio ventana, parque) sin recrear el componente.
     if tab_forzado and tab_forzado in _tab_map:
-        st.session_state["main_tabs"] = _tab_map[tab_forzado]
+        _key = f"tabs_{tab_forzado}_{parque_activo}"
+        st.session_state["_tabs_key"] = _key
+        _default = _tab_map[tab_forzado]
+    else:
+        _key = st.session_state.get("_tabs_key", "tabs_default")
+        _default = None
 
     tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(
         tab_labels,
-        key="main_tabs",
+        key=_key,
+        default=_default,
     )
 
     parque_tec = TECNOLOGIA.get(parque_activo, "Solar") if parque_activo else None
-    tab_activo = st.session_state.get("main_tabs", "Mapa & Resumen")
+    tab_activo = st.session_state.get(_key, _default or "Mapa & Resumen")
 
     with tab_resumen:
-        # Zoom al parque solo cuando el usuario está en el tab Mapa
         _parque_mapa = parque_activo if tab_activo == "Mapa & Resumen" else None
         _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, _parque_mapa)
 
