@@ -524,10 +524,17 @@ def main():
 
     st.divider()
 
-    st.session_state.pop("tab_forzado", None)
+    tab_forzado = st.session_state.pop("tab_forzado", None)
     tab_labels = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d", "Estadisticas", "Insights", "CMG", "Limitaciones"]
 
-    tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(tab_labels)
+    _tab_map = {"solar": "Solar FV", "eolica": "Eolica"}
+    _default_tab = _tab_map.get(tab_forzado) if tab_forzado else None
+    # key cambia cuando hay tab_forzado → Streamlit crea nuevo componente sin estado previo
+    # → default= aplica desde cero sin interferencia del tab activo anterior
+    _tabs_key = f"main_tabs_{tab_forzado or 'default'}"
+    tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(
+        tab_labels, default=_default_tab, key=_tabs_key
+    )
 
     parque_tec = TECNOLOGIA.get(parque_activo, "Solar") if parque_activo else None
 

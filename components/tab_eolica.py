@@ -136,6 +136,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
         paper_bgcolor=AES_BLANCO,
         plot_bgcolor=AES_GRIS,
         transition=dict(duration=0),
+        autosize=True,
         height=320,
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
@@ -146,7 +147,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
-    st.plotly_chart(fig, use_container_width=True, key=f"eolica_grafico_gen_{parque}", config={"responsive": True})
+    st.plotly_chart(fig, width="stretch", key=f"eolica_grafico_gen_{parque}", config={"responsive": True})
 
 
 def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
@@ -194,6 +195,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
         paper_bgcolor=AES_BLANCO,
         plot_bgcolor=AES_GRIS,
         transition=dict(duration=0),
+        autosize=True,
         height=300,
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
@@ -204,7 +206,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
     )
     fig_v.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig_v.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
-    st.plotly_chart(fig_v, use_container_width=True, key=f"eolica_grafico_viento_{parque}", config={"responsive": True})
+    st.plotly_chart(fig_v, width="stretch", key=f"eolica_grafico_viento_{parque}", config={"responsive": True})
 
     # Shear α en gráfico propio — eje Y automático
     if "wind_shear_alpha" in df_meteo.columns:
@@ -232,6 +234,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
                 template="plotly_white",
                 paper_bgcolor=AES_BLANCO,
                 plot_bgcolor=AES_GRIS,
+                autosize=True,
                 height=200,
                 margin=dict(l=0, r=0, t=10, b=0),
                 xaxis_title=None,
@@ -242,7 +245,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
             )
             fig_s.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
             fig_s.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
-            st.plotly_chart(fig_s, use_container_width=True, key=f"eolica_grafico_shear_{parque}")
+            st.plotly_chart(fig_s, width="stretch", key=f"eolica_grafico_shear_{parque}", config={"responsive": True})
 
 
 def _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel):
