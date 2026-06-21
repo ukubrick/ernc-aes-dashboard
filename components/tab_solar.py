@@ -78,7 +78,6 @@ def _xmin(*dfs_fecha) -> pd.Timestamp | None:
 
 def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min: pd.Timestamp | None = None) -> None:
     fig = go.Figure()
-    x_inicio = x_min or corte
 
     # Modelo FV: solo histórico (es_forecast=False) y solo horas diurnas
     if not df_meteo.empty and "p_fv_estimada_mw" in df_meteo.columns:
@@ -137,7 +136,7 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        xaxis=dict(range=[x_inicio, None], autorange=False),
+        xaxis=dict(),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -152,7 +151,6 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min
 
     x_inicio = x_min or corte
     fig = go.Figure()
-    # Solo histórico en esta vista — el forecast va en el tab Forecast 7d
     hist = df_meteo[df_meteo["es_forecast"] != True]
     fore = df_meteo[df_meteo["es_forecast"] == True]
 
@@ -189,7 +187,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="W/m²",
-        xaxis=dict(range=[x_inicio, None], autorange=False),
+        xaxis=dict(),
         yaxis2=dict(title="Nubosidad %", overlaying="y", side="right", range=[0, 100], showgrid=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
