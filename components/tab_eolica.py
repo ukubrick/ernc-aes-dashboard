@@ -80,10 +80,16 @@ def _kpis_eolica(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str
             )
 
 
+def _ahora_stgo() -> pd.Timestamp:
+    from datetime import datetime, timezone, timedelta
+    return pd.Timestamp(datetime.now(timezone(timedelta(hours=-3)))).tz_localize(None)
+
+
 def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque: str, horas_ventana: int) -> None:
     fig = go.Figure()
 
     corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
+    ahora = _ahora_stgo()
 
     # Modelo eólico primero (fondo) — solo histórico para no estirar el eje X al futuro
     if not df_meteo.empty and "p_eolica_estimada_mw" in df_meteo.columns:
@@ -140,7 +146,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        xaxis=dict(),
+        xaxis=dict(range=[corte, ahora]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -198,7 +204,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="m/s",
-        xaxis=dict(),
+        xaxis=dict(range=[corte, None]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
     )
@@ -236,7 +242,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
                 margin=dict(l=0, r=0, t=10, b=0),
                 xaxis_title=None,
                 yaxis_title="α (shear)",
-                xaxis=dict(),
+                xaxis=dict(range=[corte, None]),
                 hovermode="x unified",
                 showlegend=False,
             )
