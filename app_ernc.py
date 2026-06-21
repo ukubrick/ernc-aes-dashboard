@@ -468,6 +468,11 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 # ── Layout principal ──────────────────────────────────────────────────────────
 
 def main():
+    # st.rerun() es no-op dentro de callbacks. El callback solo setea el flag;
+    # aquí, al inicio del script (fuera de cualquier callback), se ejecuta el rerun.
+    if st.session_state.pop("_needs_rerun_for_tab", False):
+        st.rerun()
+
     with st.spinner("Cargando datos..."):
         try:
             gen_rows, prog_rows, cmg_rows, lim_rows, ultima_hora, actualizaciones = cargar_datos()
@@ -531,13 +536,12 @@ def main():
     _default_tab = _tab_map_forzado.get(tab_forzado)
     _tabs_key = f"main_tabs_go_{tab_forzado}" if tab_forzado else "main_tabs"
 
-    # on_change: rerun solo cuando el usuario activa Solar FV o Eólica.
-    # Necesario para que Plotly mida el ancho del contenedor ya visible (no oculto).
-    # No se dispara en reruns normales (selectbox de parque/ventana) — solo en clicks de tab.
+    # Callback no puede llamar st.rerun() directamente (es no-op).
+    # Solo setea un flag; el rerun ocurre al inicio de main() en el siguiente ciclo.
     def _on_tab_change():
         nuevo = st.session_state.get("main_tabs")
         if nuevo in ("Solar FV", "Eolica"):
-            st.rerun()
+            st.session_state["_needs_rerun_for_tab"] = True
 
     tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(
         tab_labels,
