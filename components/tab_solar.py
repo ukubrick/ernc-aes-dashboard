@@ -132,6 +132,7 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
         paper_bgcolor=AES_BLANCO,
         plot_bgcolor=AES_GRIS,
         transition=dict(duration=0),
+        autosize=True,
         height=320,
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
@@ -142,7 +143,7 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
-    st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_gen_{parque}", config={"responsive": True})
+    st.plotly_chart(fig, width="stretch", key=f"solar_grafico_gen_{parque}", config={"responsive": True})
 
 
 def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
@@ -182,6 +183,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
         paper_bgcolor=AES_BLANCO,
         plot_bgcolor=AES_GRIS,
         transition=dict(duration=0),
+        autosize=True,
         height=220,
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
@@ -193,7 +195,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-    st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_ghi_{parque}", config={"responsive": True})
+    st.plotly_chart(fig, width="stretch", key=f"solar_grafico_ghi_{parque}", config={"responsive": True})
 
 
 def _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel):
@@ -310,7 +312,8 @@ def render_tab_solar(
     if not df_meteo.empty:
         df_meteo = df_meteo[df_meteo["fecha_hora"] >= corte]
 
-    # ── Gráfico generación — ancho completo ──
+
+# ── Gráfico generación — ancho completo ──
     nombre_ventana = "ultima semana" if horas_ventana == 168 else f"ultimas {horas_ventana} h"
     grafico_container = st.container()
     with grafico_container:
