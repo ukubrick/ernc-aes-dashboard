@@ -198,5 +198,6 @@ PANEL_TILT_DEG = 20.0    # ° — inclinación promedio de paneles
 PANEL_AZIMUTH  = 0.0     # ° — 0=norte verdadero (hemisferio sur)
 
 # ── Parámetros eólicos ─────────────────────────────────────────────────────────
-TURBINA_CP = 0.45     # Coef. de potencia (Betz ~0.593, real ~0.40-0.48)
-AIRE_R     = 287.05   # J/(kg·K) — constante gas ideal aire seco
+TURBINA_CP      = 0.45    # Coef. de potencia (Betz ~0.593, real ~0.40-0.48)
+TURBINA_V_RATED = 12.0    # Velocidad nominal típica [m/s] — velocidad a la que se alcanza Pmax
+AIRE_R          = 287.05  # J/(kg·K) — constante gas ideal aire seco

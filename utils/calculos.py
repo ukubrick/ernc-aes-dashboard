@@ -1,6 +1,6 @@
 """Fórmulas derivadas para parques ERNC — temperatura celda, potencias estimadas, KPIs."""
 import math
-from config import PANEL_NOCT, PANEL_GAMMA, TURBINA_CP, AIRE_R, PMAX
+from config import PANEL_NOCT, PANEL_GAMMA, TURBINA_CP, TURBINA_V_RATED, AIRE_R, PMAX
 
 
 # ── Solar FV ──────────────────────────────────────────────────────────────────
@@ -71,18 +71,16 @@ def calcular_densidad_aire(temp_c: float, presion_hpa: float) -> float:
 def calcular_potencia_eolica_estimada(
     v100m: float,
     densidad: float,
-    area_rotor_m2: float,
     pmax_mw: float,
-    cp: float = TURBINA_CP,
+    v_rated: float = TURBINA_V_RATED,
 ) -> float:
     """
-    P = ½ × ρ × A × Cp × v³  → convertir W a MW, cap a pmax_mw.
-    area_rotor_m2: π × (D/2)² según diámetro de rotor del parque.
+    P = pmax × (ρ/ρ_ref) × (v/v_rated)³, cap a pmax_mw.
+    Derivado de P=½ρACpv³ asumiendo que a v_rated y ρ_ref=1.225 se alcanza pmax.
     """
     if not v100m or v100m <= 0:
         return 0.0
-    p_w = 0.5 * densidad * area_rotor_m2 * cp * (v100m ** 3)
-    p_mw = p_w / 1_000_000.0
+    p_mw = pmax_mw * (densidad / 1.225) * (v100m / v_rated) ** 3
     return round(max(0.0, min(p_mw, pmax_mw)), 4)
 
 
