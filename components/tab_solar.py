@@ -80,18 +80,6 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
     fig = go.Figure()
     x_inicio = x_min or corte
 
-    # x_max: último dato real del parque para evitar espacio vacío a la derecha
-    maxs = []
-    if not df_gen.empty and "fecha_hora" in df_gen.columns:
-        dr = df_gen[df_gen["parque"] == parque]
-        if not dr.empty:
-            maxs.append(dr["fecha_hora"].max())
-    if not df_prog.empty and "fecha_hora" in df_prog.columns:
-        dp = df_prog[df_prog["parque"] == parque]
-        if not dp.empty:
-            maxs.append(dp["fecha_hora"].max())
-    ahora = max(maxs) if maxs else pd.Timestamp.now()
-
     # Modelo FV: solo histórico (es_forecast=False) y solo horas diurnas
     if not df_meteo.empty and "p_fv_estimada_mw" in df_meteo.columns:
         df_mod = df_meteo[df_meteo["es_forecast"] != True].copy() if "es_forecast" in df_meteo.columns else df_meteo.copy()
@@ -149,7 +137,7 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        xaxis=dict(range=[x_inicio, ahora]),
+        xaxis=dict(range=[x_inicio, None], autorange=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -163,7 +151,6 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min
         return
 
     x_inicio = x_min or corte
-    ahora = df_meteo["fecha_hora"].max() if not df_meteo.empty else pd.Timestamp.now()
     fig = go.Figure()
     # Solo histórico en esta vista — el forecast va en el tab Forecast 7d
     hist = df_meteo[df_meteo["es_forecast"] != True]
@@ -202,7 +189,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="W/m²",
-        xaxis=dict(range=[x_inicio, ahora]),
+        xaxis=dict(range=[x_inicio, None], autorange=False),
         yaxis2=dict(title="Nubosidad %", overlaying="y", side="right", range=[0, 100], showgrid=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
