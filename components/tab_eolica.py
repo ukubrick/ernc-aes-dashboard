@@ -351,12 +351,12 @@ def render_tab_eolica(
 
     corte_meteo = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
 
-    # x_min desde gen_rows SIN filtrar — mínimo real en DB independiente de parque/meteo
+    # x_min desde el parque seleccionado, no todos los eólicos
     df_gen_raw = pd.DataFrame(gen_rows) if gen_rows else pd.DataFrame()
     if not df_gen_raw.empty:
         df_gen_raw["fecha_hora"] = pd.to_datetime(df_gen_raw["fecha_hora"]).dt.tz_localize(None)
-        df_gen_eolica = df_gen_raw[df_gen_raw["parque"].isin(PARQUES_EOLICA)]
-        x_min_global = df_gen_eolica["fecha_hora"].min() if not df_gen_eolica.empty else None
+        df_gen_parque = df_gen_raw[df_gen_raw["parque"] == parque_sel]
+        x_min_global = df_gen_parque["fecha_hora"].min() if not df_gen_parque.empty else None
     else:
         x_min_global = None
 
