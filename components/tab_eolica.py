@@ -80,7 +80,7 @@ def _kpis_eolica(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str
             )
 
 
-def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque: str, horas_ventana: int, x_min: pd.Timestamp | None = None) -> None:
+def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque: str, horas_ventana: int) -> None:
     fig = go.Figure()
 
     corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
@@ -149,12 +149,10 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
     st.plotly_chart(fig, use_container_width=True, key=f"eolica_grafico_gen_{parque}")
 
 
-def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min: pd.Timestamp | None = None) -> None:
+def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
     """Gráfico de viento separado en dos subplots: velocidad arriba, shear abajo."""
     if df_meteo.empty:
         return
-
-    x_inicio = x_min or corte
 
     # Subplot superior: velocidades (10m, 100m, rafagas)
     fig_v = go.Figure()
@@ -349,15 +347,6 @@ def render_tab_eolica(
 
     corte_meteo = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
 
-    # x_min desde el parque seleccionado, no todos los eólicos
-    df_gen_raw = pd.DataFrame(gen_rows) if gen_rows else pd.DataFrame()
-    if not df_gen_raw.empty:
-        df_gen_raw["fecha_hora"] = pd.to_datetime(df_gen_raw["fecha_hora"]).dt.tz_localize(None)
-        df_gen_parque = df_gen_raw[df_gen_raw["parque"] == parque_sel]
-        x_min_global = df_gen_parque["fecha_hora"].min() if not df_gen_parque.empty else None
-    else:
-        x_min_global = None
-
     df_meteo = _df_meteo(parque_sel)
     if not df_meteo.empty:
         df_meteo = df_meteo[df_meteo["fecha_hora"] >= corte_meteo]
@@ -370,7 +359,7 @@ def render_tab_eolica(
             f"Generacion — {NOMBRE_DISPLAY[parque_sel]} ({nombre_ventana})</div>",
             unsafe_allow_html=True,
         )
-        _grafico_gen(gen_rows, prog_rows, df_meteo, parque_sel, horas_ventana, x_min_global)
+        _grafico_gen(gen_rows, prog_rows, df_meteo, parque_sel, horas_ventana)
 
     # ── Métricas entre los dos gráficos ──
     _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
@@ -416,4 +405,4 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
         f"Velocidad de viento — {NOMBRE_DISPLAY[parque_sel]}</div>",
         unsafe_allow_html=True,
     )
-    _grafico_viento(df_meteo, parque_sel, corte_meteo, x_min_global)
+    _grafico_viento(df_meteo, parque_sel, corte_meteo)

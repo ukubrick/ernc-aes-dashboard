@@ -76,7 +76,7 @@ def _xmin(*dfs_fecha) -> pd.Timestamp | None:
     return min(mins) if mins else None
 
 
-def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min: pd.Timestamp | None = None) -> None:
+def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
     fig = go.Figure()
 
     # Modelo FV: solo histórico (es_forecast=False) y solo horas diurnas
@@ -145,7 +145,7 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
     st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_gen_{parque}")
 
 
-def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min: pd.Timestamp | None = None) -> None:
+def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
     if df_meteo.empty or "ghi_wm2" not in df_meteo.columns:
         return
 
@@ -298,14 +298,9 @@ def render_tab_solar(
 
     corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
 
-    # Calcular x_min ANTES de filtrar — desde el parque seleccionado, no todos
     df_gen_raw = pd.DataFrame(gen_rows)
     if not df_gen_raw.empty:
         df_gen_raw["fecha_hora"] = pd.to_datetime(df_gen_raw["fecha_hora"]).dt.tz_localize(None)
-        df_gen_parque = df_gen_raw[df_gen_raw["parque"] == parque_sel]
-        x_min_global = df_gen_parque["fecha_hora"].min() if not df_gen_parque.empty else None
-    else:
-        x_min_global = None
 
     df_gen = df_gen_raw.copy()
     df_prog = pd.DataFrame(prog_rows) if prog_rows else pd.DataFrame()
@@ -330,7 +325,7 @@ def render_tab_solar(
             f"Generacion — {NOMBRE_DISPLAY[parque_sel]} ({nombre_ventana})</div>",
             unsafe_allow_html=True,
         )
-        _grafico_gen(df_gen, df_prog, df_meteo, parque_sel, corte, x_min_global)
+        _grafico_gen(df_gen, df_prog, df_meteo, parque_sel, corte)
 
     # ── Métricas entre los dos gráficos ──
     _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
@@ -372,4 +367,4 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
         f"Irradiancia GHI + nubosidad baja — {NOMBRE_DISPLAY[parque_sel]}</div>",
         unsafe_allow_html=True,
     )
-    _grafico_ghi(df_meteo, parque_sel, corte, x_min_global)
+    _grafico_ghi(df_meteo, parque_sel, corte)
