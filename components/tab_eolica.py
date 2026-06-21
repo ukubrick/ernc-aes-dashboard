@@ -107,13 +107,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
                 name="Modelo eolico",
                 line=dict(color=AES_VIOLETA, width=1.2, dash="dot"),
                 fill="tozeroy", fillcolor="rgba(155,111,212,0.04)",
-                hovertemplate=(
-                    "%{y:.1f} MW"
-                    "<extra>Modelo: P = 0.5 x rho x A x Cp x v³"
-                    "<br>rho=densidad aire [kg/m³] | Cp=0.45 | v=viento 100m [m/s]"
-                    "<br>v100m interpolado de v80m+v120m (ley de potencia)"
-                    "</extra>"
-                ),
+                hovertemplate="%{y:.1f} MW<extra>Modelo eolico</extra>",
             ))
 
     if prog_rows:
@@ -232,12 +226,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
                 name="Wind shear alpha",
                 line=dict(color=AES_VIOLETA, width=1.5),
                 fill="tozeroy", fillcolor="rgba(155,111,212,0.06)",
-                hovertemplate=(
-                    "%{y:.3f}<extra>Wind shear α"
-                    "<br>Ley de potencia: v(h) = v_ref x (h/h_ref)^α"
-                    "<br>α > 0.30 → atm. estable, estelas persistentes"
-                    "<br>Calculado de v80m y v120m</extra>"
-                ),
+                hovertemplate="%{y:.3f}<extra>Wind shear α</extra>",
             ))
             fig_s.add_hline(
                 y=0.30, line_dash="dot", line_color=AES_AMBAR, line_width=1,
@@ -400,8 +389,8 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
   <b>PCP programada</b> — potencia declarada D-1 ante el Coordinador (SIPUB pcp/v4).</div>
   <div><span style='display:inline-block;width:28px;height:1px;background:{AES_VIOLETA};
   vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_VIOLETA}'></span>
-  <b>Modelo eolico</b> — estimacion: P = 0.5 × rho × A × Cp × v³ (cap. a Pmax).
-  rho=densidad aire, Cp=0.45, v=viento 100m (hub).</div>
+  <b>Modelo eolico</b> — curva de potencia con cut-in/rated/cut-out
+  (fórmulas en el panel inferior). v = viento a 100m (hub).</div>
   <div><span style='display:inline-block;width:28px;height:3px;background:{AES_MUTED};
   vertical-align:middle;margin-right:7px;border-radius:2px'></span>
   <b>Viento 10m</b> — velocidad a 10m (Open-Meteo windspeed_10m) [m/s].</div>
@@ -420,6 +409,25 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
 </div>""",
         unsafe_allow_html=True,
     )
+
+    with st.expander("Fórmulas del modelo eólico"):
+        st.markdown("**Interpolación de viento al hub (100 m) y cizalle vertical**")
+        st.latex(r"\alpha \;=\; \frac{\ln\!\left(v_{120}/v_{80}\right)}{\ln\!\left(120/80\right)}"
+                 r"\qquad v_{100} \;=\; v_{80}\left(\frac{100}{80}\right)^{\!\alpha}")
+        st.markdown("**Densidad del aire**")
+        st.latex(r"\rho \;=\; \frac{P}{R\,T}\quad\left[\mathrm{kg/m^3}\right],\quad R = 287.05\ \mathrm{J/(kg\cdot K)}")
+        st.markdown("**Curva de potencia de la turbina**")
+        st.latex(r"P(v) = \begin{cases} 0 & v < v_{in}\ \text{o}\ v > v_{out} \\[4pt]"
+                 r"P_{max}\,\dfrac{v^3 - v_{in}^3}{v_{rated}^3 - v_{in}^3}\,\dfrac{\rho}{\rho_{ref}} & v_{in} \le v < v_{rated} \\[8pt]"
+                 r"P_{max}\,\dfrac{\rho}{\rho_{ref}} & v_{rated} \le v \le v_{out} \end{cases}")
+        st.markdown(
+            f"<div style='font-size:11.5px;color:{AES_MUTED};line-height:1.7'>"
+            r"$v_{in}=3$, $v_{rated}=12$, $v_{out}=25\ \mathrm{m/s}$ &nbsp;·&nbsp; "
+            r"$\rho_{ref}=1.225\ \mathrm{kg/m^3}$ &nbsp;·&nbsp; "
+            r"$\alpha$ acotado a $[-0.10,\ 0.60]$; sobre $v_{out}$ la turbina se detiene por seguridad."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:4px 0 6px'>"

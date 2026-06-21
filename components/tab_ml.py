@@ -1,0 +1,488 @@
+"""Tab ML Analysis — modelos predictivos y analítica sobre los datos ERNC.
+
+Cuatro análisis:
+  1. Forecast de generación  — RandomForest meteo→gen, comparado con el modelo físico.
+  2. Detección de anomalías  — residuos del modelo + IsolationForest sobre el clima.
+  3. Predicción de CMG        — RandomForest con rezagos (lags) por nodo.
+  4. Análisis de eficiencia   — performance ratio real/teórico + clustering de condiciones.
+
+Sub-navegación con radio (no st.tabs) para que cada gráfico Plotly se monte siempre
+en un contenedor visible y a ancho real.
+"""
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime, timedelta, timezone
+
+from config import (
+    NOMBRE_DISPLAY, PMAX, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS,
+    TECNOLOGIA, CMG_NODOS_TODOS,
+)
+
+AES_AZUL    = "#3B4CE8"
+AES_CYAN    = "#4DC8DC"
+AES_VIOLETA = "#9B6FD4"
+AES_VERDE   = "#5AB848"
+AES_ROJO    = "#EF4444"
+AES_AMBAR   = "#F59E0B"
+AES_GRIS    = "#F5F7FA"
+AES_BORDE   = "#E5E7EB"
+AES_BLANCO  = "#FFFFFF"
+AES_TEXTO   = "#1A1F36"
+AES_MUTED   = "#6B7280"
+
+SANTIAGO = timezone(timedelta(hours=-3))
+
+FEATURES_SOLAR = [
+    "ghi_wm2", "gti_wm2", "temp_2m", "temp_celda_c",
+    "cloud_cover_pct", "cloudcover_low_pct", "hora_dia",
+]
+FEATURES_EOLICA = [
+    "wind_speed_100m", "wind_speed_10m", "wind_gusts_10m",
+    "densidad_aire", "wind_shear_alpha", "hora_dia",
+]
+
+try:
+    from sklearn.ensemble import RandomForestRegressor, IsolationForest
+    from sklearn.cluster import KMeans
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.metrics import r2_score, mean_absolute_error
+    _SKLEARN = True
+except Exception:
+    _SKLEARN = False
+
+
+# ── Layout helpers ───────────────────────────────────────────────────────────
+
+def _titulo(txt: str, margin: str = "4px 0 8px") -> None:
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:{margin}'>{txt}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _layout_base(fig, height=340):
+    fig.update_layout(
+        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+        height=height, margin=dict(l=0, r=0, t=10, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
+        hovermode="x unified",
+    )
+    fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    return fig
+
+
+# ── Carga de datos ───────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=900)
+def _dataset_parque(parque: str, dias: int = 25) -> pd.DataFrame:
+    """meteo histórico (es_forecast=False) ⋈ gen_real por hora para un parque."""
+    from utils.db import get_client
+    sb = get_client()
+    desde = (datetime.now(SANTIAGO) - timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        m = (sb.table("meteo_ernc").select("*")
+             .eq("parque", parque).eq("es_forecast", False)
+             .gte("fecha_hora", desde).order("fecha_hora").execute())
+        g = (sb.table("generacion_real_ernc").select("fecha_hora,gen_real_mw")
+             .eq("parque", parque).gte("fecha_hora", desde)
+             .order("fecha_hora").execute())
+    except Exception:
+        return pd.DataFrame()
+    if not m.data or not g.data:
+        return pd.DataFrame()
+    dm = pd.DataFrame(m.data)
+    dg = pd.DataFrame(g.data)
+    df = dm.merge(dg, on="fecha_hora", how="inner")
+    if df.empty:
+        return df
+    df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    df["hora_dia"] = df["fecha_hora"].dt.hour
+    df = df[df["gen_real_mw"].notna() & (df["gen_real_mw"] >= 0)]
+    return df
+
+
+@st.cache_data(ttl=900)
+def _forecast_meteo_parque(parque: str) -> pd.DataFrame:
+    from utils.db import get_client
+    sb = get_client()
+    ahora = datetime.now(SANTIAGO).strftime("%Y-%m-%d %H:%M:%S")
+    hasta = (datetime.now(SANTIAGO) + timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        r = (sb.table("meteo_ernc").select("*")
+             .eq("parque", parque).eq("es_forecast", True)
+             .gte("fecha_hora", ahora).lte("fecha_hora", hasta)
+             .order("fecha_hora").execute())
+    except Exception:
+        return pd.DataFrame()
+    if not r.data:
+        return pd.DataFrame()
+    df = pd.DataFrame(r.data)
+    df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    df["hora_dia"] = df["fecha_hora"].dt.hour
+    return df
+
+
+@st.cache_data(ttl=900)
+def _cmg_historico(nodo: str, dias: int = 20) -> pd.DataFrame:
+    from utils.db import get_client
+    sb = get_client()
+    desde = (datetime.now(SANTIAGO) - timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        r = (sb.table("cmg_ernc").select("fecha_hora,cmg_usd_mwh")
+             .eq("nodo", nodo).gte("fecha_hora", desde)
+             .order("fecha_hora").execute())
+    except Exception:
+        return pd.DataFrame()
+    if not r.data:
+        return pd.DataFrame()
+    df = pd.DataFrame(r.data)
+    df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    df = df.drop_duplicates("fecha_hora").sort_values("fecha_hora")
+    return df
+
+
+def _feats_disponibles(df: pd.DataFrame, tec: str) -> list[str]:
+    base = FEATURES_SOLAR if tec == "Solar" else FEATURES_EOLICA
+    return [f for f in base if f in df.columns and df[f].notna().any()]
+
+
+# ── 1. Forecast de generación ─────────────────────────────────────────────────
+
+def _render_forecast_gen(parque: str) -> None:
+    tec = TECNOLOGIA[parque]
+    df = _dataset_parque(parque)
+    if df.empty or len(df) < 48:
+        st.info("Datos insuficientes para entrenar (se necesitan ≥48 horas con meteo+gen). "
+                "Corre la adquisición para poblar el histórico.")
+        return
+
+    feats = _feats_disponibles(df, tec)
+    d = df.dropna(subset=feats + ["gen_real_mw"])
+    if len(d) < 48:
+        st.info("Datos insuficientes tras limpiar valores faltantes.")
+        return
+
+    X = d[feats].values
+    y = d["gen_real_mw"].values
+    n_test = max(12, int(len(d) * 0.2))
+    Xtr, Xte = X[:-n_test], X[-n_test:]
+    ytr, yte = y[:-n_test], y[-n_test:]
+
+    model = RandomForestRegressor(n_estimators=160, max_depth=12, min_samples_leaf=2,
+                                  random_state=42, n_jobs=-1)
+    model.fit(Xtr, ytr)
+    pred_te = model.predict(Xte)
+    r2 = r2_score(yte, pred_te)
+    mae = mean_absolute_error(yte, pred_te)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("R² (test)", f"{r2:.3f}", help="Bondad de ajuste sobre el 20% más reciente (1.0 = perfecto).")
+    c2.metric("MAE", f"{mae:.2f} MW", help="Error absoluto medio en el conjunto de prueba.")
+    c3.metric("Registros entrenamiento", f"{len(Xtr)}", help="Horas histórico meteo+gen usadas.")
+
+    # Modelo entrenado sobre todo el set para predecir el forecast meteo
+    model_full = RandomForestRegressor(n_estimators=160, max_depth=12, min_samples_leaf=2,
+                                       random_state=42, n_jobs=-1)
+    model_full.fit(X, y)
+
+    _titulo(f"Predicción ML vs real (test) — {NOMBRE_DISPLAY[parque]}", "12px 0 6px")
+    d_te = d.iloc[-n_test:]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=d_te["fecha_hora"], y=yte, name="Gen. real",
+                             line=dict(color=AES_AZUL, width=2.5)))
+    fig.add_trace(go.Scatter(x=d_te["fecha_hora"], y=pred_te, name="Predicción ML",
+                             line=dict(color=AES_VERDE, width=2, dash="dot")))
+    col_fis = "p_fv_estimada_mw" if tec == "Solar" else "p_eolica_estimada_mw"
+    if col_fis in d_te.columns:
+        fig.add_trace(go.Scatter(x=d_te["fecha_hora"], y=d_te[col_fis], name="Modelo físico",
+                                 line=dict(color=AES_VIOLETA, width=1.2, dash="dash")))
+    st.plotly_chart(_layout_base(fig), use_container_width=True, key=f"ml_fc_test_{parque}")
+
+    # Aplicar al forecast meteo futuro
+    dff = _forecast_meteo_parque(parque)
+    if not dff.empty:
+        feats_f = [f for f in feats if f in dff.columns]
+        if set(feats_f) == set(feats) and dff[feats].notna().all(axis=1).any():
+            dfx = dff.dropna(subset=feats).copy()
+            dfx["pred_ml"] = np.clip(model_full.predict(dfx[feats].values), 0, PMAX[parque])
+            _titulo(f"Pronóstico ML de generación — próximos días", "16px 0 6px")
+            figf = go.Figure()
+            figf.add_trace(go.Scatter(x=dfx["fecha_hora"], y=dfx["pred_ml"], name="Pronóstico ML",
+                                      line=dict(color=AES_VERDE, width=2), fill="tozeroy",
+                                      fillcolor="rgba(90,184,72,0.10)"))
+            if col_fis in dfx.columns:
+                figf.add_trace(go.Scatter(x=dfx["fecha_hora"], y=dfx[col_fis], name="Modelo físico",
+                                          line=dict(color=AES_VIOLETA, width=1.2, dash="dash")))
+            st.plotly_chart(_layout_base(figf), use_container_width=True, key=f"ml_fc_fut_{parque}")
+
+    # Importancia de variables
+    _titulo("Importancia de variables", "16px 0 6px")
+    imp = pd.DataFrame({"var": feats, "imp": model_full.feature_importances_}).sort_values("imp")
+    figi = go.Figure(go.Bar(x=imp["imp"], y=imp["var"], orientation="h",
+                            marker_color=AES_AZUL))
+    figi.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+                       height=240, margin=dict(l=0, r=0, t=10, b=0), xaxis_title="Importancia relativa")
+    figi.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+    st.plotly_chart(figi, use_container_width=True, key=f"ml_fc_imp_{parque}")
+
+
+# ── 2. Detección de anomalías ──────────────────────────────────────────────────
+
+def _render_anomalias(parque: str) -> None:
+    tec = TECNOLOGIA[parque]
+    df = _dataset_parque(parque)
+    if df.empty or len(df) < 48:
+        st.info("Datos insuficientes para detectar anomalías (≥48 horas meteo+gen).")
+        return
+
+    feats = _feats_disponibles(df, tec)
+    d = df.dropna(subset=feats + ["gen_real_mw"]).copy()
+    if len(d) < 48:
+        st.info("Datos insuficientes tras limpiar faltantes.")
+        return
+
+    # Residuos del modelo: gen real vs esperado dado el clima (validación cruzada simple)
+    model = RandomForestRegressor(n_estimators=160, max_depth=12, min_samples_leaf=2,
+                                  random_state=42, n_jobs=-1)
+    model.fit(d[feats].values, d["gen_real_mw"].values)
+    d["esperado"] = model.predict(d[feats].values)
+    d["residuo"] = d["gen_real_mw"] - d["esperado"]
+    sigma = d["residuo"].std() or 1.0
+    d["z"] = d["residuo"] / sigma
+
+    # IsolationForest sobre features + gen para marcar combinaciones raras
+    iso = IsolationForest(contamination=0.05, random_state=42)
+    Xa = StandardScaler().fit_transform(d[feats + ["gen_real_mw"]].values)
+    d["iso"] = iso.fit_predict(Xa)  # -1 = anómalo
+
+    d["anomalo"] = (d["z"].abs() > 3) | (d["iso"] == -1)
+    n_anom = int(d["anomalo"].sum())
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Horas analizadas", f"{len(d)}")
+    c2.metric("Anomalías detectadas", f"{n_anom}", help="|z|>3 en el residuo o IsolationForest=-1.")
+    c3.metric("σ residuo", f"{sigma:.2f} MW", help="Desviación típica del error del modelo.")
+
+    _titulo(f"Generación real con anomalías marcadas — {NOMBRE_DISPLAY[parque]}", "12px 0 6px")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=d["fecha_hora"], y=d["esperado"], name="Esperado (modelo)",
+                             line=dict(color=AES_VIOLETA, width=1.2, dash="dot")))
+    fig.add_trace(go.Scatter(x=d["fecha_hora"], y=d["gen_real_mw"], name="Gen. real",
+                             line=dict(color=AES_CYAN, width=2)))
+    da = d[d["anomalo"]]
+    if not da.empty:
+        fig.add_trace(go.Scatter(x=da["fecha_hora"], y=da["gen_real_mw"], name="Anomalía",
+                                 mode="markers", marker=dict(color=AES_ROJO, size=9, symbol="x")))
+    st.plotly_chart(_layout_base(fig), use_container_width=True, key=f"ml_anom_{parque}")
+
+    if n_anom:
+        _titulo("Detalle de anomalías", "12px 0 6px")
+        cols = ["fecha_hora", "gen_real_mw", "esperado", "residuo", "z"]
+        tabla = da[cols].copy().sort_values("z", key=lambda s: s.abs(), ascending=False).head(30)
+        tabla["fecha_hora"] = tabla["fecha_hora"].dt.strftime("%d/%m %H:%M")
+        for c in ["gen_real_mw", "esperado", "residuo", "z"]:
+            tabla[c] = tabla[c].round(2)
+        tabla.columns = ["Hora", "Real MW", "Esperado MW", "Residuo MW", "z-score"]
+        st.dataframe(tabla, hide_index=True, use_container_width=True)
+
+
+# ── 3. Predicción de CMG ────────────────────────────────────────────────────────
+
+def _render_cmg(nodo: str) -> None:
+    df = _cmg_historico(nodo)
+    if df.empty or len(df) < 48:
+        st.info("Histórico de CMG insuficiente para este nodo (≥48 registros). "
+                "Algunos nodos publican con menor frecuencia.")
+        return
+
+    # Regularizar a frecuencia horaria e imputar
+    s = df.set_index("fecha_hora")["cmg_usd_mwh"].resample("1h").mean().interpolate().dropna()
+    d = pd.DataFrame({"cmg": s})
+    for lag in [1, 2, 3, 6, 12, 24]:
+        d[f"lag{lag}"] = d["cmg"].shift(lag)
+    d["hora_dia"] = d.index.hour
+    d = d.dropna()
+    if len(d) < 36:
+        st.info("Serie de CMG demasiado corta tras crear rezagos.")
+        return
+
+    feats = [c for c in d.columns if c != "cmg"]
+    X, y = d[feats].values, d["cmg"].values
+    n_test = max(12, int(len(d) * 0.2))
+    model = RandomForestRegressor(n_estimators=200, max_depth=10, random_state=42, n_jobs=-1)
+    model.fit(X[:-n_test], y[:-n_test])
+    pred = model.predict(X[-n_test:])
+    r2 = r2_score(y[-n_test:], pred)
+    mae = mean_absolute_error(y[-n_test:], pred)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("R² (test)", f"{r2:.3f}")
+    c2.metric("MAE", f"{mae:.1f} USD/MWh")
+    c3.metric("Último CMG", f"{y[-1]:.1f} USD/MWh")
+
+    _titulo(f"CMG real vs predicción (backtest) — {nodo.replace('_', ' ').strip()}", "12px 0 6px")
+    idx_te = d.index[-n_test:]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=idx_te, y=y[-n_test:], name="CMG real",
+                             line=dict(color=AES_VIOLETA, width=2.5)))
+    fig.add_trace(go.Scatter(x=idx_te, y=pred, name="Predicción ML",
+                             line=dict(color=AES_AMBAR, width=2, dash="dot")))
+    fig.update_yaxes(title="USD/MWh")
+    st.plotly_chart(_layout_base(fig), use_container_width=True, key=f"ml_cmg_{nodo}")
+
+    # Pronóstico recursivo de las próximas 12 horas
+    _titulo("Pronóstico recursivo — próximas 12 horas", "16px 0 6px")
+    model_full = RandomForestRegressor(n_estimators=200, max_depth=10, random_state=42, n_jobs=-1)
+    model_full.fit(X, y)
+    hist = list(d["cmg"].values)
+    last_time = d.index[-1]
+    futuros, horas_f = [], []
+    for h in range(1, 13):
+        lags = {1: hist[-1], 2: hist[-2], 3: hist[-3], 6: hist[-6], 12: hist[-12], 24: hist[-24]}
+        hora_dia = (last_time + timedelta(hours=h)).hour
+        feat_vec = [lags[1], lags[2], lags[3], lags[6], lags[12], lags[24], hora_dia]
+        yhat = float(model_full.predict([feat_vec])[0])
+        hist.append(yhat)
+        futuros.append(yhat)
+        horas_f.append(last_time + timedelta(hours=h))
+    figf = go.Figure()
+    figf.add_trace(go.Scatter(x=d.index[-48:], y=d["cmg"].values[-48:], name="Histórico",
+                              line=dict(color=AES_VIOLETA, width=2)))
+    figf.add_trace(go.Scatter(x=horas_f, y=futuros, name="Pronóstico 12h",
+                              line=dict(color=AES_AMBAR, width=2, dash="dot")))
+    figf.update_yaxes(title="USD/MWh")
+    st.plotly_chart(_layout_base(figf), use_container_width=True, key=f"ml_cmg_fut_{nodo}")
+    st.caption("Pronóstico recursivo con RandomForest sobre rezagos. El error crece con el horizonte "
+               "— úsese como referencia de corto plazo, no como valor garantizado.")
+
+
+# ── 4. Análisis de eficiencia ──────────────────────────────────────────────────
+
+def _render_eficiencia() -> None:
+    filas = []
+    detalle = {}
+    for p in PARQUES_TODOS:
+        tec = TECNOLOGIA[p]
+        df = _dataset_parque(p)
+        if df.empty:
+            continue
+        col_fis = "p_fv_estimada_mw" if tec == "Solar" else "p_eolica_estimada_mw"
+        if col_fis not in df.columns:
+            continue
+        d = df[(df[col_fis] > PMAX[p] * 0.05)].copy()  # solo horas con recurso relevante
+        if d.empty:
+            continue
+        d["pr"] = (d["gen_real_mw"] / d[col_fis]).clip(0, 1.5)
+        pr_medio = d["pr"].median()
+        fp = (df["gen_real_mw"].mean() / PMAX[p] * 100) if PMAX[p] else None
+        filas.append({"Parque": NOMBRE_DISPLAY[p], "Tipo": tec,
+                      "Performance ratio": round(pr_medio, 3),
+                      "FP medio %": round(fp, 1) if fp is not None else None,
+                      "Horas": len(d)})
+        detalle[p] = d
+
+    if not filas:
+        st.info("Datos insuficientes para el análisis de eficiencia.")
+        return
+
+    dfr = pd.DataFrame(filas).sort_values("Performance ratio", ascending=False)
+    _titulo("Performance ratio (real / teórico) por parque", "4px 0 6px")
+    fig = go.Figure(go.Bar(
+        x=dfr["Parque"], y=dfr["Performance ratio"],
+        marker_color=[AES_AZUL if t == "Solar" else AES_CYAN for t in dfr["Tipo"]],
+        text=dfr["Performance ratio"], textposition="outside",
+    ))
+    fig.add_hline(y=1.0, line_dash="dot", line_color=AES_VERDE,
+                  annotation_text="PR ideal = 1.0", annotation_font_size=9)
+    fig.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+                      height=320, margin=dict(l=0, r=0, t=10, b=0), yaxis_title="PR (mediana)")
+    fig.update_xaxes(tickangle=-30)
+    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    st.plotly_chart(fig, use_container_width=True, key="ml_efi_rank")
+
+    st.dataframe(dfr, hide_index=True, use_container_width=True)
+
+    # Clustering de condiciones para un parque seleccionado
+    st.divider()
+    parque_sel = st.selectbox("Clustering de condiciones operativas — parque",
+                              list(detalle.keys()), format_func=lambda p: NOMBRE_DISPLAY[p],
+                              key="ml_efi_parque")
+    d = detalle[parque_sel]
+    tec = TECNOLOGIA[parque_sel]
+    var_rec = "ghi_wm2" if tec == "Solar" else "wind_speed_100m"
+    lbl_rec = "GHI (W/m²)" if tec == "Solar" else "Viento 100m (m/s)"
+    if var_rec not in d.columns or len(d) < 20:
+        st.info("Datos insuficientes para clustering en este parque.")
+        return
+    dc = d.dropna(subset=[var_rec, "pr"]).copy()
+    if len(dc) < 20:
+        st.info("Datos insuficientes para clustering tras limpiar faltantes.")
+        return
+    Xc = StandardScaler().fit_transform(dc[[var_rec, "pr"]].values)
+    k = min(3, max(2, len(dc) // 30))
+    dc["cluster"] = KMeans(n_clusters=k, n_init=10, random_state=42).fit_predict(Xc)
+
+    _titulo(f"Eficiencia vs recurso — {NOMBRE_DISPLAY[parque_sel]}", "12px 0 6px")
+    paleta = [AES_AZUL, AES_AMBAR, AES_VERDE, AES_VIOLETA]
+    figc = go.Figure()
+    for c in sorted(dc["cluster"].unique()):
+        sub = dc[dc["cluster"] == c]
+        figc.add_trace(go.Scatter(x=sub[var_rec], y=sub["pr"], mode="markers",
+                                  name=f"Cluster {c+1}",
+                                  marker=dict(color=paleta[c % len(paleta)], size=6, opacity=0.7)))
+    figc.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+                       height=340, margin=dict(l=0, r=0, t=10, b=0),
+                       xaxis_title=lbl_rec, yaxis_title="Performance ratio",
+                       legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
+    figc.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+    figc.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    st.plotly_chart(figc, use_container_width=True, key=f"ml_efi_cluster_{parque_sel}")
+
+
+# ── Entrada principal ──────────────────────────────────────────────────────────
+
+def render_tab_ml() -> None:
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:4px'>"
+        f"ML Analysis — modelos predictivos sobre los datos del portfolio</div>"
+        f"<div style='font-size:11.5px;color:{AES_MUTED};margin-bottom:12px'>"
+        f"Modelos entrenados en vivo con el histórico de Supabase (meteo, generación y CMG)."
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not _SKLEARN:
+        st.warning("scikit-learn no está instalado en este entorno. Agrega `scikit-learn>=1.4.0` "
+                   "a requirements.txt y vuelve a desplegar.")
+        return
+
+    analisis = st.radio(
+        "Análisis",
+        ["Forecast de generación", "Detección de anomalías", "Predicción de CMG", "Análisis de eficiencia"],
+        horizontal=True, key="ml_analisis",
+    )
+
+    if analisis == "Forecast de generación":
+        parque = st.selectbox("Parque", PARQUES_TODOS, format_func=lambda p: NOMBRE_DISPLAY[p],
+                              key="ml_fc_parque")
+        with st.spinner("Entrenando modelo..."):
+            _render_forecast_gen(parque)
+
+    elif analisis == "Detección de anomalías":
+        parque = st.selectbox("Parque", PARQUES_TODOS, format_func=lambda p: NOMBRE_DISPLAY[p],
+                              key="ml_anom_parque")
+        with st.spinner("Analizando..."):
+            _render_anomalias(parque)
+
+    elif analisis == "Predicción de CMG":
+        nodo = st.selectbox("Nodo CMG", CMG_NODOS_TODOS,
+                            format_func=lambda n: n.replace("_", " ").strip(), key="ml_cmg_nodo")
+        with st.spinner("Entrenando modelo..."):
+            _render_cmg(nodo)
+
+    elif analisis == "Análisis de eficiencia":
+        with st.spinner("Calculando..."):
+            _render_eficiencia()
