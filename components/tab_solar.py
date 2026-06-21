@@ -26,7 +26,7 @@ def _df_meteo(parque: str) -> pd.DataFrame:
     try:
         from utils.db import get_client
         sb = get_client()
-        desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=120)).strftime("%Y-%m-%d %H:%M:%S")
+        desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=168)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("meteo_ernc")
             .select("fecha_hora,ghi_wm2,gti_wm2,temp_2m,temp_celda_c,p_fv_estimada_mw,cloudcover_low_pct,cloud_cover_pct,is_day,es_forecast")
@@ -37,7 +37,7 @@ def _df_meteo(parque: str) -> pd.DataFrame:
         )
         if res.data:
             df = pd.DataFrame(res.data)
-            df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+            df["fecha_hora"] = pd.to_datetime(df["fecha_hora"]).dt.tz_localize(None)
             return df
     except Exception:
         pass
@@ -271,9 +271,9 @@ def render_tab_solar(
     with col_ventana:
         horas_ventana = st.selectbox(
             "Ventana",
-            [24, 48, 72, 120],
-            index=1,
-            format_func=lambda h: f"Ultimas {h} h",
+            [24, 48, 72, 168],
+            index=3,
+            format_func=lambda h: "Ultima semana" if h == 168 else f"Ultimas {h} h",
             key="solar_ventana_horas",
         )
 
@@ -290,9 +290,11 @@ def render_tab_solar(
         df_prog = df_prog[df_prog["fecha_hora"] >= corte]
 
     df_meteo = _df_meteo(parque_sel)
+    if not df_meteo.empty:
+        df_meteo = df_meteo[df_meteo["fecha_hora"] >= corte]
 
     # ── Gráfico generación — ancho completo ──
-    nombre_ventana = f"ultimas {horas_ventana} h"
+    nombre_ventana = "ultima semana" if horas_ventana == 168 else f"ultimas {horas_ventana} h"
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:6px'>"
         f"Generacion — {NOMBRE_DISPLAY[parque_sel]} ({nombre_ventana})</div>",
