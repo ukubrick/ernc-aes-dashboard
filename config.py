@@ -9,7 +9,7 @@ API_BASE_OPS = "https://operacion.api.coordinador.cl"
 CMG_S3_URL   = "https://cen-template-graph-pweb-prod.s3.us-east-1.amazonaws.com/CMG-online/costo-marginal-online.json"
 
 # ── Ventanas de adquisición ────────────────────────────────────────────────────
-DIAS_VENTANA     = 2    # gen. real, programada, meteo, SSCC
+DIAS_VENTANA     = 5    # gen. real, programada, meteo, SSCC
 DIAS_VENTANA_LIM = 30   # limitaciones de transmisión
 
 # ── IDs CEN por parque ─────────────────────────────────────────────────────────
