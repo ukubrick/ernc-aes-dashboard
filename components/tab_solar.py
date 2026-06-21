@@ -148,7 +148,7 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
-    st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_gen_{parque}")
+    st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_gen_{parque}", config={"responsive": True})
 
 
 def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
@@ -199,7 +199,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-    st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_ghi_{parque}")
+    st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_ghi_{parque}", config={"responsive": True})
 
 
 def _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel):
