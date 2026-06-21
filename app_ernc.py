@@ -748,36 +748,55 @@ def _render_tab_limitaciones(lim_rows):
 
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:12px'>"
-        f"Limitaciones de transmision activas</div>",
+        f"Limitaciones de transmision — activas y ultimos 30 dias</div>",
         unsafe_allow_html=True,
     )
 
     if not lim_rows:
-        st.success("Sin limitaciones de transmision activas.")
+        st.success("Sin limitaciones de transmision en los ultimos 30 dias.")
         return
 
-    st.markdown(
-        f"<div style='background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;"
-        f"padding:10px 16px;margin-bottom:12px;font-size:13px;color:#991B1B'>"
-        f"<b>{len(lim_rows)} limitacion(es) activa(s)</b></div>",
-        unsafe_allow_html=True,
-    )
-
     df = pd.DataFrame(lim_rows)
-    cols_show = [c for c in [
-        "parque", "instalacion_nombre", "potencia", "unidad_medida_potencia",
-        "status", "fecha_perturbacion", "observacion",
-    ] if c in df.columns]
-    df_show = df[cols_show].copy()
-    df_show.rename(columns={
-        "parque": "Parque", "instalacion_nombre": "Instalacion",
-        "potencia": "Potencia", "unidad_medida_potencia": "Unidad",
-        "status": "Estado", "fecha_perturbacion": "Fecha inicio",
-        "observacion": "Observacion",
-    }, inplace=True)
-    if "Parque" in df_show.columns:
-        df_show["Parque"] = df_show["Parque"].map(NOMBRE_DISPLAY).fillna(df_show["Parque"])
-    st.dataframe(df_show, hide_index=True, use_container_width=True)
+
+    # Separar activas (sin retorno) vs históricas (con retorno)
+    activas   = df[df["fecha_efectiva_retorno"].isna()] if "fecha_efectiva_retorno" in df.columns else df
+    historicas = df[df["fecha_efectiva_retorno"].notna()] if "fecha_efectiva_retorno" in df.columns else pd.DataFrame()
+
+    n_activas = len(activas)
+    if n_activas > 0:
+        st.markdown(
+            f"<div style='background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;"
+            f"padding:10px 16px;margin-bottom:12px;font-size:13px;color:#991B1B'>"
+            f"<b>{n_activas} limitacion(es) activa(s) — sin fecha de retorno confirmada</b></div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.success("Sin limitaciones activas en este momento.")
+
+    def _tabla_lim(df_lim: pd.DataFrame, titulo: str) -> None:
+        if df_lim.empty:
+            return
+        st.markdown(
+            f"<div style='font-size:12px;font-weight:600;color:{AES_TEXTO};margin:10px 0 6px'>{titulo}</div>",
+            unsafe_allow_html=True,
+        )
+        cols_show = [c for c in [
+            "parque", "instalacion_nombre", "potencia", "unidad_medida_potencia",
+            "status", "fecha_perturbacion", "fecha_efectiva_retorno", "observacion",
+        ] if c in df_lim.columns]
+        df_show = df_lim[cols_show].copy()
+        df_show.rename(columns={
+            "parque": "Parque", "instalacion_nombre": "Instalacion",
+            "potencia": "Potencia", "unidad_medida_potencia": "Unidad",
+            "status": "Estado", "fecha_perturbacion": "Inicio",
+            "fecha_efectiva_retorno": "Retorno", "observacion": "Observacion",
+        }, inplace=True)
+        if "Parque" in df_show.columns:
+            df_show["Parque"] = df_show["Parque"].map(NOMBRE_DISPLAY).fillna(df_show["Parque"])
+        st.dataframe(df_show, hide_index=True, use_container_width=True)
+
+    _tabla_lim(activas, "Limitaciones activas")
+    _tabla_lim(historicas, f"Historico ultimos 30 dias ({len(historicas)} registros)")
 
 
 if __name__ == "__main__":

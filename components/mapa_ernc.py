@@ -22,11 +22,12 @@ _CHILE_BOUNDS = {
     "lon_max": -66.0,
 }
 
-# Vista por defecto: Chile completo mostrando todos los parques
+# Vista por defecto: Chile completo — zoom reducido para que los parques del norte
+# no se aglomeren con los del sur (clúster solar Atacama vs eólicos Biobío)
 _VIEW_DEFAULT = pdk.ViewState(
-    latitude=-33.5,
-    longitude=-70.8,
-    zoom=4.6,
+    latitude=-32.0,
+    longitude=-70.5,
+    zoom=3.9,
     pitch=0,
     bearing=0,
 )
