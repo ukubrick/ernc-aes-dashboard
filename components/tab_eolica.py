@@ -22,6 +22,12 @@ AES_MUTED   = "#6B7280"
 _SEM = {"verde": AES_VERDE, "amarillo": AES_AMBAR, "rojo": AES_ROJO}
 
 
+def _xmin(*dfs_fecha) -> pd.Timestamp | None:
+    """Mínimo real de fecha_hora entre todos los DataFrames con datos."""
+    mins = [df["fecha_hora"].min() for df in dfs_fecha if not df.empty and "fecha_hora" in df.columns]
+    return min(mins) if mins else None
+
+
 def _df_meteo(parque: str) -> pd.DataFrame:
     try:
         from utils.db import get_client
@@ -135,7 +141,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        xaxis=dict(range=[corte, ahora]),
+        xaxis=dict(range=[_xmin(df_meteo) or corte, ahora]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -195,7 +201,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="m/s",
-        xaxis=dict(range=[corte, ahora]),
+        xaxis=dict(range=[_xmin(df_meteo) or corte, ahora]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
     )
@@ -233,7 +239,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
                 margin=dict(l=0, r=0, t=10, b=0),
                 xaxis_title=None,
                 yaxis_title="α (shear)",
-                xaxis=dict(range=[corte, ahora]),
+                xaxis=dict(range=[_xmin(df_sh) or corte, ahora]),
                 hovermode="x unified",
                 showlegend=False,
             )
