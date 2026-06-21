@@ -529,15 +529,21 @@ def main():
 
     _tab_map_forzado = {"solar": "Solar FV", "eolica": "Eolica"}
     _default_tab = _tab_map_forzado.get(tab_forzado)
+    _tabs_key = f"main_tabs_go_{tab_forzado}" if tab_forzado else "main_tabs"
 
-    # on_change="rerun" hace que cada click en un tab dispare un rerun completo.
-    # En ese rerun el tab ya está visible con su ancho real → Plotly renderiza a 940px.
-    # key fijo "main_tabs" para no perder el estado del tab activo entre reruns normales.
+    # on_change: rerun solo cuando el usuario activa Solar FV o Eólica.
+    # Necesario para que Plotly mida el ancho del contenedor ya visible (no oculto).
+    # No se dispara en reruns normales (selectbox de parque/ventana) — solo en clicks de tab.
+    def _on_tab_change():
+        nuevo = st.session_state.get("main_tabs")
+        if nuevo in ("Solar FV", "Eolica"):
+            st.rerun()
+
     tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(
         tab_labels,
         default=_default_tab,
         key="main_tabs",
-        on_change="rerun",
+        on_change=_on_tab_change,
     )
 
     parque_tec = TECNOLOGIA.get(parque_activo, "Solar") if parque_activo else None
