@@ -558,9 +558,13 @@ def main():
 
     parque_tec = TECNOLOGIA.get(parque_activo, "Solar") if parque_activo else None
 
+    # El mapa solo hace zoom al parque si el usuario está viendo el tab Mapa.
+    # Si viene de Solar/Eólica (tab_forzado), el mapa recibe None → vista Chile completo.
+    _tab_activo_ahora = st.session_state.get("main_tabs", "Mapa & Resumen")
+    _parque_para_mapa = parque_activo if _tab_activo_ahora == "Mapa & Resumen" else None
+
     with tab_resumen:
-        # Pasar None al mapa si no hay parque seleccionado → vista Chile completo
-        _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo)
+        _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, _parque_para_mapa)
 
     with tab_solar:
         solar_activo = parque_activo if parque_tec == "Solar" else None
