@@ -70,19 +70,20 @@ def _kpis_solar(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str 
             )
 
 
-def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str) -> None:
+def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
     fig = go.Figure()
+    ahora = pd.Timestamp.now()
 
-    # Modelo FV primero (fondo) — solo horas diurnas, muy tenue para no tapar las otras series
+    # Modelo FV: solo histórico (es_forecast=False) y solo horas diurnas
     if not df_meteo.empty and "p_fv_estimada_mw" in df_meteo.columns:
-        # is_day puede venir como bool, int (1/0) o string ("true"/"false") desde Supabase
-        if "is_day" in df_meteo.columns:
-            is_day_mask = df_meteo["is_day"].apply(
+        df_mod = df_meteo[df_meteo["es_forecast"] != True].copy() if "es_forecast" in df_meteo.columns else df_meteo.copy()
+        if "is_day" in df_mod.columns:
+            is_day_mask = df_mod["is_day"].apply(
                 lambda v: bool(v) if not isinstance(v, str) else v.lower() == "true"
             )
-            df_dia = df_meteo[is_day_mask & df_meteo["p_fv_estimada_mw"].notna()].copy()
+            df_dia = df_mod[is_day_mask & df_mod["p_fv_estimada_mw"].notna()]
         else:
-            df_dia = df_meteo[df_meteo["p_fv_estimada_mw"].notna()].copy()
+            df_dia = df_mod[df_mod["p_fv_estimada_mw"].notna()]
         if not df_dia.empty:
             fig.add_trace(go.Scatter(
                 x=df_dia["fecha_hora"], y=df_dia["p_fv_estimada_mw"],
@@ -130,6 +131,8 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
+        # Fijar rango X para evitar que el modelo forecast estire el eje hacia el futuro
+        xaxis=dict(range=[corte, ahora]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -138,12 +141,14 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
     st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_gen_{parque}")
 
 
-def _grafico_ghi(df_meteo: pd.DataFrame, parque: str) -> None:
+def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
     if df_meteo.empty or "ghi_wm2" not in df_meteo.columns:
         return
 
+    ahora = pd.Timestamp.now()
     fig = go.Figure()
-    hist = df_meteo[df_meteo["es_forecast"] == False]
+    # Solo histórico en esta vista — el forecast va en el tab Forecast 7d
+    hist = df_meteo[df_meteo["es_forecast"] != True]
     fore = df_meteo[df_meteo["es_forecast"] == True]
 
     if not hist.empty:
@@ -179,6 +184,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str) -> None:
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="W/m²",
+        xaxis=dict(range=[corte, ahora]),
         yaxis2=dict(title="Nubosidad %", overlaying="y", side="right", range=[0, 100], showgrid=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
@@ -310,7 +316,7 @@ def render_tab_solar(
         f"Generacion — {NOMBRE_DISPLAY[parque_sel]} ({nombre_ventana})</div>",
         unsafe_allow_html=True,
     )
-    _grafico_gen(df_gen, df_prog, df_meteo, parque_sel)
+    _grafico_gen(df_gen, df_prog, df_meteo, parque_sel, corte)
 
     # ── Métricas entre los dos gráficos ──
     _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
@@ -352,4 +358,4 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
         f"Irradiancia GHI + nubosidad baja — {NOMBRE_DISPLAY[parque_sel]}</div>",
         unsafe_allow_html=True,
     )
-    _grafico_ghi(df_meteo, parque_sel)
+    _grafico_ghi(df_meteo, parque_sel, corte)
