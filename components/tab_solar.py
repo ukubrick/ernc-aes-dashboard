@@ -277,15 +277,15 @@ def render_tab_solar(
             key="solar_ventana_horas",
         )
 
-    corte = pd.Timestamp.now(tz="America/Santiago") - pd.Timedelta(hours=horas_ventana)
+    corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
     df_gen  = pd.DataFrame(gen_rows)
     df_prog = pd.DataFrame(prog_rows) if prog_rows else pd.DataFrame()
     if not df_gen.empty:
-        df_gen["fecha_hora"] = pd.to_datetime(df_gen["fecha_hora"])
+        df_gen["fecha_hora"] = pd.to_datetime(df_gen["fecha_hora"]).dt.tz_localize(None)
         df_gen = df_gen[df_gen["parque"].isin(PARQUES_SOLAR)]
         df_gen = df_gen[df_gen["fecha_hora"] >= corte]
     if not df_prog.empty:
-        df_prog["fecha_hora"] = pd.to_datetime(df_prog["fecha_hora"])
+        df_prog["fecha_hora"] = pd.to_datetime(df_prog["fecha_hora"]).dt.tz_localize(None)
         df_prog = df_prog[df_prog["parque"].isin(PARQUES_SOLAR)]
         df_prog = df_prog[df_prog["fecha_hora"] >= corte]
 
