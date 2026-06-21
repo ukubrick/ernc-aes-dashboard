@@ -301,10 +301,19 @@ def render_tab_solar(
         )
 
     corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
-    df_gen  = pd.DataFrame(gen_rows)
+
+    # Calcular x_min ANTES de filtrar — así siempre hay datos si la DB tiene registros
+    df_gen_raw = pd.DataFrame(gen_rows)
+    if not df_gen_raw.empty:
+        df_gen_raw["fecha_hora"] = pd.to_datetime(df_gen_raw["fecha_hora"]).dt.tz_localize(None)
+        df_gen_solar = df_gen_raw[df_gen_raw["parque"].isin(PARQUES_SOLAR)]
+        x_min_global = df_gen_solar["fecha_hora"].min() if not df_gen_solar.empty else None
+    else:
+        x_min_global = None
+
+    df_gen = df_gen_raw.copy()
     df_prog = pd.DataFrame(prog_rows) if prog_rows else pd.DataFrame()
     if not df_gen.empty:
-        df_gen["fecha_hora"] = pd.to_datetime(df_gen["fecha_hora"]).dt.tz_localize(None)
         df_gen = df_gen[df_gen["parque"].isin(PARQUES_SOLAR)]
         df_gen = df_gen[df_gen["fecha_hora"] >= corte]
     if not df_prog.empty:
@@ -315,9 +324,6 @@ def render_tab_solar(
     df_meteo = _df_meteo(parque_sel)
     if not df_meteo.empty:
         df_meteo = df_meteo[df_meteo["fecha_hora"] >= corte]
-
-    # x_min desde df_gen completo (todos los parques solares) — robusto ante df_meteo vacío
-    x_min_global = _xmin(df_gen, df_meteo)
 
     # ── Gráfico generación — ancho completo ──
     nombre_ventana = "ultima semana" if horas_ventana == 168 else f"ultimas {horas_ventana} h"

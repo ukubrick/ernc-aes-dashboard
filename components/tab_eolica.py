@@ -349,18 +349,20 @@ def render_tab_eolica(
             key="eolica_ventana_horas",
         )
 
-    df_meteo = _df_meteo(parque_sel)
     corte_meteo = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
-    # Filtrar meteo a la misma ventana — tz_localize(None) para comparar con Timestamp naive
+
+    # x_min desde gen_rows SIN filtrar — mínimo real en DB independiente de parque/meteo
+    df_gen_raw = pd.DataFrame(gen_rows) if gen_rows else pd.DataFrame()
+    if not df_gen_raw.empty:
+        df_gen_raw["fecha_hora"] = pd.to_datetime(df_gen_raw["fecha_hora"]).dt.tz_localize(None)
+        df_gen_eolica = df_gen_raw[df_gen_raw["parque"].isin(PARQUES_EOLICA)]
+        x_min_global = df_gen_eolica["fecha_hora"].min() if not df_gen_eolica.empty else None
+    else:
+        x_min_global = None
+
+    df_meteo = _df_meteo(parque_sel)
     if not df_meteo.empty:
         df_meteo = df_meteo[df_meteo["fecha_hora"] >= corte_meteo]
-
-    # x_min calculado desde gen_rows completo (todos los parques eólicos) — robusto ante
-    # df_meteo vacío en el primer render del parque por defecto
-    df_gen_all = pd.DataFrame(gen_rows) if gen_rows else pd.DataFrame()
-    if not df_gen_all.empty:
-        df_gen_all["fecha_hora"] = pd.to_datetime(df_gen_all["fecha_hora"]).dt.tz_localize(None)
-    x_min_global = _xmin(df_gen_all, df_meteo)
 
     nombre_ventana = "ultima semana" if horas_ventana == 168 else f"ultimas {horas_ventana} h"
     st.markdown(
