@@ -302,12 +302,12 @@ def render_tab_solar(
 
     corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
 
-    # Calcular x_min ANTES de filtrar — así siempre hay datos si la DB tiene registros
+    # Calcular x_min ANTES de filtrar — desde el parque seleccionado, no todos
     df_gen_raw = pd.DataFrame(gen_rows)
     if not df_gen_raw.empty:
         df_gen_raw["fecha_hora"] = pd.to_datetime(df_gen_raw["fecha_hora"]).dt.tz_localize(None)
-        df_gen_solar = df_gen_raw[df_gen_raw["parque"].isin(PARQUES_SOLAR)]
-        x_min_global = df_gen_solar["fecha_hora"].min() if not df_gen_solar.empty else None
+        df_gen_parque = df_gen_raw[df_gen_raw["parque"] == parque_sel]
+        x_min_global = df_gen_parque["fecha_hora"].min() if not df_gen_parque.empty else None
     else:
         x_min_global = None
 
