@@ -468,9 +468,10 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 # ── Layout principal ──────────────────────────────────────────────────────────
 
 def main():
-    # st.rerun() es no-op dentro de callbacks. El callback solo setea el flag;
-    # aquí, al inicio del script (fuera de cualquier callback), se ejecuta el rerun.
+    # st.rerun() es no-op dentro de callbacks. El callback setea el flag y un counter;
+    # aquí se ejecuta el rerun exactamente una vez por click de tab.
     if st.session_state.pop("_needs_rerun_for_tab", False):
+        st.session_state["_tab_rerun_done"] = True
         st.rerun()
 
     with st.spinner("Cargando datos..."):
@@ -538,7 +539,10 @@ def main():
 
     # Callback no puede llamar st.rerun() directamente (es no-op).
     # Solo setea un flag; el rerun ocurre al inicio de main() en el siguiente ciclo.
+    # _tab_rerun_done evita un segundo rerun si on_change se dispara durante el rerun.
     def _on_tab_change():
+        if st.session_state.pop("_tab_rerun_done", False):
+            return  # ya hicimos el rerun para este click, ignorar
         nuevo = st.session_state.get("main_tabs")
         if nuevo in ("Solar FV", "Eolica"):
             st.session_state["_needs_rerun_for_tab"] = True

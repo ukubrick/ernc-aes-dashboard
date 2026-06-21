@@ -277,17 +277,26 @@ def render_tab_solar(
     st.divider()
 
     _ventanas = [24, 48, 72, 168]
+
+    # Preservar selección entre reruns (el rerun de corrección de ancho resetea index=)
+    _parque_prev = st.session_state.get("solar_parque_sel", parque_activo)
+    _parque_idx  = PARQUES_SOLAR.index(_parque_prev) if _parque_prev in PARQUES_SOLAR else (
+        PARQUES_SOLAR.index(parque_activo) if parque_activo in PARQUES_SOLAR else 0
+    )
+    _ventana_prev = st.session_state.get("solar_ventana_horas", 168)
+    _ventana_idx  = _ventanas.index(_ventana_prev) if _ventana_prev in _ventanas else 3
+
     parque_sel = st.selectbox(
         "Parque solar",
         PARQUES_SOLAR,
-        index=PARQUES_SOLAR.index(parque_activo) if parque_activo in PARQUES_SOLAR else 0,
+        index=_parque_idx,
         format_func=lambda p: NOMBRE_DISPLAY[p],
         key="solar_parque_sel",
     )
     horas_ventana = st.selectbox(
         "Ventana",
         _ventanas,
-        index=3,
+        index=_ventana_idx,
         format_func=lambda h: "Ultima semana" if h == 168 else f"Ultimas {h} h",
         key="solar_ventana_horas",
     )
