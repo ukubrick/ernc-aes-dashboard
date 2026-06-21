@@ -178,13 +178,37 @@ def query_meteo_forecast(dias: int = 7) -> list[dict]:
 
 
 def query_limitaciones_activas() -> list[dict]:
+    """Limitaciones sin fecha de retorno (activas) + las ocurridas en los últimos 30 días."""
     sb = get_client()
-    res = (sb.table("limitaciones_ernc")
-             .select("*")
-             .is_("fecha_efectiva_retorno", "null")
-             .order("fecha_perturbacion", desc=True)
-             .execute())
-    return res.data or []
+    from datetime import timedelta
+    # Activas (sin retorno)
+    res_activas = (sb.table("limitaciones_ernc")
+                     .select("*")
+                     .is_("fecha_efectiva_retorno", "null")
+                     .order("fecha_perturbacion", desc=True)
+                     .execute())
+    activas = res_activas.data or []
+
+    # Recientes con retorno (últimos 30 días)
+    desde_30d = (_ahora_santiago() - timedelta(days=30)).strftime("%Y-%m-%d")
+    res_recientes = (sb.table("limitaciones_ernc")
+                       .select("*")
+                       .not_.is_("fecha_efectiva_retorno", "null")
+                       .gte("fecha_perturbacion", desde_30d)
+                       .order("fecha_perturbacion", desc=True)
+                       .limit(50)
+                       .execute())
+    recientes = res_recientes.data or []
+
+    # Unir y deduplicar por id
+    vistos: set = set()
+    resultado = []
+    for r in activas + recientes:
+        rid = r.get("id")
+        if rid not in vistos:
+            vistos.add(rid)
+            resultado.append(r)
+    return resultado
 
 
 def query_ultima_hora_gen() -> str | None:

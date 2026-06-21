@@ -120,13 +120,13 @@ def _grafico_portfolio(df: pd.DataFrame, df_pcp: pd.DataFrame) -> None:
         ))
     fig.update_layout(
         template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
-        height=320, margin=dict(l=0, r=0, t=10, b=0),
+        height=380, margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None, yaxis_title="MW",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
-    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
     st.plotly_chart(fig, use_container_width=True, key="forecast_grafico_portfolio")
 
 
@@ -170,14 +170,14 @@ def _grafico_parque(df: pd.DataFrame, parque: str, df_pcp: pd.DataFrame) -> None
         ))
     fig.update_layout(
         template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
-        height=260, margin=dict(l=0, r=0, t=10, b=0),
+        height=320, margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None, yaxis_title="MW",
         yaxis2=dict(overlaying="y", side="right", showgrid=False, title=y2_lbl),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
-    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
     st.plotly_chart(fig, use_container_width=True, key=f"forecast_grafico_parque_{parque}")
 
 
@@ -257,9 +257,9 @@ def render_tab_forecast() -> None:
         unsafe_allow_html=True,
     )
 
-    col_tipo, col_parque = st.columns([1, 2])
+    col_tipo, col_parque = st.columns([1, 3])
     with col_tipo:
-        tipo_sel = st.radio("Tecnologia", ["Solar FV", "Eolica"], horizontal=True, key="fcst_tipo")
+        tipo_sel = st.radio("Tecnologia", ["Solar FV", "Eolica"], horizontal=False, key="fcst_tipo")
     parques_disp = PARQUES_SOLAR if tipo_sel == "Solar FV" else PARQUES_EOLICA
     with col_parque:
         parque_sel = st.selectbox(

@@ -379,6 +379,8 @@ Implementar en `utils/calculos.py`:
 | **7 — PDF y Deploy** | ✅ COMPLETA | `utils/pdf_report.py`, `.streamlit/config.toml`, deploy Streamlit Cloud, `db.py` soporta st.secrets |
 | **8 — Bugs producción** | ✅ COMPLETA | StreamlitDuplicateElementId, timezone UTC vs Santiago, RLS sin políticas anon, key rotado |
 | **9 — Mejoras visuales + fixes** | ✅ COMPLETA | Ver sección SESIÓN 9 |
+| **10 — Fix paginación PCP v4 + ventana 5 días** | ✅ COMPLETA | Ver sección SESIÓN 10 |
+| **11 — UX mejoras múltiples** | ✅ COMPLETA | Ver sección SESIÓN 11 |
 
 ---
 
@@ -824,5 +826,40 @@ if page >= total_pages:
 - [ ] `st.segmented_control` requiere Streamlit >= 1.38 — verificar versión en Streamlit Cloud
 - [ ] Correr workflow manual para repoblar `p_eolica_estimada_mw` en `meteo_ernc` (fix sesión 9)
 
-*Generado 2026-06-20 — Sesiones 1–10 + Fix paginación PCP + Ventana 5 días.*
+---
+
+## SESIÓN 11 — MEJORAS UX MÚLTIPLES (2026-06-20)
+
+### Cambios implementados
+
+1. **Mapa — zoom inicial reducido**: de `zoom=4.6` a `zoom=3.9`, centrado en lat=-32.0 para que los 6 parques solares del norte (Atacama) y los 5 eólicos del sur (Biobío) no se solapen al cargar.
+
+2. **Keep-alive Streamlit Cloud**: el workflow de GitHub Actions hace un `curl` a la URL de producción al final de cada ejecución horaria, evitando la hibernación por inactividad.
+
+3. **Filtrado valores negativos gen bruta**: en `tab_solar.py` y `tab_eolica.py` se filtran `gen_real_mw < 0` antes de graficar (pueden aparecer por despacho negativo del BESS asociado).
+
+4. **Modelo FV — ceros nocturnos excluidos**: el trazado "Modelo FV" solo muestra horas donde `is_day=True`, eliminando la línea plana en 0 que contaminaba el gráfico nocturno.
+
+5. **Ventana configurable en Solar y Eólica**: selector de 24/48/72/120 horas para ambos tabs (key `solar_ventana_horas` / `eolica_ventana_horas`).
+
+6. **Layout Solar y Eólica refactorizado**:
+   - Gráfico de generación a ancho completo (sin columna lateral)
+   - Fila de 6 métricas horizontales debajo del gráfico (gen, cap, FP, desvío, GHI/viento, temp/shear)
+   - Expander "Variables y fórmulas del modelo FV/eólico" con tabla de series y explicación matemática
+   - GHI/viento en gráficos separados debajo
+
+7. **Tab Eólica — shear en gráfico propio**: `wind_shear_alpha` en subgráfico de 160px separado con línea de umbral α=0.30, en lugar de eje secundario mezclado con velocidades.
+
+8. **Tab Insights — subtab meteorológico**: nueva pestaña "Condiciones meteorológicas" con tabla de parámetros actuales Solar (GHI, Tc, nubosidad) y Eólica (v10m, v100m, ráfagas, shear) para todos los parques. Alertas marcadas con `!` y `~`.
+
+9. **Forecast — gráficos más altos**: portfolio 380px, parque 320px (antes 320/260). Columnas del selector tipo/parque ampliadas a [1,3].
+
+10. **Limitaciones — query ampliada**: `query_limitaciones_activas()` ahora devuelve también limitaciones con retorno registrado en los últimos 30 días. El tab muestra tabla separada activas vs históricas.
+
+### Keys de plotly_chart actualizados
+Ahora incluyen el parque en el key para evitar StreamlitDuplicateElementId al cambiar parques:
+- `solar_grafico_gen_{parque}`, `solar_grafico_ghi_{parque}`
+- `eolica_grafico_gen_{parque}`, `eolica_grafico_viento_{parque}`, `eolica_grafico_shear_{parque}`
+
+*Generado 2026-06-20 — Sesiones 1–11.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*

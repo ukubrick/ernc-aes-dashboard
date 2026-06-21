@@ -34,3 +34,9 @@ jobs:
         env:
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+
+      - name: Ping Streamlit Cloud (evitar hibernación)
+        run: |
+          curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            "https://ernc-aes-dashboard-4yjlhfjocytto8lxxidmkb.streamlit.app/" || true
