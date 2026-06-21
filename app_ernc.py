@@ -334,7 +334,8 @@ def _fmt_hora(ts: str | None) -> str:
 
 
 def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dict | None = None) -> str:
-    parque_activo = st.session_state.get("parque_activo", PARQUES_SOLAR[0])
+    # None = ningún parque seleccionado explícitamente → el mapa muestra Chile completo
+    parque_activo = st.session_state.get("parque_activo", None)
 
     with st.sidebar:
         # Header premium
@@ -460,7 +461,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
             unsafe_allow_html=True,
         )
 
-    return st.session_state.get("parque_activo", PARQUES_SOLAR[0])
+    return st.session_state.get("parque_activo", None)
 
 
 # ── Layout principal ──────────────────────────────────────────────────────────
@@ -527,16 +528,19 @@ def main():
 
     tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(tab_labels)
 
-    parque_tec = TECNOLOGIA.get(parque_activo, "Solar")
+    parque_tec = TECNOLOGIA.get(parque_activo, "Solar") if parque_activo else None
 
     with tab_resumen:
+        # Pasar None al mapa si no hay parque seleccionado → vista Chile completo
         _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo)
 
     with tab_solar:
-        render_tab_solar(gen_por_parque, prog_por_parque, gen_rows, prog_rows, parque_activo if parque_tec == "Solar" else None)
+        solar_activo = parque_activo if parque_tec == "Solar" else None
+        render_tab_solar(gen_por_parque, prog_por_parque, gen_rows, prog_rows, solar_activo)
 
     with tab_eolica:
-        render_tab_eolica(gen_por_parque, prog_por_parque, gen_rows, prog_rows, parque_activo if parque_tec == "Eólica" else None)
+        eolica_activo = parque_activo if parque_tec == "Eólica" else None
+        render_tab_eolica(gen_por_parque, prog_por_parque, gen_rows, prog_rows, eolica_activo)
 
     with tab_forecast:
         render_tab_forecast()
