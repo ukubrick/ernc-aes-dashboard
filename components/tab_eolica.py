@@ -84,7 +84,22 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
     fig = go.Figure()
 
     corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
-    ahora = pd.Timestamp.now()
+
+    # x_max: último dato real del parque para evitar espacio vacío a la derecha
+    maxs = []
+    if gen_rows:
+        dr = pd.DataFrame(gen_rows)
+        dr["fecha_hora"] = pd.to_datetime(dr["fecha_hora"]).dt.tz_localize(None)
+        dr = dr[(dr["parque"] == parque) & (dr["fecha_hora"] >= corte)]
+        if not dr.empty:
+            maxs.append(dr["fecha_hora"].max())
+    if prog_rows:
+        dp = pd.DataFrame(prog_rows)
+        dp["fecha_hora"] = pd.to_datetime(dp["fecha_hora"]).dt.tz_localize(None)
+        dp = dp[(dp["parque"] == parque) & (dp["fecha_hora"] >= corte)]
+        if not dp.empty:
+            maxs.append(dp["fecha_hora"].max())
+    ahora = max(maxs) if maxs else pd.Timestamp.now()
 
     # Modelo eólico primero (fondo) — solo histórico para no estirar el eje X al futuro
     if not df_meteo.empty and "p_eolica_estimada_mw" in df_meteo.columns:
@@ -155,8 +170,8 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_
     if df_meteo.empty:
         return
 
-    ahora = pd.Timestamp.now()
     x_inicio = x_min or corte
+    ahora = df_meteo["fecha_hora"].max() if not df_meteo.empty else pd.Timestamp.now()
 
     # Subplot superior: velocidades (10m, 100m, rafagas)
     fig_v = go.Figure()

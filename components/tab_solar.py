@@ -78,8 +78,19 @@ def _xmin(*dfs_fecha) -> pd.Timestamp | None:
 
 def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min: pd.Timestamp | None = None) -> None:
     fig = go.Figure()
-    ahora = pd.Timestamp.now()
     x_inicio = x_min or corte
+
+    # x_max: último dato real del parque para evitar espacio vacío a la derecha
+    maxs = []
+    if not df_gen.empty and "fecha_hora" in df_gen.columns:
+        dr = df_gen[df_gen["parque"] == parque]
+        if not dr.empty:
+            maxs.append(dr["fecha_hora"].max())
+    if not df_prog.empty and "fecha_hora" in df_prog.columns:
+        dp = df_prog[df_prog["parque"] == parque]
+        if not dp.empty:
+            maxs.append(dp["fecha_hora"].max())
+    ahora = max(maxs) if maxs else pd.Timestamp.now()
 
     # Modelo FV: solo histórico (es_forecast=False) y solo horas diurnas
     if not df_meteo.empty and "p_fv_estimada_mw" in df_meteo.columns:
@@ -151,8 +162,8 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_min
     if df_meteo.empty or "ghi_wm2" not in df_meteo.columns:
         return
 
-    ahora = pd.Timestamp.now()
     x_inicio = x_min or corte
+    ahora = df_meteo["fecha_hora"].max() if not df_meteo.empty else pd.Timestamp.now()
     fig = go.Figure()
     # Solo histórico en esta vista — el forecast va en el tab Forecast 7d
     hist = df_meteo[df_meteo["es_forecast"] != True]
