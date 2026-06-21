@@ -534,22 +534,24 @@ def main():
     tab_labels = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d", "Estadisticas", "Insights", "CMG", "Limitaciones"]
 
     _tab_map_forzado = {"solar": "Solar FV", "eolica": "Eolica"}
-    _default_tab = _tab_map_forzado.get(tab_forzado)
-    _tabs_key = f"main_tabs_go_{tab_forzado}" if tab_forzado else "main_tabs"
 
-    # Callback no puede llamar st.rerun() directamente (es no-op).
-    # Solo setea un flag; el rerun ocurre al inicio de main() en el siguiente ciclo.
+    # Escribir el tab deseado en session_state ANTES de crear st.tabs.
+    # Streamlit usa st.session_state["main_tabs"] como valor inicial del widget,
+    # lo que permite cambiar el tab activo sin recrear el componente (sin cambiar key).
+    if tab_forzado:
+        st.session_state["main_tabs"] = _tab_map_forzado[tab_forzado]
+
+    # on_change: rerun solo para Solar FV y Eólica (Plotly necesita medir ancho visible).
     # _tab_rerun_done evita un segundo rerun si on_change se dispara durante el rerun.
     def _on_tab_change():
         if st.session_state.pop("_tab_rerun_done", False):
-            return  # ya hicimos el rerun para este click, ignorar
+            return
         nuevo = st.session_state.get("main_tabs")
         if nuevo in ("Solar FV", "Eolica"):
             st.session_state["_needs_rerun_for_tab"] = True
 
     tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(
         tab_labels,
-        default=_default_tab,
         key="main_tabs",
         on_change=_on_tab_change,
     )
