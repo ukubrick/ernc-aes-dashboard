@@ -77,24 +77,25 @@ def _kpis_eolica(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str
 def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque: str, horas_ventana: int) -> None:
     fig = go.Figure()
 
-    # Modelo eólico — P = 0.5 × ρ × A × Cp × v³ (limitado a Pmax)
+    # Modelo eólico primero (fondo) — muy tenue para no tapar PCP ni real
     if not df_meteo.empty and "p_eolica_estimada_mw" in df_meteo.columns:
         df_mod = df_meteo[df_meteo["p_eolica_estimada_mw"].notna()].copy()
         if not df_mod.empty:
             fig.add_trace(go.Scatter(
                 x=df_mod["fecha_hora"], y=df_mod["p_eolica_estimada_mw"],
                 name="Modelo eolico",
-                line=dict(color=AES_VIOLETA, width=1.5, dash="dot"),
-                fill="tozeroy", fillcolor="rgba(155,111,212,0.06)",
+                line=dict(color=AES_VIOLETA, width=1.2, dash="dot"),
+                fill="tozeroy", fillcolor="rgba(155,111,212,0.04)",
                 hovertemplate=(
                     "%{y:.1f} MW"
-                    "<extra>Modelo: P = 0.5 × rho × A × Cp × v³"
-                    "<br>rho = densidad aire [kg/m³] | Cp = 0.45 | v = viento 100m [m/s]"
-                    "<br>Cap. a Pmax. v100m interpolado de v80m + v120m (ley de potencia)"
+                    "<extra>Modelo: P = 0.5 x rho x A x Cp x v³"
+                    "<br>rho=densidad aire [kg/m³] | Cp=0.45 | v=viento 100m [m/s]"
+                    "<br>v100m interpolado de v80m+v120m (ley de potencia)"
                     "</extra>"
                 ),
             ))
 
+    # PCP — ámbar más grueso y visible
     if prog_rows:
         df_p = pd.DataFrame(prog_rows)
         df_p["fecha_hora"] = pd.to_datetime(df_p["fecha_hora"])
@@ -104,23 +105,23 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
             fig.add_trace(go.Scatter(
                 x=df_p["fecha_hora"], y=df_p["gen_programada_mw"],
                 name="PCP programada",
-                line=dict(color=AES_AMBAR, width=1.8, dash="dash"),
-                hovertemplate="%{y:.1f} MW<extra>Programada CEN PCP — declarada D-1</extra>",
+                line=dict(color="#D97706", width=2.2, dash="dash"),
+                hovertemplate="%{y:.1f} MW<extra>PCP programada — declarada D-1 ante CEN</extra>",
             ))
 
+    # Real al tope — cyan sólido con fill muy suave
     if gen_rows:
         df_r = pd.DataFrame(gen_rows)
         df_r["fecha_hora"] = pd.to_datetime(df_r["fecha_hora"])
         corte = pd.Timestamp.now(tz="America/Santiago") - pd.Timedelta(hours=horas_ventana)
         df_r = df_r[(df_r["parque"] == parque) & (df_r["fecha_hora"] >= corte)].sort_values("fecha_hora")
-        # Filtrar valores negativos atípicos
         df_r = df_r[df_r["gen_real_mw"] >= 0]
         if not df_r.empty:
             fig.add_trace(go.Scatter(
                 x=df_r["fecha_hora"], y=df_r["gen_real_mw"],
                 name="Generacion real",
                 line=dict(color=AES_CYAN, width=2.5),
-                fill="tozeroy", fillcolor="rgba(77,200,220,0.10)",
+                fill="tozeroy", fillcolor="rgba(77,200,220,0.05)",
                 hovertemplate="%{y:.1f} MW<extra>Gen. real CEN gen-real/v3</extra>",
             ))
 
@@ -340,54 +341,47 @@ def render_tab_eolica(
     )
     _grafico_gen(gen_rows, prog_rows, df_meteo, parque_sel, horas_ventana)
 
-    # ── Fila de métricas horizontales ──
+    # ── Métricas entre los dos gráficos ──
     _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
 
-    # ── Fórmulas del modelo en expander ──
-    with st.expander("Variables y formulas del modelo eolico", expanded=False):
-        st.markdown(
-            f"""
-<div style='font-size:12px;line-height:1.9;color:{AES_TEXTO}'>
-
-**Series de tiempo mostradas**
-| Serie | Color | Descripcion |
-|-------|-------|-------------|
-| Generacion real | Cyan solido | Gen. real CEN (gen-real/v3). Valores negativos filtrados. |
-| PCP programada | Ambar rayado | Programada declarada D-1 ante el Coordinador. |
-| Modelo eolico | Violeta punteado | Estimacion fisica. Puede ser 0 si no hay datos de viento en DB. |
-
-**Modelo de potencia eolica**
-
-P = 0.5 × ρ × A × Cp × v³  (limitado a Pmax)
-
-- **ρ** (rho): densidad del aire [kg/m³] = P_atm / (R × T) — varía con altitud y temperatura
-- **A**: area barrida por el rotor [m²] = π × r² (r ≈ 60-80m para turbinas de 2-4 MW)
-- **Cp = 0.45**: coeficiente de potencia (Betz limit = 0.593, operativo ~0.40-0.48)
-- **v**: velocidad de viento a altura hub 100m [m/s], interpolada de v80m y v120m
-
-**Perfil de viento — Ley de potencia**
-
-v(h) = v_ref × (h / h_ref)^α
-
-- **α** (shear): exponente que describe la variacion vertical del viento
-  - α ≈ 0.10-0.15 → terreno rugoso, atm. inestable (diurno)
-  - α ≈ 0.20-0.25 → neutro (tipico)
-  - α > 0.30 → atm. estable (nocturno/inversion), estelas mas persistentes
-- v100m calculado de v80m y v120m Open-Meteo con la misma ley
-
-**Rafagas y cut-out**
-- Cut-out tipico: ~20 m/s (la turbina para para protegerse)
-- Rafagas > 16 m/s: zona de alerta — monitorear
-- Rafagas a 10m son menores que las reales a hub (~100m)
-
-Fuente meteorologica: **Open-Meteo** (gratuita, sin API key, actualizacion horaria)
+    # ── Glosario de series — tarjeta siempre visible ──
+    st.markdown(
+        f"""<div style='background:{AES_BLANCO};border:1px solid {AES_BORDE};border-radius:10px;
+padding:14px 20px;margin:10px 0 14px;font-size:11.5px;color:{AES_TEXTO};line-height:1.7'>
+<div style='font-size:11px;font-weight:700;color:{AES_MUTED};text-transform:uppercase;
+letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
+<div style='display:grid;grid-template-columns:1fr 1fr;gap:6px 24px'>
+  <div><span style='display:inline-block;width:28px;height:3px;background:{AES_CYAN};
+  vertical-align:middle;margin-right:7px;border-radius:2px'></span>
+  <b>Generacion real</b> — medicion CEN hora a hora (gen-real/v3). Negativos filtrados.</div>
+  <div><span style='display:inline-block;width:28px;height:2px;background:#D97706;
+  vertical-align:middle;margin-right:7px;border-bottom:2px dashed #D97706'></span>
+  <b>PCP programada</b> — potencia declarada D-1 ante el Coordinador (SIPUB pcp/v4).</div>
+  <div><span style='display:inline-block;width:28px;height:1px;background:{AES_VIOLETA};
+  vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_VIOLETA}'></span>
+  <b>Modelo eolico</b> — estimacion: P = 0.5 × rho × A × Cp × v³ (cap. a Pmax).
+  rho=densidad aire, Cp=0.45, v=viento 100m (hub).</div>
+  <div><span style='display:inline-block;width:28px;height:3px;background:{AES_MUTED};
+  vertical-align:middle;margin-right:7px;border-radius:2px'></span>
+  <b>Viento 10m</b> — velocidad a 10m (Open-Meteo windspeed_10m) [m/s].</div>
+  <div><span style='display:inline-block;width:28px;height:3px;background:{AES_CYAN};
+  vertical-align:middle;margin-right:7px;border-radius:2px'></span>
+  <b>Viento 100m (hub)</b> — interpolado de v80m+v120m con ley de potencia:
+  v(h)=v_ref×(h/h_ref)^α [m/s].</div>
+  <div><span style='display:inline-block;width:28px;height:2px;background:{AES_ROJO};
+  vertical-align:middle;margin-right:7px;border-bottom:2px dashed {AES_ROJO}'></span>
+  <b>Rafagas 10m</b> — maximas en [m/s]. Cut-out tipico ~20 m/s.</div>
+  <div><span style='display:inline-block;width:28px;height:2px;background:{AES_VIOLETA};
+  vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_VIOLETA}'></span>
+  <b>Wind shear α</b> — exponente ley de potencia perfil vertical.
+  α&gt;0.30 → atm. estable, estelas mas persistentes.</div>
 </div>
-""",
-            unsafe_allow_html=True,
-        )
+</div>""",
+        unsafe_allow_html=True,
+    )
 
     st.markdown(
-        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:16px 0 6px'>"
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:4px 0 6px'>"
         f"Velocidad de viento — {NOMBRE_DISPLAY[parque_sel]}</div>",
         unsafe_allow_html=True,
     )

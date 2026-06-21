@@ -73,43 +73,44 @@ def _kpis_solar(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str 
 def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str) -> None:
     fig = go.Figure()
 
-    # Modelo FV — solo horas diurnas (filtrar is_day=False para no llenar el gráfico de ceros)
+    # Modelo FV primero (fondo) — solo horas diurnas, muy tenue para no tapar las otras series
     if not df_meteo.empty and "p_fv_estimada_mw" in df_meteo.columns:
         df_dia = df_meteo[df_meteo["is_day"] == True].copy() if "is_day" in df_meteo.columns else df_meteo.copy()
         if not df_dia.empty:
             fig.add_trace(go.Scatter(
                 x=df_dia["fecha_hora"], y=df_dia["p_fv_estimada_mw"],
                 name="Modelo FV",
-                line=dict(color=AES_VIOLETA, width=1.5, dash="dot"),
-                fill="tozeroy", fillcolor="rgba(155,111,212,0.06)",
+                line=dict(color=AES_VIOLETA, width=1.2, dash="dot"),
+                fill="tozeroy", fillcolor="rgba(155,111,212,0.04)",
                 hovertemplate=(
                     "%{y:.1f} MW"
-                    "<extra>Modelo FV: P = Pₙᴵᶜᵒ × GTI/1000 × [1 + γ(Tᴄ⁻25)]"
-                    "<br>γ = -0.4%/°C | NOCT = 45°C | GTI = irradiancia en plano inclinado"
+                    "<extra>Modelo FV: P = Ppico x GTI/1000 x [1+gamma(Tc-25)]"
+                    "<br>gamma=-0.4%/C | NOCT=45C | GTI=irradiancia plano inclinado"
                     "</extra>"
                 ),
             ))
 
+    # PCP encima del modelo — ámbar más grueso y opaco para distinguirse del real
     if not df_prog.empty:
         df_p = df_prog[df_prog["parque"] == parque]
         if not df_p.empty:
             fig.add_trace(go.Scatter(
                 x=df_p["fecha_hora"], y=df_p["gen_programada_mw"],
                 name="PCP programada",
-                line=dict(color=AES_AMBAR, width=1.8, dash="dash"),
-                hovertemplate="%{y:.1f} MW<extra>Programada CEN PCP — declarada por el generador D-1</extra>",
+                line=dict(color="#D97706", width=2.2, dash="dash"),
+                hovertemplate="%{y:.1f} MW<extra>PCP programada — declarada D-1 ante CEN</extra>",
             ))
 
+    # Real al tope — azul sólido pero con fillcolor muy suave para no enterrar la PCP
     if not df_gen.empty:
         df_r = df_gen[df_gen["parque"] == parque]
         if not df_r.empty:
-            # Filtrar valores negativos atípicos (pueden aparecer por despacho negativo del BESS)
             df_r = df_r[df_r["gen_real_mw"] >= 0].copy()
             fig.add_trace(go.Scatter(
                 x=df_r["fecha_hora"], y=df_r["gen_real_mw"],
                 name="Generacion real",
                 line=dict(color=AES_AZUL, width=2.5),
-                fill="tozeroy", fillcolor="rgba(59,76,232,0.08)",
+                fill="tozeroy", fillcolor="rgba(59,76,232,0.05)",
                 hovertemplate="%{y:.1f} MW<extra>Gen. real CEN gen-real/v3</extra>",
             ))
 
@@ -290,7 +291,7 @@ def render_tab_solar(
 
     df_meteo = _df_meteo(parque_sel)
 
-    # ── Título + gráfico generación a ancho completo ──
+    # ── Gráfico generación — ancho completo ──
     nombre_ventana = f"ultimas {horas_ventana} h"
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:6px'>"
@@ -299,45 +300,43 @@ def render_tab_solar(
     )
     _grafico_gen(df_gen, df_prog, df_meteo, parque_sel)
 
-    # ── Fila de métricas horizontales ──
+    # ── Métricas entre los dos gráficos ──
     _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
 
-    # ── Fórmulas del modelo en expander ──
-    with st.expander("Variables y formulas del modelo FV", expanded=False):
-        st.markdown(
-            f"""
-<div style='font-size:12px;line-height:1.9;color:{AES_TEXTO}'>
-
-**Series de tiempo mostradas**
-| Serie | Color | Descripcion |
-|-------|-------|-------------|
-| Generacion real | Azul solido | Gen. real CEN (gen-real/v3). Datos BESS excluidos por llave_opreal. Negativos filtrados. |
-| PCP programada | Ambar rayado | Generacion programada declarada D-1 ante el Coordinador (SIPUB gen-programada-pcp/v4). |
-| Modelo FV | Violeta punteado | Estimacion fisico-estadistica. Solo horas diurnas. Ceros nocturnos excluidos del grafico. |
-
-**Modelo de potencia FV**
-
-P = P_pico × (GTI / 1000) × [1 + γ × (T_c − 25)]
-
-- **P_pico**: capacidad instalada [MW]
-- **GTI**: irradiancia en plano inclinado a tilt=20°, azimuth=0° (norte) [W/m²]
-- **γ = −0.004 /°C**: coeficiente de temperatura de potencia (silicio monocristalino tipico)
-- **T_c**: temperatura de celda [°C] = T_amb + (NOCT−20)/800 × GHI × f_viento
-  - NOCT = 45°C (Normal Operating Cell Temperature)
-  - f_viento ≈ 0.9 a 1.0 (corrección por viento)
-
-**Irradiancia GHI + nubosidad baja**
-- **GHI** (shortwave_radiation): irradiancia global horizontal [W/m²] — recurso solar disponible
-- **Nubosidad baja %** (cloudcover_low): fraccion cubierta por nubes bajas. Si >60% con cielo total <35%: posible camanchaca
-
-Fuente meteorologica: **Open-Meteo** (gratuita, sin API key, actualizacion horaria)
+    # ── Glosario de series — tarjeta siempre visible ──
+    st.markdown(
+        f"""<div style='background:{AES_BLANCO};border:1px solid {AES_BORDE};border-radius:10px;
+padding:14px 20px;margin:10px 0 14px;font-size:11.5px;color:{AES_TEXTO};line-height:1.7'>
+<div style='font-size:11px;font-weight:700;color:{AES_MUTED};text-transform:uppercase;
+letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
+<div style='display:grid;grid-template-columns:1fr 1fr;gap:6px 24px'>
+  <div><span style='display:inline-block;width:28px;height:3px;background:{AES_AZUL};
+  vertical-align:middle;margin-right:7px;border-radius:2px'></span>
+  <b>Generacion real</b> — medicion CEN hora a hora (gen-real/v3). BESS y valores negativos excluidos.</div>
+  <div><span style='display:inline-block;width:28px;height:2px;background:#D97706;
+  vertical-align:middle;margin-right:7px;border-radius:2px;border-bottom:2px dashed #D97706'></span>
+  <b>PCP programada</b> — potencia declarada D-1 ante el Coordinador (SIPUB pcp/v4).</div>
+  <div><span style='display:inline-block;width:28px;height:1px;background:{AES_VIOLETA};
+  vertical-align:middle;margin-right:7px;border-radius:2px;border-bottom:2px dotted {AES_VIOLETA}'></span>
+  <b>Modelo FV</b> — estimacion: P = Ppico × GTI/1000 × [1 + γ(Tc−25)].
+  γ=−0.4%/°C, NOCT=45°C. Solo horas diurnas.</div>
+  <div><span style='display:inline-block;width:28px;height:3px;background:{AES_AMBAR};
+  vertical-align:middle;margin-right:7px;border-radius:2px'></span>
+  <b>GHI historico</b> — irradiancia global horizontal [W/m²] (Open-Meteo).</div>
+  <div><span style='display:inline-block;width:28px;height:1px;background:{AES_AMBAR};
+  vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_AMBAR}'></span>
+  <b>GHI forecast</b> — pronostico Open-Meteo proximos 7 dias.</div>
+  <div><span style='display:inline-block;width:28px;height:1px;background:{AES_MUTED};
+  vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_MUTED}'></span>
+  <b>Nubosidad baja %</b> — fraccion cubierta por nubes bajas.
+  Camanchaca si &gt;60% con total &lt;35%.</div>
 </div>
-""",
-            unsafe_allow_html=True,
-        )
+</div>""",
+        unsafe_allow_html=True,
+    )
 
     st.markdown(
-        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:16px 0 6px'>"
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:4px 0 6px'>"
         f"Irradiancia GHI + nubosidad baja — {NOMBRE_DISPLAY[parque_sel]}</div>",
         unsafe_allow_html=True,
     )
