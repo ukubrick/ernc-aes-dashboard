@@ -173,12 +173,12 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str) -> None:
                 hovertemplate=f"%{{y:.1f}} m/s<extra>{label} (forecast)</extra>",
             ))
 
-    # Línea cut-out referencia
+    # Línea de referencia cut-out — solo visible si los datos alcanzan ~18 m/s para evitar escala forzada
     if not df_meteo.empty:
         fig_v.add_hline(
-            y=20, line_dash="dot", line_color=AES_ROJO, line_width=1,
+            y=20, line_dash="dot", line_color="rgba(239,68,68,0.45)", line_width=1,
             annotation_text="Cut-out ~20 m/s", annotation_position="right",
-            annotation_font_size=9, annotation_font_color=AES_ROJO,
+            annotation_font_size=9, annotation_font_color="rgba(239,68,68,0.7)",
         )
 
     fig_v.update_layout(
@@ -315,6 +315,10 @@ def render_tab_eolica(
     _kpis_eolica(gen_por_parque, prog_por_parque, parque_activo)
     st.divider()
 
+    # Inicializar ventana en session_state para que el primer render ya use 168h
+    if "eolica_ventana_horas" not in st.session_state:
+        st.session_state["eolica_ventana_horas"] = 168
+
     col_sel, col_ventana = st.columns([3, 1])
     with col_sel:
         parque_sel = st.selectbox(
@@ -328,7 +332,6 @@ def render_tab_eolica(
         horas_ventana = st.selectbox(
             "Ventana",
             [24, 48, 72, 168],
-            index=3,
             format_func=lambda h: "Ultima semana" if h == 168 else f"Ultimas {h} h",
             key="eolica_ventana_horas",
         )
