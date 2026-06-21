@@ -468,11 +468,9 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 # ── Layout principal ──────────────────────────────────────────────────────────
 
 def main():
-    # st.rerun() es no-op dentro de callbacks. El callback setea el flag y un counter;
-    # aquí se ejecuta el rerun exactamente una vez por click de tab.
-    if st.session_state.pop("_needs_rerun_for_tab", False):
-        st.session_state["_tab_rerun_done"] = True
-        st.rerun()
+    # Limpiar flags de reruns anteriores que ya no se usan
+    st.session_state.pop("_needs_rerun_for_tab", None)
+    st.session_state.pop("_tab_rerun_done", None)
 
     with st.spinner("Cargando datos..."):
         try:
@@ -535,32 +533,30 @@ def main():
 
     _tab_map_forzado = {"solar": "Solar FV", "eolica": "Eolica"}
 
-    # Escribir el tab deseado en session_state ANTES de crear st.tabs.
-    # Streamlit usa st.session_state["main_tabs"] como valor inicial del widget,
-    # lo que permite cambiar el tab activo sin recrear el componente (sin cambiar key).
+    # Cuando viene un click del sidebar, cambiamos el key para que st.tabs se recree
+    # con default= en el tab correcto. El key incluye el parque para que reruns
+    # posteriores (ventana, otro parque) usen el mismo key y NO recreen el componente.
+    _parque_key = st.session_state.get("parque_activo", "none")
     if tab_forzado:
-        st.session_state["main_tabs"] = _tab_map_forzado[tab_forzado]
-
-    # on_change: rerun solo para Solar FV y Eólica (Plotly necesita medir ancho visible).
-    # _tab_rerun_done evita un segundo rerun si on_change se dispara durante el rerun.
-    def _on_tab_change():
-        if st.session_state.pop("_tab_rerun_done", False):
-            return
-        nuevo = st.session_state.get("main_tabs")
-        if nuevo in ("Solar FV", "Eolica"):
-            st.session_state["_needs_rerun_for_tab"] = True
+        _tabs_key = f"main_tabs_{tab_forzado}_{_parque_key}"
+        _default_tab = _tab_map_forzado[tab_forzado]
+        # Guardar el key activo para que reruns normales lo reusen
+        st.session_state["_tabs_key_activo"] = _tabs_key
+    else:
+        # Reusar el último key generado por sidebar; si no hay, usar key base
+        _tabs_key = st.session_state.get("_tabs_key_activo", "main_tabs")
+        _default_tab = None
 
     tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(
         tab_labels,
-        key="main_tabs",
-        on_change=_on_tab_change,
+        default=_default_tab,
+        key=_tabs_key,
     )
 
     parque_tec = TECNOLOGIA.get(parque_activo, "Solar") if parque_activo else None
 
     # El mapa solo hace zoom al parque si el usuario está viendo el tab Mapa.
-    # Si viene de Solar/Eólica (tab_forzado), el mapa recibe None → vista Chile completo.
-    _tab_activo_ahora = st.session_state.get("main_tabs", "Mapa & Resumen")
+    _tab_activo_ahora = st.session_state.get(_tabs_key, "Mapa & Resumen")
     _parque_para_mapa = parque_activo if _tab_activo_ahora == "Mapa & Resumen" else None
 
     with tab_resumen:
