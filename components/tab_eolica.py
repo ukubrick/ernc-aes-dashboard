@@ -329,11 +329,14 @@ def render_tab_eolica(
 
     _ventanas = [24, 48, 72, 168]
 
-    # Preservar selección entre reruns (el rerun de corrección de ancho resetea index=)
-    _parque_prev = st.session_state.get("eolica_parque_sel", parque_activo)
-    _parque_idx  = PARQUES_EOLICA.index(_parque_prev) if _parque_prev in PARQUES_EOLICA else (
-        PARQUES_EOLICA.index(parque_activo) if parque_activo in PARQUES_EOLICA else 0
-    )
+    # Si viene parque_activo del sidebar, tiene prioridad sobre el selectbox previo.
+    if parque_activo and parque_activo in PARQUES_EOLICA:
+        _parque_idx = PARQUES_EOLICA.index(parque_activo)
+        st.session_state["eolica_parque_sel"] = parque_activo
+    else:
+        _prev = st.session_state.get("eolica_parque_sel", PARQUES_EOLICA[0])
+        _parque_idx = PARQUES_EOLICA.index(_prev) if _prev in PARQUES_EOLICA else 0
+
     _ventana_prev = st.session_state.get("eolica_ventana_horas", 168)
     _ventana_idx  = _ventanas.index(_ventana_prev) if _ventana_prev in _ventanas else 3
 

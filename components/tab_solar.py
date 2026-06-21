@@ -278,11 +278,15 @@ def render_tab_solar(
 
     _ventanas = [24, 48, 72, 168]
 
-    # Preservar selección entre reruns (el rerun de corrección de ancho resetea index=)
-    _parque_prev = st.session_state.get("solar_parque_sel", parque_activo)
-    _parque_idx  = PARQUES_SOLAR.index(_parque_prev) if _parque_prev in PARQUES_SOLAR else (
-        PARQUES_SOLAR.index(parque_activo) if parque_activo in PARQUES_SOLAR else 0
-    )
+    # Si viene parque_activo del sidebar, tiene prioridad sobre el selectbox previo.
+    # Si no, preservar lo que el usuario eligió en el dropdown.
+    if parque_activo and parque_activo in PARQUES_SOLAR:
+        _parque_idx = PARQUES_SOLAR.index(parque_activo)
+        st.session_state["solar_parque_sel"] = parque_activo
+    else:
+        _prev = st.session_state.get("solar_parque_sel", PARQUES_SOLAR[0])
+        _parque_idx = PARQUES_SOLAR.index(_prev) if _prev in PARQUES_SOLAR else 0
+
     _ventana_prev = st.session_state.get("solar_ventana_horas", 168)
     _ventana_idx  = _ventanas.index(_ventana_prev) if _ventana_prev in _ventanas else 3
 

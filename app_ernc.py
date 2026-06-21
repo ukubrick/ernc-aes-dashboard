@@ -253,62 +253,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# JS: redimensionar gráficos Plotly cuando un tab se hace visible.
-# Corre en un iframe de components.html (única forma de ejecutar JS en Streamlit).
-# El MutationObserver del iframe observa window.parent.document para capturar
-# los paneles de tab en el DOM principal.
-import streamlit.components.v1 as _components
-_components.html("""
-<script>
-(function() {
-    var pdoc, pwin;
-    try { pdoc = window.parent.document; pwin = window.parent; } catch(e) { return; }
-
-    function resizePlots(panel) {
-        var Plotly = pwin.Plotly;
-        panel.querySelectorAll('.js-plotly-plot').forEach(function(gd) {
-            // Limpiar width fijo en todos los SVG y contenedores del gráfico
-            gd.querySelectorAll('svg').forEach(function(svg) {
-                svg.removeAttribute('width');
-                svg.style.width = '100%';
-            });
-            var sc = gd.querySelector('.svg-container');
-            if (sc) { sc.removeAttribute('width'); sc.style.width = '100%'; }
-            // Ahora resize funciona porque no hay width fijo
-            if (Plotly) {
-                try { Plotly.Plots.resize(gd); } catch(e) {}
-            }
-        });
-    }
-
-    var panelObservers = new WeakMap();
-
-    function attachToPanels() {
-        pdoc.querySelectorAll('[role="tabpanel"]').forEach(function(panel) {
-            if (panelObservers.has(panel)) return; // ya tiene observer
-            var obs = new MutationObserver(function(muts) {
-                muts.forEach(function(m) {
-                    if (m.attributeName === 'hidden' && !panel.hasAttribute('hidden')) {
-                        setTimeout(function(){ resizePlots(panel); }, 100);
-                        setTimeout(function(){ resizePlots(panel); }, 600);
-                    }
-                });
-            });
-            obs.observe(panel, { attributes: true, attributeFilter: ['hidden'] });
-            panelObservers.set(panel, obs);
-        });
-    }
-
-    // Re-enganchar cada vez que Streamlit recrea el DOM (rerun)
-    new MutationObserver(function() {
-        attachToPanels();
-    }).observe(pdoc.body, { childList: true, subtree: true });
-
-    // Primera vez
-    attachToPanels();
-})();
-</script>
-""", height=0)
 
 # ── Imports propios ────────────────────────────────────────────────────────────
 from config import (
@@ -525,9 +469,6 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 # ── Layout principal ──────────────────────────────────────────────────────────
 
 def main():
-    # Limpiar flags de reruns anteriores que ya no se usan
-    st.session_state.pop("_needs_rerun_for_tab", None)
-    st.session_state.pop("_tab_rerun_done", None)
 
     with st.spinner("Cargando datos..."):
         try:
@@ -586,38 +527,27 @@ def main():
     st.divider()
 
     tab_forzado = st.session_state.pop("tab_forzado", None)
+    _tab_map = {"solar": "Solar FV", "eolica": "Eolica"}
     tab_labels = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d", "Estadisticas", "Insights", "CMG", "Limitaciones"]
 
-    _tab_map_forzado = {"solar": "Solar FV", "eolica": "Eolica"}
-
-    # Cuando viene un click del sidebar, cambiamos el key para que st.tabs se recree
-    # con default= en el tab correcto. El key incluye el parque para que reruns
-    # posteriores (ventana, otro parque) usen el mismo key y NO recreen el componente.
-    _parque_key = st.session_state.get("parque_activo", "none")
-    if tab_forzado:
-        _tabs_key = f"main_tabs_{tab_forzado}_{_parque_key}"
-        _default_tab = _tab_map_forzado[tab_forzado]
-        # Guardar el key activo para que reruns normales lo reusen
-        st.session_state["_tabs_key_activo"] = _tabs_key
-    else:
-        # Reusar el último key generado por sidebar; si no hay, usar key base
-        _tabs_key = st.session_state.get("_tabs_key_activo", "main_tabs")
-        _default_tab = None
+    # Estrategia: key fijo siempre. Cuando viene tab_forzado desde el sidebar,
+    # escribir directamente en session_state["main_tabs"] antes de crear st.tabs.
+    # Streamlit respeta este valor como estado inicial del widget en el mismo rerun.
+    if tab_forzado and tab_forzado in _tab_map:
+        st.session_state["main_tabs"] = _tab_map[tab_forzado]
 
     tab_resumen, tab_solar, tab_eolica, tab_forecast, tab_stats, tab_insights, tab_cmg, tab_limitaciones = st.tabs(
         tab_labels,
-        default=_default_tab,
-        key=_tabs_key,
+        key="main_tabs",
     )
 
     parque_tec = TECNOLOGIA.get(parque_activo, "Solar") if parque_activo else None
-
-    # El mapa solo hace zoom al parque si el usuario está viendo el tab Mapa.
-    _tab_activo_ahora = st.session_state.get(_tabs_key, "Mapa & Resumen")
-    _parque_para_mapa = parque_activo if _tab_activo_ahora == "Mapa & Resumen" else None
+    tab_activo = st.session_state.get("main_tabs", "Mapa & Resumen")
 
     with tab_resumen:
-        _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, _parque_para_mapa)
+        # Zoom al parque solo cuando el usuario está en el tab Mapa
+        _parque_mapa = parque_activo if tab_activo == "Mapa & Resumen" else None
+        _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, _parque_mapa)
 
     with tab_solar:
         solar_activo = parque_activo if parque_tec == "Solar" else None
