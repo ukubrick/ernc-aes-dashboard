@@ -85,22 +85,6 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
 
     corte = pd.Timestamp.now() - pd.Timedelta(hours=horas_ventana)
 
-    # x_max: último dato real del parque para evitar espacio vacío a la derecha
-    maxs = []
-    if gen_rows:
-        dr = pd.DataFrame(gen_rows)
-        dr["fecha_hora"] = pd.to_datetime(dr["fecha_hora"]).dt.tz_localize(None)
-        dr = dr[(dr["parque"] == parque) & (dr["fecha_hora"] >= corte)]
-        if not dr.empty:
-            maxs.append(dr["fecha_hora"].max())
-    if prog_rows:
-        dp = pd.DataFrame(prog_rows)
-        dp["fecha_hora"] = pd.to_datetime(dp["fecha_hora"]).dt.tz_localize(None)
-        dp = dp[(dp["parque"] == parque) & (dp["fecha_hora"] >= corte)]
-        if not dp.empty:
-            maxs.append(dp["fecha_hora"].max())
-    ahora = max(maxs) if maxs else pd.Timestamp.now()
-
     # Modelo eólico primero (fondo) — solo histórico para no estirar el eje X al futuro
     if not df_meteo.empty and "p_eolica_estimada_mw" in df_meteo.columns:
         df_mod = df_meteo[
@@ -156,7 +140,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        xaxis=dict(range=[x_min or corte, ahora]),
+        xaxis=dict(range=[x_min or corte, None], autorange=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -171,7 +155,6 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_
         return
 
     x_inicio = x_min or corte
-    ahora = df_meteo["fecha_hora"].max() if not df_meteo.empty else pd.Timestamp.now()
 
     # Subplot superior: velocidades (10m, 100m, rafagas)
     fig_v = go.Figure()
@@ -217,7 +200,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="m/s",
-        xaxis=dict(range=[x_inicio, ahora]),
+        xaxis=dict(range=[x_inicio, None], autorange=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
     )
@@ -255,7 +238,7 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp, x_
                 margin=dict(l=0, r=0, t=10, b=0),
                 xaxis_title=None,
                 yaxis_title="α (shear)",
-                xaxis=dict(range=[x_inicio, ahora]),
+                xaxis=dict(range=[x_inicio, None], autorange=False),
                 hovermode="x unified",
                 showlegend=False,
             )
