@@ -253,6 +253,45 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# JS: redimensionar gráficos Plotly cuando un tab se hace visible.
+# Corre en un iframe de components.html (única forma de ejecutar JS en Streamlit).
+# El MutationObserver del iframe observa window.parent.document para capturar
+# los paneles de tab en el DOM principal.
+import streamlit.components.v1 as _components
+_components.html("""
+<script>
+(function() {
+    var pdoc, pwin;
+    try { pdoc = window.parent.document; pwin = window.parent; } catch(e) { return; }
+
+    function resizePlots(panel) {
+        var Plotly = pwin.Plotly;
+        if (!Plotly) return;
+        panel.querySelectorAll('.js-plotly-plot').forEach(function(p) {
+            try { Plotly.Plots.resize(p); } catch(e) {}
+        });
+    }
+
+    function attach() {
+        var panels = pdoc.querySelectorAll('[role="tabpanel"]');
+        if (!panels.length) { setTimeout(attach, 400); return; }
+        panels.forEach(function(panel) {
+            new MutationObserver(function(muts) {
+                muts.forEach(function(m) {
+                    if (m.attributeName === 'hidden' && !panel.hasAttribute('hidden')) {
+                        setTimeout(function(){ resizePlots(panel); }, 100);
+                        setTimeout(function(){ resizePlots(panel); }, 500);
+                    }
+                });
+            }).observe(panel, { attributes: true, attributeFilter: ['hidden'] });
+        });
+    }
+
+    attach();
+})();
+</script>
+""", height=0)
+
 # ── Imports propios ────────────────────────────────────────────────────────────
 from config import (
     NOMBRE_DISPLAY, TECNOLOGIA, PARQUES_TODOS, PMAX,
