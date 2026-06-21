@@ -70,6 +70,12 @@ def _kpis_solar(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str 
             )
 
 
+def _xmin(*dfs_fecha) -> pd.Timestamp | None:
+    """Mínimo real de fecha_hora entre todos los DataFrames con datos."""
+    mins = [df["fecha_hora"].min() for df in dfs_fecha if not df.empty and "fecha_hora" in df.columns]
+    return min(mins) if mins else None
+
+
 def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> None:
     fig = go.Figure()
     ahora = pd.Timestamp.now()
@@ -131,8 +137,8 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="MW",
-        # Fijar rango X para evitar que el modelo forecast estire el eje hacia el futuro
-        xaxis=dict(range=[corte, ahora]),
+        # Rango X: desde el primer dato real (no el corte teórico que puede ser anterior a los datos)
+        xaxis=dict(range=[_xmin(df_gen[df_gen["parque"] == parque] if not df_gen.empty else pd.DataFrame(), df_meteo) or corte, ahora]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
@@ -184,7 +190,7 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
         margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None,
         yaxis_title="W/m²",
-        xaxis=dict(range=[corte, ahora]),
+        xaxis=dict(range=[_xmin(hist, fore) or corte, ahora]),
         yaxis2=dict(title="Nubosidad %", overlaying="y", side="right", range=[0, 100], showgrid=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
