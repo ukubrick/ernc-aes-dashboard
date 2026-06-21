@@ -826,6 +826,8 @@ if page >= total_pages:
 - [ ] `st.segmented_control` requiere Streamlit >= 1.38 — verificar versión en Streamlit Cloud
 - [ ] Correr workflow manual para repoblar `p_eolica_estimada_mw` en `meteo_ernc` (fix sesión 9)
 - [x] Gráficos comprimidos en primer render de tab — RESUELTO en Sesión 13 (navegación de vista única)
+- [ ] **Satélite en el mapa**: reactivar vista Satélite agregando un token gratuito (Mapbox o MapTiler) a `secrets.toml`. El style raster ESRI ya está dormido en `mapa_ernc.py` (`_ESRI_SAT_STYLE`); sin token, pydeck no lo renderiza. (Sesión 15)
+- [ ] **Ventana PCP**: si la query PCP de 5 días se sigue colgando/degradando en la API del CEN, bajar `DIAS_VENTANA` del PCP a 1-2 días para que el cron sea más robusto. (Sesión 15)
 
 ---
 
