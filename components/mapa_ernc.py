@@ -178,8 +178,11 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
     st_folium(m, use_container_width=True, height=560,
               returned_objects=[], key=f"mapa_folium_{parque_activo or 'all'}")
 
-    from datetime import datetime, timezone, timedelta
-    ahora = datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m %H:%M")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    # America/Santiago maneja el cambio horario (UTC-4 invierno / UTC-3 verano),
+    # a diferencia del offset fijo -3 que adelantaba 1 h en invierno.
+    ahora = datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m %H:%M")
     nubes_txt = ("nubosidad OWM en vivo (~cada 10 min)" if owm
                  else "capa de nubes inactiva (sin OPENWEATHER_KEY válida)")
     st.caption(
