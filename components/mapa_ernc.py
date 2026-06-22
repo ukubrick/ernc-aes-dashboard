@@ -138,10 +138,12 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
 
     owm = _secret("OPENWEATHER_KEY")
     if owm:
+        # opacity alto: la densidad de nubes ya viene codificada en el tile OWM
+        # (más nubosidad = píxel más blanco/opaco), así que se ve el gris denso.
         folium.TileLayer(
             tiles=f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={owm}",
             attr="© OpenWeather", name="Nubosidad (en vivo)", overlay=True,
-            control=True, opacity=0.55,
+            control=True, opacity=0.9,
         ).add_to(m)
 
     # Sombra día/noche en tiempo real
@@ -175,6 +177,15 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
     folium.LayerControl(collapsed=True, position="topright").add_to(m)
     st_folium(m, use_container_width=True, height=560,
               returned_objects=[], key=f"mapa_folium_{parque_activo or 'all'}")
+
+    from datetime import datetime, timezone, timedelta
+    ahora = datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m %H:%M")
+    nubes_txt = ("nubosidad OWM en vivo (~cada 10 min)" if owm
+                 else "capa de nubes inactiva (sin OPENWEATHER_KEY válida)")
+    st.caption(
+        f"Hora actual (Santiago): {ahora} hrs · Sombra día/noche calculada en tiempo real · "
+        f"{nubes_txt} · Imagen satelital: composición estática Esri World Imagery (sin fecha por tile)."
+    )
 
 
 def render_mapa(
