@@ -34,6 +34,42 @@ MAP_STYLES = {
 }
 
 # Ciudades de referencia para dar contexto geográfico al mapa
+# ── Presets de nubosidad (OpenWeather) ─────────────────────────────────────────
+# "Clásica" usa el tile legacy clouds_new (paleta blanca fija). El resto usa Weather
+# Maps 2.0 (op="CL"), que admite `opacity` y `palette` configurables: la paleta mapea
+# % de nubosidad → color RGBA (ramp de grises para que las nubes densas se vean opacas).
+# Formato palette: "valor:RRGGBBAA;...". refuerzo=N apila la capa N veces para intensificar.
+_PAL_GRIS = "0:E1E1E100;20:CFCFCF66;40:A6A6A6B0;60:7C7C7CD0;80:545454EC;100:2E2E2EFF"
+_PAL_AZUL = "0:DDE7F500;25:B9CBE877;50:8AA8D8C0;75:5E81C2E6;100:38539EFF"
+_CLOUD_PRESETS = {
+    "Clásica (suave)": {"legacy": True, "opacity": 0.85, "refuerzo": 1},
+    "Estándar":        {"op": "CL", "opacity": 0.8, "palette": None,     "refuerzo": 1},
+    "Densa (gris)":    {"op": "CL", "opacity": 1.0, "palette": _PAL_GRIS, "refuerzo": 2},
+    "Alto contraste":  {"op": "CL", "opacity": 1.0, "palette": _PAL_GRIS, "refuerzo": 3},
+    "Azulada":         {"op": "CL", "opacity": 1.0, "palette": _PAL_AZUL, "refuerzo": 2},
+}
+
+
+def _build_cloud_layers(folium, key: str, cfg: dict) -> list:
+    """Construye las TileLayer de nubosidad para el preset elegido."""
+    if cfg.get("legacy"):
+        url = f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={key}"
+    else:
+        url = (f"https://maps.openweathermap.org/maps/2.0/weather/{cfg['op']}"
+               f"/{{z}}/{{x}}/{{y}}?appid={key}&opacity={cfg['opacity']}&fill_bound=true")
+        if cfg.get("palette"):
+            url += f"&palette={cfg['palette']}"
+    layers = []
+    n = max(1, int(cfg.get("refuerzo", 1)))
+    for i in range(n):
+        layers.append(folium.TileLayer(
+            tiles=url, attr="© OpenWeather",
+            name="Nubosidad (en vivo)" if i == 0 else f"Nubosidad (refuerzo {i})",
+            overlay=True, control=(i == 0), opacity=cfg["opacity"], show=True,
+        ))
+    return layers
+
+
 _CIUDADES = [
     {"nombre": "Antofagasta", "lat": -23.65, "lon": -70.40},
     {"nombre": "Calama",      "lat": -22.46, "lon": -68.93},
@@ -140,18 +176,14 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
 
     owm = _secret("OPENWEATHER_KEY")
     if owm:
-        # Nubosidad OWM: la densidad ya viene codificada en el tile (más nubes =
-        # píxel más blanco). Para que se vea bien opaca se usa opacity=1.0 y se
-        # apila la capa dos veces (la segunda sin control) → intensifica el alfa.
-        cloud_url = f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={owm}"
-        folium.TileLayer(
-            tiles=cloud_url, attr="© OpenWeather", name="Nubosidad (en vivo)",
-            overlay=True, control=True, opacity=1.0,
-        ).add_to(m)
-        folium.TileLayer(
-            tiles=cloud_url, attr="© OpenWeather", name="Nubosidad (refuerzo)",
-            overlay=True, control=False, opacity=1.0, show=True,
-        ).add_to(m)
+        preset = st.selectbox(
+            "Paleta de nubosidad", list(_CLOUD_PRESETS),
+            index=list(_CLOUD_PRESETS).index("Densa (gris)"),
+            key=f"cloud_preset_{parque_activo or 'all'}",
+            help="Estilo y opacidad de la capa de nubes en vivo (OpenWeather).",
+        )
+        for layer in _build_cloud_layers(folium, owm, _CLOUD_PRESETS[preset]):
+            layer.add_to(m)
 
     # Sombra día/noche en tiempo real
     Terminator().add_to(m)
