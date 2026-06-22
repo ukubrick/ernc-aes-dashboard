@@ -23,8 +23,8 @@ AES_BLANCO  = "#FFFFFF"
 
 # ── Configuración de página ────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Dashboard ERNC — AES Andes",
-    page_icon="assets/logo_aes.png" if os.path.exists("assets/logo_aes.png") else None,
+    page_title="Pulsar — AES Andes",
+    page_icon="assets/logo_pulsar.png" if os.path.exists("assets/logo_pulsar.png") else None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -405,15 +405,47 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
     parque_activo = st.session_state.get("parque_activo", None)
 
     with st.sidebar:
-        # Header premium
-        st.markdown(
-            f"<div style='padding:16px 4px 12px;text-align:center'>"
-            f"<div style='font-size:22px;font-weight:800;color:white;letter-spacing:-0.5px'>AES Andes ERNC</div>"
-            f"<div style='font-size:11px;color:rgba(255,255,255,0.50);margin-top:3px'>"
-            f"11 parques · ~1.824 MW instalados</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+        # Header premium — logo Pulsar con fondo blanco eliminado via PIL
+        _logo_path = "assets/logo_pulsar.png"
+        if os.path.exists(_logo_path):
+            import base64 as _b64
+            import io as _io
+            from PIL import Image as _PILImage
+            import numpy as _np
+
+            # El PNG trae el logo blanco con el patrón de transparencia (checkerboard)
+            # horneado como píxeles: fondo 242-249, logo blanco 251-255. Se keyea por
+            # luminancia con corte en 251 → fondo totalmente transparente, logo en blanco.
+            _img = _PILImage.open(_logo_path).convert("RGB")
+            _arr = _np.array(_img, dtype=_np.float32)
+            _bright = _arr.mean(axis=2)
+            _alpha = _np.clip((_bright - 251.0) * 80, 0, 255).astype(_np.uint8)
+            _rgba = _np.zeros((_arr.shape[0], _arr.shape[1], 4), dtype=_np.uint8)
+            _rgba[:, :, :3] = 255
+            _rgba[:, :, 3] = _alpha
+            _out = _PILImage.fromarray(_rgba, "RGBA").resize((320, 320), _PILImage.LANCZOS)
+            _buf = _io.BytesIO()
+            _out.save(_buf, format="PNG")
+            _logo_b64 = _b64.b64encode(_buf.getvalue()).decode()
+
+            st.markdown(
+                f"<div style='padding:20px 4px 6px;text-align:center'>"
+                f"<img src='data:image/png;base64,{_logo_b64}' "
+                f"style='width:160px;display:block;margin:0 auto;' />"
+                f"<div style='font-size:11px;color:rgba(255,255,255,0.55);margin-top:10px'>"
+                f"Creado por <b style='color:rgba(255,255,255,0.80)'>Erick Herrera</b></div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"<div style='padding:16px 4px 12px;text-align:center'>"
+                f"<div style='font-size:22px;font-weight:800;color:white;letter-spacing:-0.5px'>Pulsar</div>"
+                f"<div style='font-size:11px;color:rgba(255,255,255,0.55);margin-top:6px'>"
+                f"Creado por <b style='color:rgba(255,255,255,0.80)'>Erick Herrera</b></div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
         # Fuentes de datos — semáforo de conexión palpitante, en la parte alta
         st.markdown(_bloque_fuentes(actualizaciones or {}), unsafe_allow_html=True)
@@ -497,18 +529,6 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
         if st.button("Generar reporte PDF", use_container_width=True, key="btn_pdf"):
             st.session_state["generar_pdf"] = True
 
-        # Firma
-        st.markdown(
-            f"<div style='margin-top:20px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.12);"
-            f"text-align:center'>"
-            f"<div style='font-size:10px;color:rgba(255,255,255,0.40);line-height:1.6'>"
-            f"Dashboard creado por</div>"
-            f"<div style='font-size:12px;font-weight:600;color:rgba(255,255,255,0.70)'>"
-            f"Erick Herrera</div>"
-            f"<div style='font-size:10px;color:rgba(255,255,255,0.35)'>AES Andes · {AES_CYAN[1:]}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
 
     return st.session_state.get("parque_activo", None)
 
@@ -588,7 +608,7 @@ def main():
     st.markdown(
         f"<div style='display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px'>"
         f"<h1 style='font-size:30px;font-weight:800;color:{AES_TEXTO};margin:0;letter-spacing:-0.5px'>"
-        f"Dashboard ERNC — AES Andes</h1>"
+        f"Pulsar — AES Andes</h1>"
         f"<span style='font-size:12px;color:{AES_MUTED}'>Ultima lectura: <b>{hora_label} hrs</b></span>"
         f"</div>",
         unsafe_allow_html=True,
