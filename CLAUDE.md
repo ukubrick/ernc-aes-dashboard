@@ -1174,16 +1174,39 @@ Los BESS de AES aparecen en gen-real/v3 como **centrales separadas** (`id_centra
   carga/descarga + **SoC estimado** (integración del flujo neto, anclado al mínimo),
   y **arbitraje vs CMG** del nodo del parque (ingreso descarga − costo carga + spread).
 
+### Mapa satelital migrado a folium (post-fix MapTiler)
+La vista **Satelite** se migró de pydeck a **`streamlit-folium`** porque pydeck/Streamlit
+no puede superponer capas raster (nubes) ni renderizar styles dict (crash
+`mapStyle?.indexOf is not a function`). Implementado en
+`components/mapa_ernc.py::_render_satelite_folium()`:
+- Base **Esri World Imagery** (token-free, no necesita MapTiler) + etiquetas Carto.
+- **Nubosidad OWM en vivo** (`OPENWEATHER_KEY`, opacity 0.9 — densidad codificada en el
+  tile) + **día/noche** con `folium.plugins.Terminator` (tiempo real).
+- `LayerControl` para alternar nubes/etiquetas; markers `CircleMarker` con popup por parque.
+- `st_folium(..., returned_objects=[])` para no disparar reruns.
+- Satelite es **default** del selector y siempre disponible (ESRI sin key).
+- Claro/Detallado siguen en **pydeck** con marcadores en píxeles (`radius_units=pixels`,
+  no se agrandan al zoom) y labels escalonados para el complejo Andes Solar.
+- Caption con **hora real Santiago** (usa `ZoneInfo("America/Santiago")`, NO offset fijo).
+- Dependencias nuevas en `requirements.txt`: `folium`, `streamlit-folium`.
+- Eliminado el dict/URL MapTiler muerto. La `MAPTILER_KEY` ya no se usa (queda en secrets
+  por si se quiere volver a un style hosted).
+
 ### Pendientes Sesión 17
-- [ ] Nubes/día-noche reales en el mapa → requiere `streamlit-folium` (pydeck no soporta
-      raster overlays). `OPENWEATHER_KEY` ya disponible.
+- [ ] **TZ GLOBAL (PRIORITARIO próxima sesión):** reemplazar TODOS los offset fijos `-3`
+      por `ZoneInfo("America/Santiago")`. `utils/db.py::_ahora_santiago()` y varios tabs
+      usan `timezone(timedelta(hours=-3))`, que en **invierno chileno (UTC-4)** corre las
+      ventanas/filtros **1 h** respecto a los timestamps reales de la DB (guardados con
+      `TZ_CHILE`=ZoneInfo en adquisición). El mapa YA se corrigió (Sesión 17); falta el resto.
 - [ ] Re-correr `Adquisicion_meteo_ernc.py` para repoblar shear acotado y viento en m/s.
 - [ ] Capacidad real de energía (MWh) de cada BESS para SoC/ciclos exactos — hoy se
       asume duración 4h (`_HORAS_BESS`). La API CEN no publica MWh.
 - [ ] (item 6 usuario) Info técnica del Coordinador para recalcular fórmulas y confirmar
       el nodo CMG real de cada parque.
+- [ ] Nubes OWM: confirmar que `OPENWEATHER_KEY` quedó activa (daba 401 al crearse; las
+      keys nuevas tardan ~2 h). Si sigue 401, revisar la key.
 
 ---
 
 *Actualizado 2026-06-22 — Sesiones 1–17.*
-*Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*
+*Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*
