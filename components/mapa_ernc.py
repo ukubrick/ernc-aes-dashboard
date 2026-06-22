@@ -86,6 +86,14 @@ _VIEW_PARQUE = {p: pdk.ViewState(
 ) for p in PARQUES_TODOS}
 
 
+# Los 5 parques del complejo Andes Solar están a < 2 km entre sí: sus etiquetas se
+# apilan. Se les da un offset vertical escalonado para que se lean separadas.
+_LABEL_OFFSET = {
+    "AS1":  [12, -34], "AS2A": [12, -20], "AS2B": [12, -6],
+    "AS3":  [12, 8],   "AS4":  [12, 22],
+}
+
+
 def _df(gen_por_parque: dict[str, float | None]) -> pd.DataFrame:
     filas = []
     for p in PARQUES_TODOS:
@@ -95,7 +103,9 @@ def _df(gen_por_parque: dict[str, float | None]) -> pd.DataFrame:
         fp    = round(gen / pmax * 100, 1) if pmax > 0 else 0.0
         tec   = TECNOLOGIA[p]
         col   = _COLOR[tec]
-        radio = max(35000, pmax * 250)
+        # Radio en PÍXELES (no metros): tamaño constante en pantalla a cualquier zoom.
+        # Proporcional a la capacidad pero acotado para no tapar el terreno al hacer zoom.
+        radio_px = max(6.0, min(13.0, 5.0 + (pmax ** 0.5) * 0.55))
         filas.append({
             "parque":     p,
             "nombre":     NOMBRE_DISPLAY[p],
@@ -107,7 +117,10 @@ def _df(gen_por_parque: dict[str, float | None]) -> pd.DataFrame:
             "tecnologia": tec,
             "r": col[0], "g": col[1], "b": col[2],
             "alpha": max(80, min(230, int(80 + fp * 1.5))) if fp > 0 else 60,
-            "radio": radio,
+            "radio_px":   round(radio_px, 1),
+            "halo_px":    round(radio_px * 1.9, 1),
+            "off_x":      _LABEL_OFFSET.get(p, [10, -6])[0],
+            "off_y":      _LABEL_OFFSET.get(p, [10, -6])[1],
         })
     return pd.DataFrame(filas)
 
@@ -148,8 +161,9 @@ def render_mapa(
         "ScatterplotLayer",
         data=df,
         get_position=["lon", "lat"],
-        get_radius="radio",
-        get_fill_color=["r", "g", "b", 18],
+        get_radius="halo_px",
+        radius_units="pixels",
+        get_fill_color=["r", "g", "b", 40],
         stroked=False,
         pickable=False,
     )
@@ -158,11 +172,14 @@ def render_mapa(
         "ScatterplotLayer",
         data=df,
         get_position=["lon", "lat"],
-        get_radius=22000,
+        get_radius="radio_px",
+        radius_units="pixels",
+        radius_min_pixels=5,
+        radius_max_pixels=14,
         get_fill_color=["r", "g", "b", "alpha"],
-        get_line_color=["r", "g", "b"],
+        get_line_color=[255, 255, 255] if es_satelite else ["r", "g", "b"],
         stroked=True,
-        line_width_min_pixels=2,
+        line_width_min_pixels=1.5,
         pickable=True,
         auto_highlight=True,
         highlight_color=[255, 255, 255, 120],
@@ -173,12 +190,15 @@ def render_mapa(
         data=df,
         get_position=["lon", "lat"],
         get_text="nombre",
-        get_size=12,
+        get_size=10,
+        size_units="pixels",
         get_color=txt_color,
         get_alignment_baseline="'bottom'",
-        get_pixel_offset=[0, -28],
+        get_text_anchor="'start'",
+        get_pixel_offset=["off_x", "off_y"],
         background=True,
-        get_background_color=[0, 0, 0, 120] if es_satelite else [255, 255, 255, 160],
+        get_background_color=[0, 0, 0, 140] if es_satelite else [255, 255, 255, 180],
+        background_padding=[3, 1, 3, 1],
         pickable=False,
     )
 
