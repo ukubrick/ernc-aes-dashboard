@@ -689,12 +689,9 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
                 unsafe_allow_html=True,
             )
         with cab_r:
-            from components.mapa_ernc import maptiler_disponible
-            # Satélite por defecto si hay key MapTiler (primera opción del selector)
-            _opciones_mapa = ["Satelite", "Claro", "Detallado"] if maptiler_disponible() \
-                else ["Claro", "Detallado"]
+            # Satélite (folium + ESRI, token-free) por defecto; nubes/día-noche si hay key OWM
             estilo = st.selectbox(
-                "Estilo de mapa", _opciones_mapa,
+                "Estilo de mapa", ["Satelite", "Claro", "Detallado"],
                 key="mapa_estilo", label_visibility="collapsed",
             )
         render_mapa(gen_por_parque, parque_activo=parque_activo, estilo=estilo)

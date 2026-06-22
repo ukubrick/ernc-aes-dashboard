@@ -17,20 +17,6 @@ def _secret(nombre: str) -> str | None:
     return os.environ.get(nombre)
 
 
-def maptiler_disponible() -> bool:
-    return bool(_secret("MAPTILER_KEY"))
-
-
-def _satelite_style_url(key: str) -> str:
-    """URL del style satelital hospedado por MapTiler (imagen + etiquetas).
-
-    IMPORTANTE: el componente DeckGlJsonChart de Streamlit exige que map_style sea
-    un STRING (hace `.indexOf` sobre él). Un dict de style raster MapLibre revienta
-    con 'e.mapStyle?.indexOf is not a function'. Por eso se usa la URL hospedada.
-    La capa de nubes OpenWeather no puede inyectarse en una URL de style; requiere
-    otro renderer (folium) y queda pendiente."""
-    return f"https://api.maptiler.com/maps/hybrid/style.json?key={key}"
-
 # Paleta AES por tecnologia (RGB)
 _COLOR = {
     "Solar":  [59, 76, 232],    # AES_AZUL
@@ -125,6 +111,72 @@ def _df(gen_por_parque: dict[str, float | None]) -> pd.DataFrame:
     return pd.DataFrame(filas)
 
 
+def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None:
+    """Mapa satelital con folium: imagen ESRI + nubes OpenWeather en vivo +
+    sombra día/noche (Terminator). folium/Leaflet sí renderiza overlays raster,
+    a diferencia de pydeck."""
+    import folium
+    from folium.plugins import Terminator
+    from streamlit_folium import st_folium
+
+    if parque_activo and parque_activo in COORDENADAS:
+        center = [COORDENADAS[parque_activo]["lat"], COORDENADAS[parque_activo]["lon"]]
+        zoom = 11
+    else:
+        center, zoom = [-32.0, -70.5], 4
+
+    m = folium.Map(location=center, zoom_start=zoom, tiles=None, control_scale=True)
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri — World Imagery", name="Satélite", overlay=False, control=False,
+    ).add_to(m)
+    # Etiquetas de referencia (lugares/carreteras) semitransparentes encima
+    folium.TileLayer(
+        tiles="https://basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png",
+        attr="© CARTO", name="Etiquetas", overlay=True, control=True, opacity=0.9,
+    ).add_to(m)
+
+    owm = _secret("OPENWEATHER_KEY")
+    if owm:
+        folium.TileLayer(
+            tiles=f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={owm}",
+            attr="© OpenWeather", name="Nubosidad (en vivo)", overlay=True,
+            control=True, opacity=0.55,
+        ).add_to(m)
+
+    # Sombra día/noche en tiempo real
+    Terminator().add_to(m)
+
+    # Ciudades de referencia
+    for c in _CIUDADES:
+        folium.CircleMarker(
+            location=[c["lat"], c["lon"]], radius=2, color="#FFFFFF",
+            fill=True, fill_color="#FFFFFF", fill_opacity=0.7, weight=0,
+            tooltip=c["nombre"],
+        ).add_to(m)
+
+    # Parques: círculo de color por tecnología con popup
+    for _, r in df.iterrows():
+        color = f"rgb({int(r['r'])},{int(r['g'])},{int(r['b'])})"
+        popup = folium.Popup(
+            f"<b>{r['nombre']}</b><br>{r['tecnologia']}<br>"
+            f"Gen: {r['gen_mw']} MW<br>Cap: {r['pmax_mw']} MW<br>"
+            f"FP: {r['factor_pct']}%",
+            max_width=220,
+        )
+        folium.CircleMarker(
+            location=[r["lat"], r["lon"]],
+            radius=float(r["radio_px"]) * 0.7,
+            color="#FFFFFF", weight=1.2,
+            fill=True, fill_color=color, fill_opacity=min(0.9, r["alpha"] / 255 + 0.2),
+            popup=popup, tooltip=r["nombre"],
+        ).add_to(m)
+
+    folium.LayerControl(collapsed=True, position="topright").add_to(m)
+    st_folium(m, use_container_width=True, height=560,
+              returned_objects=[], key=f"mapa_folium_{parque_activo or 'all'}")
+
+
 def render_mapa(
     gen_por_parque: dict[str, float | None],
     parque_activo: str | None = None,
@@ -132,23 +184,21 @@ def render_mapa(
 ) -> None:
     df = _df(gen_por_parque)
     es_satelite = estilo == "Satelite"
-    key_mt = _secret("MAPTILER_KEY")
-    # Satelital: style raster MapLibre (MapTiler + nubes OpenWeather). Si no hay key,
-    # se degrada a Detallado para no romper el render.
-    if es_satelite and key_mt:
-        map_style = _satelite_style_url(key_mt)
-        map_provider = "mapbox"
-    elif es_satelite and not key_mt:
-        st.info("Vista satelital requiere MAPTILER_KEY en secrets. Mostrando mapa Detallado.")
-        es_satelite = False
-        map_style = MAP_STYLES["Detallado"]
-        map_provider = "carto"
-    else:
-        map_style = MAP_STYLES.get(estilo, MAP_STYLES["Claro"])
-        map_provider = "carto"
-    # En satelital el texto va en blanco para contrastar con el fondo oscuro
-    txt_color = [255, 255, 255, 235] if es_satelite else [26, 31, 54, 230]
-    ciudad_color = [255, 255, 255, 150] if es_satelite else [107, 114, 128, 200]
+
+    # Satélite → folium (ESRI token-free + nubes OWM en vivo + día/noche; pydeck no puede).
+    if es_satelite:
+        try:
+            _render_satelite_folium(df, parque_activo)
+            return
+        except Exception as e:
+            st.info(f"No se pudo cargar el mapa satelital ({e}). Mostrando mapa Detallado.")
+            estilo = "Detallado"
+            es_satelite = False
+    # Llegados aquí el estilo es Claro/Detallado (el satélite se fue por folium arriba).
+    map_style = MAP_STYLES.get(estilo, MAP_STYLES["Claro"])
+    map_provider = "carto"
+    txt_color = [26, 31, 54, 230]
+    ciudad_color = [107, 114, 128, 200]
     df_ciudades = pd.DataFrame(_CIUDADES)
 
     # Vista: zoom al parque activo si viene del sidebar, sino Chile completo
