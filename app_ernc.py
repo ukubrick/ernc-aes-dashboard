@@ -690,9 +690,9 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
             )
         with cab_r:
             from components.mapa_ernc import maptiler_disponible
-            _opciones_mapa = ["Claro", "Detallado"]
-            if maptiler_disponible():
-                _opciones_mapa.append("Satelite")
+            # Satélite por defecto si hay key MapTiler (primera opción del selector)
+            _opciones_mapa = ["Satelite", "Claro", "Detallado"] if maptiler_disponible() \
+                else ["Claro", "Detallado"]
             estilo = st.selectbox(
                 "Estilo de mapa", _opciones_mapa,
                 key="mapa_estilo", label_visibility="collapsed",
