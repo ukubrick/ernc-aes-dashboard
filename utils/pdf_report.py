@@ -16,7 +16,7 @@ from reportlab.platypus import (
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
-from config import NOMBRE_DISPLAY, TECNOLOGIA, PMAX, PARQUES_TODOS
+from config import NOMBRE_DISPLAY, TECNOLOGIA, PMAX, PMAX_FP, PMAX_FP_TOTAL, PARQUES_TODOS
 from utils.calculos import calcular_factor_planta, calcular_desvio, calcular_ingreso_estimado
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ def _tabla_parques(
         gen   = gen_por_parque.get(p)
         prog  = prog_por_parque.get(p)
         cmg   = cmg_por_parque.get(p)
-        fp    = calcular_factor_planta(gen, PMAX[p])
+        fp    = calcular_factor_planta(gen, PMAX_FP[p])
         dev   = calcular_desvio(gen, prog)
         ingr  = calcular_ingreso_estimado(gen, cmg) if gen and cmg else None
 
@@ -99,7 +99,7 @@ def _tabla_parques(
         filas.append([
             NOMBRE_DISPLAY[p],
             TECNOLOGIA[p],
-            f"{PMAX[p]:.1f}",
+            f"{PMAX_FP[p]:.1f}",
             gen_str,
             fp_str,
             dev_str,
@@ -207,7 +207,7 @@ def generar_pdf(
     gen_solar  = sum(gen_por_parque.get(p) or 0 for p in PARQUES_SOLAR)
     gen_eolica = sum(gen_por_parque.get(p) or 0 for p in PARQUES_EOLICA)
     prog_total = sum(v for v in prog_por_parque.values() if v is not None)
-    fp_total   = calcular_factor_planta(gen_total, PMAX_TOTAL)
+    fp_total   = calcular_factor_planta(gen_total, PMAX_FP_TOTAL)
     dev_global = calcular_desvio(gen_total, prog_total)
 
     story.append(_tabla_kpis_globales(

@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 
-from config import NOMBRE_DISPLAY, PMAX, PARQUES_EOLICA
+from config import NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_EOLICA
 from utils.calculos import calcular_factor_planta, calcular_desvio
 
 AES_AZUL    = "#3B4CE8"
@@ -54,7 +54,7 @@ def _kpis_eolica(gen_por_parque: dict, prog_por_parque: dict, parque_activo: str
     cols = st.columns(len(PARQUES_EOLICA))
     for i, p in enumerate(PARQUES_EOLICA):
         gen    = gen_por_parque.get(p)
-        fp     = calcular_factor_planta(gen, PMAX[p])
+        fp     = calcular_factor_planta(gen, PMAX_FP[p])
         nombre = NOMBRE_DISPLAY[p]
         gen_str = "—" if gen is None else f"{gen:.1f}"
         fp_str  = "—" if fp  is None else f"{fp:.0f}%"
@@ -275,7 +275,7 @@ def _gen_prog_mismo_hora(gen_rows, prog_rows, parque):
 def _panel_metricas(gen_rows, prog_rows, df_meteo, parque_sel):
     """Fila de métricas horizontales debajo del gráfico de generación."""
     gen, prog = _gen_prog_mismo_hora(gen_rows, prog_rows, parque_sel)
-    fp   = calcular_factor_planta(gen, PMAX[parque_sel])
+    fp   = calcular_factor_planta(gen, PMAX_FP[parque_sel])
     dev  = calcular_desvio(gen, prog)
 
     v100 = alpha = gusts = None
@@ -291,7 +291,9 @@ def _panel_metricas(gen_rows, prog_rows, df_meteo, parque_sel):
     with c1:
         st.metric("Generacion actual", f"{gen:.1f} MW" if gen is not None else "—")
     with c2:
-        st.metric("Cap. instalada", f"{PMAX[parque_sel]:.1f} MW")
+        st.metric("Pmax neta CEN", f"{PMAX_FP[parque_sel]:.1f} MW",
+                  help="Potencia máxima neta CEN usada para factor de planta. "
+                       f"Capacidad config dashboard: {PMAX[parque_sel]:.1f} MW.")
     with c3:
         st.metric("Factor de planta", f"{fp:.1f}%" if fp is not None else "—")
     with c4:

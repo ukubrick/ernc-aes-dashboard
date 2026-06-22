@@ -3,7 +3,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 
-from config import NOMBRE_DISPLAY, PMAX, TECNOLOGIA, PARQUES_TODOS, PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODO
+from config import NOMBRE_DISPLAY, PMAX, PMAX_FP, TECNOLOGIA, PARQUES_TODOS, PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODO
 
 AES_AZUL    = "#3B4CE8"
 AES_CYAN    = "#4DC8DC"
@@ -58,7 +58,7 @@ def render_tab_estadisticas(
         df_p = df_gen[df_gen["parque"] == p]
         n_horas = len(df_p)
         mwh = df_p["gen_real_mw"].sum()  # 1 fila = 1 hora → MWh directos
-        fp_prom = (mwh / (PMAX[p] * n_horas) * 100) if n_horas > 0 and PMAX[p] > 0 else None
+        fp_prom = (mwh / (PMAX_FP[p] * n_horas) * 100) if n_horas > 0 and PMAX_FP[p] > 0 else None
 
         # Desvío vs PCP
         desvio_pct = None
@@ -81,7 +81,7 @@ def render_tab_estadisticas(
             "parque":      p,
             "nombre":      NOMBRE_DISPLAY[p],
             "tecnologia":  TECNOLOGIA[p],
-            "pmax_mw":     PMAX[p],
+            "pmax_mw":     PMAX_FP[p],
             "mwh":         round(mwh, 1),
             "fp_prom":     round(fp_prom, 1) if fp_prom is not None else None,
             "desvio_pct":  round(desvio_pct, 1) if desvio_pct is not None else None,
@@ -246,7 +246,7 @@ def render_tab_estadisticas(
     df_gen["hora_dia"] = df_gen["fecha_hora"].dt.hour
     hm = df_gen.groupby(["parque", "hora_dia"])["gen_real_mw"].mean().reset_index()
     hm["fp"] = hm.apply(
-        lambda r: (r["gen_real_mw"] / PMAX[r["parque"]] * 100) if PMAX.get(r["parque"]) else None,
+        lambda r: (r["gen_real_mw"] / PMAX_FP[r["parque"]] * 100) if PMAX_FP.get(r["parque"]) else None,
         axis=1,
     )
     orden = [p for p in PARQUES_TODOS if p in hm["parque"].unique()]

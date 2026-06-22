@@ -2,7 +2,7 @@
 import streamlit as st
 
 from config import (
-    PMAX_TOTAL, PMAX_TOTAL_SOLAR, PMAX_TOTAL_EOLICA,
+    PMAX_FP_TOTAL, PMAX_FP_TOTAL_SOLAR, PMAX_FP_TOTAL_EOLICA,
     PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODOS_TODOS,
 )
 from utils.calculos import calcular_factor_planta, calcular_desvio
@@ -71,9 +71,9 @@ def render_kpis(
     gen_eolica = sum(gen_por_parque.get(p) or 0 for p in PARQUES_EOLICA)
     prog_total = sum(v for v in prog_por_parque.values() if v is not None)
 
-    fp_total   = calcular_factor_planta(gen_total,  PMAX_TOTAL)
-    fp_solar   = calcular_factor_planta(gen_solar,  PMAX_TOTAL_SOLAR)
-    fp_eolica  = calcular_factor_planta(gen_eolica, PMAX_TOTAL_EOLICA)
+    fp_total   = calcular_factor_planta(gen_total,  PMAX_FP_TOTAL)
+    fp_solar   = calcular_factor_planta(gen_solar,  PMAX_FP_TOTAL_SOLAR)
+    fp_eolica  = calcular_factor_planta(gen_eolica, PMAX_FP_TOTAL_EOLICA)
     desvio     = calcular_desvio(gen_total, prog_total)
     semaforo   = desvio["semaforo"]
     desvio_pct = desvio["desvio_pct"]
@@ -96,19 +96,19 @@ def render_kpis(
     cards.append(_card(
         AES_AZUL, "Generacion Total", f"{gen_total:,.1f} MW",
         f"↑ FP {fp_total:.1f}%" if fp_total else None, AES_VERDE,
-        f"Suma 11 parques · cap. {PMAX_TOTAL:,.0f} MW · CEN gen-real · {hora_gen} hrs",
+        f"Suma 11 parques · Pmax neta {PMAX_FP_TOTAL:,.0f} MW · CEN gen-real · {hora_gen} hrs",
     ))
 
     cards.append(_card(
         AES_AZUL, "Solar FV", f"{gen_solar:,.1f} MW",
         f"↑ FP {fp_solar:.1f}%" if fp_solar else None, AES_VERDE,
-        f"6 parques FV norte · cap. {PMAX_TOTAL_SOLAR:,.0f} MW · FP=gen/cap · {hora_gen} hrs",
+        f"6 parques FV norte · Pmax neta {PMAX_FP_TOTAL_SOLAR:,.0f} MW · FP=gen/Pmax neta · {hora_gen} hrs",
     ))
 
     cards.append(_card(
         AES_CYAN, "Eolica", f"{gen_eolica:,.1f} MW",
         f"↑ FP {fp_eolica:.1f}%" if fp_eolica else None, AES_VERDE,
-        f"5 parques sur · cap. {PMAX_TOTAL_EOLICA:,.0f} MW · FP=gen/cap · {hora_gen} hrs",
+        f"5 parques sur · Pmax neta {PMAX_FP_TOTAL_EOLICA:,.0f} MW · FP=gen/Pmax neta · {hora_gen} hrs",
     ))
 
     dev_val   = f"{desvio_pct:+.1f}%" if desvio_pct is not None else "—"
