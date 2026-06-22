@@ -1272,5 +1272,42 @@ expandibles por parque con equipos y fuentes. Solo lectura, sin Plotly.
 
 ---
 
-*Actualizado 2026-06-22 — Sesiones 1–19.*
+## SESIÓN 20 — FIXES NAVEGACIÓN + MAPA NUBOSIDAD CONFIGURABLE (2026-06-22)
+
+### Navegación 2 niveles — fixes (`app_ernc.py`)
+- **Crash** `StreamlitAPIException`: el handler de los botones de vista escribía
+  `st.session_state["nav_cat"]` DESPUÉS de instanciar el widget con esa key → prohibido.
+  Se eliminó esa escritura.
+- **Las categorías no cambiaban**: la lógica forzaba `nav_cat` a la categoría de la
+  vista activa en cada rerun, revirtiendo la elección del usuario. Ahora solo se fuerza
+  con el flag `_force_cat` (lo setean los botones del sidebar al saltar a Solar/Eólica);
+  el desplegable respeta la selección del usuario. **Regla:** para sincronizar la
+  categoría desde el sidebar, setear `st.session_state["_force_cat"]` ANTES del rerun;
+  nunca escribir `nav_cat` tras crear el `selectbox`.
+- Categoría = **`st.selectbox` real (menú desplegable)** centrado (`st.columns([1,2,1])`),
+  con CSS propio (borde azul AES, gradiente, sombra al hover, ícono azul). Botones de
+  vista centrados (relleno de columnas cuando la categoría tiene <4 vistas).
+- Comportamiento: elegir categoría muestra sus botones; el contenido carga al hacer clic
+  en una vista (menú de 2 niveles).
+
+### KPIs — card BESS (`kpis_generales.py`)
+Nueva card "BESS — Almacenamiento" (estado, % de uso sobre Pmax descarga, potencia neta);
+helper `_agregado_bess(bess_rows)`. Grid pasó a `repeat(4,1fr)` responsive (8 cards).
+
+### Mapa satelital (`components/mapa_ernc.py`)
+- **Vista por defecto en región de Antofagasta**: `center=[-23.8,-69.1]`, `zoom=7`
+  (antes Chile completo) para observar nubosidad del complejo solar norte.
+- **Nubosidad configurable por el usuario**: `st.selectbox` "Paleta de nubosidad" con
+  presets (Suave/Normal/Densa/Alto contraste/Azulada). **IMPORTANTE:** el endpoint OWM
+  **Weather Maps 2.0** (`maps.openweathermap.org/maps/2.0/weather/CL/...` con `palette=`)
+  es **de pago** → con la key gratuita devuelve tiles en blanco. Se usa el tile gratuito
+  **`clouds_new`** (`tile.openweathermap.org/map/clouds_new/...`); la intensidad/color se
+  logra con `opacity` + `refuerzo` (apilar la capa N veces) + **filtros CSS**
+  (`contrast/brightness/hue-rotate`) aplicados por `className` e inyectados con
+  `m.get_root().header.add_child(folium.Element(<style>))`. Helpers `_build_cloud_layers`,
+  `_css_filtros_nubes`, dicts `_CLOUD_PRESETS`/`_CLOUD_FILTROS`. Default "Densa".
+
+---
+
+*Actualizado 2026-06-22 — Sesiones 1–20.*
 *Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*
