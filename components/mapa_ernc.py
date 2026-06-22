@@ -34,40 +34,48 @@ MAP_STYLES = {
 }
 
 # Ciudades de referencia para dar contexto geográfico al mapa
-# ── Presets de nubosidad (OpenWeather) ─────────────────────────────────────────
-# "Clásica" usa el tile legacy clouds_new (paleta blanca fija). El resto usa Weather
-# Maps 2.0 (op="CL"), que admite `opacity` y `palette` configurables: la paleta mapea
-# % de nubosidad → color RGBA (ramp de grises para que las nubes densas se vean opacas).
-# Formato palette: "valor:RRGGBBAA;...". refuerzo=N apila la capa N veces para intensificar.
-_PAL_GRIS = "0:E1E1E100;20:CFCFCF66;40:A6A6A6B0;60:7C7C7CD0;80:545454EC;100:2E2E2EFF"
-_PAL_AZUL = "0:DDE7F500;25:B9CBE877;50:8AA8D8C0;75:5E81C2E6;100:38539EFF"
+# ── Presets de nubosidad (OpenWeather, tile legacy gratuito) ───────────────────
+# El endpoint Weather Maps 2.0 (con `palette`) requiere suscripción de pago, así que
+# se usa el tile gratuito `clouds_new` (paleta blanca fija). La intensidad/color se
+# ajusta por: opacity, `refuerzo` (apila la capa N veces para densificar) y un filtro
+# CSS (contraste/brillo/tinte) aplicado vía className → permite variantes visuales.
+_CLOUD_FILTROS = {
+    "f-densa":     "filter:contrast(1.5) brightness(0.92) saturate(0.9);",
+    "f-contraste": "filter:contrast(2.0) brightness(0.78);",
+    "f-azul":      "filter:contrast(1.5) brightness(0.9) sepia(0.5) hue-rotate(175deg) saturate(2.2);",
+}
 _CLOUD_PRESETS = {
-    "Clásica (suave)": {"legacy": True, "opacity": 0.85, "refuerzo": 1},
-    "Estándar":        {"op": "CL", "opacity": 0.8, "palette": None,     "refuerzo": 1},
-    "Densa (gris)":    {"op": "CL", "opacity": 1.0, "palette": _PAL_GRIS, "refuerzo": 2},
-    "Alto contraste":  {"op": "CL", "opacity": 1.0, "palette": _PAL_GRIS, "refuerzo": 3},
-    "Azulada":         {"op": "CL", "opacity": 1.0, "palette": _PAL_AZUL, "refuerzo": 2},
+    "Suave":          {"opacity": 0.6, "refuerzo": 1, "clase": None},
+    "Normal":         {"opacity": 0.9, "refuerzo": 1, "clase": None},
+    "Densa":          {"opacity": 1.0, "refuerzo": 2, "clase": "f-densa"},
+    "Alto contraste": {"opacity": 1.0, "refuerzo": 3, "clase": "f-contraste"},
+    "Azulada":        {"opacity": 1.0, "refuerzo": 2, "clase": "f-azul"},
 }
 
 
 def _build_cloud_layers(folium, key: str, cfg: dict) -> list:
-    """Construye las TileLayer de nubosidad para el preset elegido."""
-    if cfg.get("legacy"):
-        url = f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={key}"
-    else:
-        url = (f"https://maps.openweathermap.org/maps/2.0/weather/{cfg['op']}"
-               f"/{{z}}/{{x}}/{{y}}?appid={key}&opacity={cfg['opacity']}&fill_bound=true")
-        if cfg.get("palette"):
-            url += f"&palette={cfg['palette']}"
+    """Construye las TileLayer de nubosidad (tile legacy) para el preset elegido."""
+    url = f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={key}"
+    clase = cfg.get("clase")
     layers = []
     n = max(1, int(cfg.get("refuerzo", 1)))
     for i in range(n):
+        kwargs = {"className": clase} if clase else {}
         layers.append(folium.TileLayer(
             tiles=url, attr="© OpenWeather",
             name="Nubosidad (en vivo)" if i == 0 else f"Nubosidad (refuerzo {i})",
             overlay=True, control=(i == 0), opacity=cfg["opacity"], show=True,
+            **kwargs,
         ))
     return layers
+
+
+def _css_filtros_nubes() -> str:
+    """Bloque <style> con los filtros CSS de las paletas (se inyecta en el mapa folium)."""
+    reglas = "".join(f".leaflet-layer .{c}, .{c}{{{f}}}" for c, f in _CLOUD_FILTROS.items())
+    # Leaflet aplica className al contenedor de tiles; el filtro afecta sus imágenes.
+    reglas += "".join(f".{c} img{{{f}}}" for c, f in _CLOUD_FILTROS.items())
+    return f"<style>{reglas}</style>"
 
 
 _CIUDADES = [
@@ -178,10 +186,10 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
     if owm:
         preset = st.selectbox(
             "Paleta de nubosidad", list(_CLOUD_PRESETS),
-            index=list(_CLOUD_PRESETS).index("Densa (gris)"),
+            index=list(_CLOUD_PRESETS).index("Densa"),
             key=f"cloud_preset_{parque_activo or 'all'}",
-            help="Estilo y opacidad de la capa de nubes en vivo (OpenWeather).",
         )
+        m.get_root().header.add_child(folium.Element(_css_filtros_nubes()))
         for layer in _build_cloud_layers(folium, owm, _CLOUD_PRESETS[preset]):
             layer.add_to(m)
 
