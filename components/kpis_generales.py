@@ -3,7 +3,7 @@ import streamlit as st
 
 from config import (
     PMAX_FP_TOTAL, PMAX_FP_TOTAL_SOLAR, PMAX_FP_TOTAL_EOLICA,
-    PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODOS_TODOS,
+    PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODOS_TODOS, BESS,
 )
 from utils.calculos import calcular_factor_planta, calcular_desvio
 
@@ -24,9 +24,10 @@ _CMG_NODO_EXCLUIDO = "P.MONTT_______220"
 
 _GRID_CSS = """
 <style>
-.kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:4px 0 2px 0}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:4px 0 2px 0}
 @media(max-width:1500px){.kpi-grid{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:820px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:1100px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:620px){.kpi-grid{grid-template-columns:repeat(1,1fr)}}
 .kpi-card{background:#FFFFFF;border:1px solid #E5E7EB;border-radius:12px;
   padding:14px 16px;box-shadow:0 2px 12px rgba(59,76,232,0.07);
   display:flex;flex-direction:column;gap:3px;
@@ -65,6 +66,7 @@ def render_kpis(
     n_limitaciones_activas: int,
     ultima_hora: str | None,
     cmg_rows: list | None = None,
+    bess_rows: list | None = None,
 ) -> None:
     gen_total  = sum(v for v in gen_por_parque.values() if v is not None)
     gen_solar  = sum(gen_por_parque.get(p) or 0 for p in PARQUES_SOLAR)
@@ -126,6 +128,18 @@ def render_kpis(
         f"Prom. {len(cmg_vals)} nodos SEN (excl. P.Montt) · ingreso=gen×CMG · CEN S3 · {cmg_hora} hrs",
     ))
 
+    # ── BESS: estado agregado del almacenamiento ────────────────────────────
+    bess_neta, bess_util, bess_estado, bess_hora, bess_col = _agregado_bess(bess_rows)
+    cards.append(_card(
+        AES_CYAN, "BESS — Almacenamiento",
+        f"{bess_neta:+.0f} MW" if bess_neta is not None else "—",
+        f"{bess_estado}" if bess_estado else None, bess_col,
+        (f"6 BESS AES · uso {bess_util:.0f}% de Pmax descarga · "
+         f"neta=inyección−retiro (>0 descarga) · {bess_hora} hrs")
+        if bess_neta is not None else
+        "6 BESS AES · sin telemetría reciente · neta=inyección−retiro",
+    ))
+
     lim_color = AES_ROJO if n_limitaciones_activas > 0 else AES_VERDE
     lim_delta = "↑ activas" if n_limitaciones_activas > 0 else "sin restricciones"
     cards.append(_card(
@@ -136,3 +150,25 @@ def render_kpis(
 
     st.markdown(_GRID_CSS + "<div class='kpi-grid'>" + "".join(cards) + "</div>",
                 unsafe_allow_html=True)
+
+
+def _agregado_bess(bess_rows: list | None):
+    """Estado agregado del parque de BESS: potencia neta total, % de uso sobre la
+    Pmax de descarga, estado (cargando/descargando/reposo), hora y color."""
+    if not bess_rows:
+        return None, None, None, "—", AES_MUTED
+    import pandas as pd
+    df = pd.DataFrame(bess_rows)
+    if df.empty or "bess" not in df.columns:
+        return None, None, None, "—", AES_MUTED
+    df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    ult = df.sort_values("fecha_hora").drop_duplicates("bess", keep="last")
+    neta = float(ult["potencia_neta_mw"].sum())
+    pmax_total = sum(b["pmax_mw"] for b in BESS.values()) or 1.0
+    util = abs(neta) / pmax_total * 100.0
+    hora = ult["fecha_hora"].max().strftime("%H:%M")
+    if neta > 1:
+        return neta, util, "Descargando", hora, AES_VERDE
+    if neta < -1:
+        return neta, util, "Cargando", hora, AES_AZUL
+    return neta, util, "En reposo", hora, AES_MUTED

@@ -16,8 +16,8 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
 
 from config import (
-    NOMBRE_DISPLAY, PMAX, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS,
-    TECNOLOGIA, CMG_NODOS_TODOS,
+    NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS,
+    TECNOLOGIA, CMG_NODOS_TODOS, BESS, CMG_NODO,
 )
 
 AES_AZUL    = "#3B4CE8"
@@ -165,39 +165,59 @@ def _render_forecast_gen(parque: str) -> None:
         st.info("Datos insuficientes tras limpiar valores faltantes.")
         return
 
+    with st.expander("¿Cómo se calcula esta predicción? (metodología)"):
+        st.markdown(
+            "**Modelo:** Random Forest Regressor (160 árboles) — un *ensemble* que promedia "
+            "muchos árboles de decisión sobre submuestras, robusto a relaciones no lineales "
+            "entre clima y generación.\n\n"
+            "**Entradas:** GHI, GTI, temperatura, temperatura de celda, nubosidad y hora del día "
+            "(solar); viento 100m/10m, ráfagas, densidad del aire, cizalle y hora (eólico).\n\n"
+            "**Objetivo:** generación real horaria (MW) del CEN.\n\n"
+            "**Validación:** partición aleatoria 80/20. La generación de cada hora depende del "
+            "clima *de esa misma hora*, no de su pasado, por lo que la partición aleatoria es la "
+            "métrica correcta. Una partición cronológica daba R² negativos engañosos cuando el "
+            "tramo final caía en un régimen meteorológico distinto al del entrenamiento.\n\n"
+            "**Métricas:** R² (varianza explicada, 1.0 = perfecto, <0 = peor que la media) y MAE "
+            "(error absoluto medio en MW)."
+        )
+
+    from sklearn.model_selection import train_test_split
     X = d[feats].values
     y = d["gen_real_mw"].values
-    n_test = max(12, int(len(d) * 0.2))
-    Xtr, Xte = X[:-n_test], X[-n_test:]
-    ytr, yte = y[:-n_test], y[-n_test:]
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
 
     model = RandomForestRegressor(n_estimators=160, max_depth=12, min_samples_leaf=2,
                                   random_state=42, n_jobs=-1)
     model.fit(Xtr, ytr)
-    pred_te = model.predict(Xte)
+    pred_te = np.clip(model.predict(Xte), 0, PMAX[parque])
     r2 = r2_score(yte, pred_te)
     mae = mean_absolute_error(yte, pred_te)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("R² (test)", f"{r2:.3f}", help="Bondad de ajuste sobre el 20% más reciente (1.0 = perfecto).")
-    c2.metric("MAE", f"{mae:.2f} MW", help="Error absoluto medio en el conjunto de prueba.")
-    c3.metric("Registros entrenamiento", f"{len(Xtr)}", help="Horas histórico meteo+gen usadas.")
+    c1.metric("R² (test)", f"{r2:.3f}")
+    c2.metric("MAE", f"{mae:.2f} MW")
+    c3.metric("Registros entrenamiento", f"{len(Xtr)}")
+    if r2 < 0.4:
+        st.warning("R² bajo: poco histórico todavía o recurso muy variable en este parque. "
+                   "Mejora a medida que se acumulan horas de datos meteo+generación.")
 
     # Modelo entrenado sobre todo el set para predecir el forecast meteo
     model_full = RandomForestRegressor(n_estimators=160, max_depth=12, min_samples_leaf=2,
                                        random_state=42, n_jobs=-1)
     model_full.fit(X, y)
 
-    _titulo(f"Predicción ML vs real (test) — {NOMBRE_DISPLAY[parque]}", "12px 0 6px")
-    d_te = d.iloc[-n_test:]
+    _titulo(f"Predicción ML vs real (backtest cronológico) — {NOMBRE_DISPLAY[parque]}", "12px 0 6px")
+    n_vis = min(len(d), max(48, int(len(d) * 0.25)))
+    d_vis = d.iloc[-n_vis:]
+    pred_vis = np.clip(model_full.predict(d_vis[feats].values), 0, PMAX[parque])
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=d_te["fecha_hora"], y=yte, name="Gen. real",
+    fig.add_trace(go.Scatter(x=d_vis["fecha_hora"], y=d_vis["gen_real_mw"], name="Gen. real",
                              line=dict(color=AES_AZUL, width=2.5)))
-    fig.add_trace(go.Scatter(x=d_te["fecha_hora"], y=pred_te, name="Predicción ML",
+    fig.add_trace(go.Scatter(x=d_vis["fecha_hora"], y=pred_vis, name="Predicción ML",
                              line=dict(color=AES_VERDE, width=2, dash="dot")))
     col_fis = "p_fv_estimada_mw" if tec == "Solar" else "p_eolica_estimada_mw"
-    if col_fis in d_te.columns:
-        fig.add_trace(go.Scatter(x=d_te["fecha_hora"], y=d_te[col_fis], name="Modelo físico",
+    if col_fis in d_vis.columns:
+        fig.add_trace(go.Scatter(x=d_vis["fecha_hora"], y=d_vis[col_fis], name="Modelo físico",
                                  line=dict(color=AES_VIOLETA, width=1.2, dash="dash")))
     st.plotly_chart(_layout_base(fig), use_container_width=True, key=f"ml_fc_test_{parque}")
 
@@ -244,6 +264,19 @@ def _render_anomalias(parque: str) -> None:
         st.info("Datos insuficientes tras limpiar faltantes.")
         return
 
+    with st.expander("¿Cómo se detectan las anomalías? (metodología)"):
+        st.markdown(
+            "Se combinan **dos enfoques complementarios**:\n\n"
+            "1. **Residuo del modelo:** se entrena un Random Forest clima→generación y se calcula "
+            "el residuo (real − esperado). Se estandariza a *z-score*; |z| > 3 marca horas donde la "
+            "generación se aleja >3σ de lo que el clima predecía (posible falla, limitación o "
+            "curtailment).\n"
+            "2. **Isolation Forest:** algoritmo no supervisado que aísla combinaciones raras de "
+            "clima+generación (contaminación 5%). Detecta patrones atípicos aunque el residuo sea "
+            "moderado.\n\n"
+            "Una hora es anómala si **cualquiera** de los dos criterios la marca."
+        )
+
     # Residuos del modelo: gen real vs esperado dado el clima (validación cruzada simple)
     model = RandomForestRegressor(n_estimators=160, max_depth=12, min_samples_leaf=2,
                                   random_state=42, n_jobs=-1)
@@ -263,8 +296,8 @@ def _render_anomalias(parque: str) -> None:
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Horas analizadas", f"{len(d)}")
-    c2.metric("Anomalías detectadas", f"{n_anom}", help="|z|>3 en el residuo o IsolationForest=-1.")
-    c3.metric("σ residuo", f"{sigma:.2f} MW", help="Desviación típica del error del modelo.")
+    c2.metric("Anomalías detectadas", f"{n_anom}")
+    c3.metric("σ residuo", f"{sigma:.2f} MW")
 
     _titulo(f"Generación real con anomalías marcadas — {NOMBRE_DISPLAY[parque]}", "12px 0 6px")
     fig = go.Figure()
@@ -297,6 +330,20 @@ def _render_cmg(nodo: str) -> None:
         st.info("Histórico de CMG insuficiente para este nodo (≥48 registros). "
                 "Algunos nodos publican con menor frecuencia.")
         return
+
+    with st.expander("¿Cómo se predice el CMG? (metodología)"):
+        st.markdown(
+            "El costo marginal es una **serie temporal** con fuerte autocorrelación y patrón "
+            "diario. Por eso, a diferencia de la generación, **sí** se modela con su propio pasado:\n\n"
+            "**Features:** rezagos (*lags*) del CMG a 1, 2, 3, 6, 12 y 24 horas + la hora del día.\n\n"
+            "**Modelo:** Random Forest (200 árboles) que aprende cómo el precio futuro depende de "
+            "esos rezagos.\n\n"
+            "**Validación:** partición **cronológica** 80/20 (aquí sí corresponde, porque el orden "
+            "temporal importa).\n\n"
+            "**Pronóstico recursivo:** para proyectar 12 h se predice la hora siguiente y se "
+            "realimenta como nuevo rezago. El error se acumula con el horizonte → referencia de "
+            "corto plazo, no garantía."
+        )
 
     # Regularizar a frecuencia horaria e imputar
     s = df.set_index("fecha_hora")["cmg_usd_mwh"].resample("1h").mean().interpolate().dropna()
@@ -362,6 +409,18 @@ def _render_cmg(nodo: str) -> None:
 # ── 4. Análisis de eficiencia ──────────────────────────────────────────────────
 
 def _render_eficiencia() -> None:
+    with st.expander("¿Qué mide el análisis de eficiencia? (metodología)"):
+        st.markdown(
+            "**Performance Ratio (PR)** = generación real / generación teórica del modelo físico, "
+            "calculado solo en horas con recurso relevante (>5% de Pmax). PR≈1 significa que el "
+            "parque rinde lo esperado; PR bajo indica pérdidas (suciedad, sombras, "
+            "indisponibilidad, limitaciones o curtailment). Se usa la **mediana** del PR para "
+            "robustez ante valores extremos.\n\n"
+            "**Clustering (K-Means):** agrupa las horas según recurso (GHI o viento) y PR, "
+            "revelando regímenes de operación. Los grupos se etiquetan por nivel de eficiencia "
+            "(alta/media/baja). Puntos con buen recurso pero PR bajo son los que conviene investigar."
+        )
+
     filas = []
     detalle = {}
     for p in PARQUES_TODOS:
@@ -377,7 +436,7 @@ def _render_eficiencia() -> None:
             continue
         d["pr"] = (d["gen_real_mw"] / d[col_fis]).clip(0, 1.5)
         pr_medio = d["pr"].median()
-        fp = (df["gen_real_mw"].mean() / PMAX[p] * 100) if PMAX[p] else None
+        fp = (df["gen_real_mw"].mean() / PMAX_FP[p] * 100) if PMAX_FP[p] else None
         filas.append({"Parque": NOMBRE_DISPLAY[p], "Tipo": tec,
                       "Performance ratio": round(pr_medio, 3),
                       "FP medio %": round(fp, 1) if fp is not None else None,
@@ -476,6 +535,113 @@ def _render_eficiencia() -> None:
     )
 
 
+# ── 5. BESS — patrón de operación y arbitraje (ML) ──────────────────────────────
+
+@st.cache_data(ttl=900)
+def _dataset_bess(cod: str, dias: int = 20) -> pd.DataFrame:
+    """Serie del BESS ⋈ CMG del nodo del parque asociado, por hora."""
+    from utils.db import get_client
+    sb = get_client()
+    desde = (datetime.now(SANTIAGO) - timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        b = (sb.table("generacion_bess_ernc").select("*")
+             .eq("bess", cod).gte("fecha_hora", desde).order("fecha_hora").execute())
+    except Exception:
+        return pd.DataFrame()
+    if not b.data:
+        return pd.DataFrame()
+    db = pd.DataFrame(b.data)
+    db["fecha_hora"] = pd.to_datetime(db["fecha_hora"])
+    db["hora_dia"] = db["fecha_hora"].dt.hour
+    nodo = CMG_NODO.get(BESS[cod]["parque"])
+    if nodo:
+        dc = _cmg_historico(nodo, dias)
+        if not dc.empty:
+            db = db.merge(dc, on="fecha_hora", how="left")
+    return db
+
+
+def _render_bess_ml(cod: str) -> None:
+    with st.expander("¿Qué analiza esta sección? (metodología)"):
+        st.markdown(
+            "Estudia **cómo opera el BESS** y si su arbitraje es racional:\n\n"
+            "1. **Perfil horario:** potencia neta media por hora del día (negativa = carga, "
+            "positiva = descarga). Un BESS solar bien operado carga al mediodía (CMG bajo) y "
+            "descarga en la punta de la tarde (CMG alto).\n"
+            "2. **Relación con el CMG:** dispersión de potencia neta vs CMG del nodo. Si el BESS "
+            "arbitra bien, debería cargar con CMG bajo y descargar con CMG alto.\n"
+            "3. **Modelo:** Random Forest que predice la potencia neta a partir de hora del día y "
+            "CMG; la importancia de variables indica qué guía la operación."
+        )
+
+    db = _dataset_bess(cod)
+    if db.empty or len(db) < 24:
+        st.info("Sin histórico suficiente de este BESS (se necesitan ≥24 horas). "
+                "Corre la adquisición o espera el cron.")
+        return
+
+    # 1. Perfil horario de potencia neta
+    perf = db.groupby("hora_dia")["potencia_neta_mw"].mean().reset_index()
+    _titulo(f"Perfil horario de operación — {BESS[cod]['nombre']}", "8px 0 6px")
+    figp = go.Figure(go.Bar(
+        x=perf["hora_dia"], y=perf["potencia_neta_mw"],
+        marker_color=[AES_VERDE if v >= 0 else AES_AZUL for v in perf["potencia_neta_mw"]],
+        hovertemplate="%{x}h: %{y:.1f} MW<extra></extra>",
+    ))
+    figp.add_hline(y=0, line_color=AES_MUTED, line_width=1)
+    figp.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+                       height=300, margin=dict(l=0, r=0, t=10, b=0),
+                       xaxis_title="Hora del día", yaxis_title="Potencia neta media (MW)")
+    figp.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+    figp.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    st.plotly_chart(figp, use_container_width=True, key=f"ml_bess_perfil_{cod}")
+    st.caption("Verde = descarga (entrega al sistema), azul = carga. El patrón ideal carga al "
+               "mediodía solar y descarga en la punta de la tarde.")
+
+    # 2 + 3. Relación con CMG y modelo
+    if "cmg_usd_mwh" not in db.columns or db["cmg_usd_mwh"].notna().sum() < 24:
+        st.info("Sin CMG suficiente del nodo asociado para el análisis de arbitraje.")
+        return
+    dd = db.dropna(subset=["cmg_usd_mwh", "potencia_neta_mw"]).copy()
+    corr = dd["cmg_usd_mwh"].corr(dd["potencia_neta_mw"])
+
+    _titulo("Potencia neta vs CMG del nodo", "14px 0 6px")
+    figs = go.Figure(go.Scatter(
+        x=dd["cmg_usd_mwh"], y=dd["potencia_neta_mw"], mode="markers",
+        marker=dict(color=dd["hora_dia"], colorscale="Viridis", size=6, opacity=0.6,
+                    colorbar=dict(title="Hora")),
+        hovertemplate="CMG %{x:.0f} USD/MWh<br>Neta %{y:.1f} MW<extra></extra>",
+    ))
+    figs.add_hline(y=0, line_color=AES_MUTED, line_width=1)
+    figs.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+                       height=320, margin=dict(l=0, r=0, t=10, b=0),
+                       xaxis_title="CMG (USD/MWh)", yaxis_title="Potencia neta (MW)")
+    figs.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+    figs.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    st.plotly_chart(figs, use_container_width=True, key=f"ml_bess_cmg_{cod}")
+
+    c1, c2 = st.columns(2)
+    c1.metric("Correlación neta–CMG", f"{corr:+.2f}")
+    arb = "racional (descarga con CMG alto)" if corr > 0.15 else (
+          "inverso (revisar operación)" if corr < -0.15 else "sin patrón claro")
+    c2.metric("Lectura del arbitraje", arb)
+
+    # Modelo: importancia de hora vs CMG
+    feats_b = ["hora_dia", "cmg_usd_mwh"]
+    if len(dd) >= 48:
+        m = RandomForestRegressor(n_estimators=150, max_depth=8, random_state=42, n_jobs=-1)
+        m.fit(dd[feats_b].values, dd["potencia_neta_mw"].values)
+        imp = pd.DataFrame({"var": ["Hora del día", "CMG nodo"],
+                            "imp": m.feature_importances_}).sort_values("imp")
+        _titulo("¿Qué guía la operación del BESS?", "14px 0 6px")
+        figi = go.Figure(go.Bar(x=imp["imp"], y=imp["var"], orientation="h", marker_color=AES_VIOLETA))
+        figi.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+                           height=200, margin=dict(l=0, r=0, t=10, b=0), xaxis_title="Importancia relativa")
+        st.plotly_chart(figi, use_container_width=True, key=f"ml_bess_imp_{cod}")
+        st.caption("Si domina 'Hora del día', el BESS opera por horario fijo; si domina 'CMG nodo', "
+                   "responde al precio (arbitraje activo).")
+
+
 # ── Entrada principal ──────────────────────────────────────────────────────────
 
 def render_tab_ml() -> None:
@@ -495,7 +661,8 @@ def render_tab_ml() -> None:
 
     analisis = st.radio(
         "Análisis",
-        ["Forecast de generación", "Detección de anomalías", "Predicción de CMG", "Análisis de eficiencia"],
+        ["Forecast de generación", "Detección de anomalías", "Predicción de CMG",
+         "Análisis de eficiencia", "BESS — operación"],
         horizontal=True, key="ml_analisis",
     )
 
@@ -520,3 +687,9 @@ def render_tab_ml() -> None:
     elif analisis == "Análisis de eficiencia":
         with st.spinner("Calculando..."):
             _render_eficiencia()
+
+    elif analisis == "BESS — operación":
+        cod = st.selectbox("BESS", list(BESS.keys()),
+                           format_func=lambda c: BESS[c]["nombre"], key="ml_bess_cod")
+        with st.spinner("Analizando operación del BESS..."):
+            _render_bess_ml(cod)

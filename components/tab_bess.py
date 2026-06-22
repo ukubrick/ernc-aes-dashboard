@@ -162,6 +162,31 @@ def render_tab_bess(bess_rows: list | None = None) -> None:
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     st.plotly_chart(fig, use_container_width=True, key=f"bess_grafico_{bess_sel}")
 
+    # Estadísticas extra + exportación de la serie del BESS seleccionado
+    e1, e2, e3, e4 = st.columns(4)
+    h_desc = int((d24["inyeccion_mw"] > 0.5).sum())
+    h_carga = int((d24["retiro_mw"] > 0.5).sum())
+    h_reposo = int(len(d24) - h_desc - h_carga)
+    with e1:
+        st.metric("Máx. descarga", f"{d['inyeccion_mw'].max():.1f} MW")
+    with e2:
+        st.metric("Máx. carga", f"{d['retiro_mw'].max():.1f} MW")
+    with e3:
+        st.metric("Horas descarga / carga 24h", f"{h_desc} / {h_carga}")
+    with e4:
+        st.metric("Energía neta 24h", f"{desc_mwh - carga_mwh:+,.0f} MWh")
+
+    exp = d[["fecha_hora", "inyeccion_mw", "retiro_mw", "potencia_neta_mw", "soc"]].copy()
+    exp.columns = ["fecha_hora", "descarga_mw", "carga_mw", "potencia_neta_mw", "soc_estimado_mwh"]
+    st.download_button(
+        f"Descargar serie {meta['nombre']} (CSV)",
+        data=exp.to_csv(index=False).encode("utf-8"),
+        file_name=f"bess_{bess_sel}.csv", mime="text/csv", key=f"bess_csv_{bess_sel}",
+    )
+
+    # ── Resumen de todos los BESS (carga/descarga últimas 24h) ───────────────
+    _resumen_todos_bess(df)
+
     # ── Arbitraje vs CMG del nodo del parque ──
     nodo = CMG_NODO.get(meta["parque"])
     horas_win = int((d["fecha_hora"].max() - d["fecha_hora"].min()).total_seconds() // 3600) + 6
@@ -205,4 +230,43 @@ def render_tab_bess(bess_rows: list | None = None) -> None:
         "Margen = Σ(descarga·CMG) − Σ(carga·CMG) hora a hora con el CMG del nodo. "
         "Un BESS rentable carga cuando el CMG es bajo (mediodía solar) y descarga "
         "cuando es alto (punta de la tarde): spread descarga−carga positivo = arbitraje exitoso."
+    )
+
+
+def _resumen_todos_bess(df: pd.DataFrame) -> None:
+    """Tabla comparativa de los BESS: estado, carga/descarga y horas en las últimas 24h."""
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:16px 0 6px'>"
+        f"Resumen de todos los BESS — últimas 24 horas</div>",
+        unsafe_allow_html=True,
+    )
+    filas = []
+    for cod, meta in BESS.items():
+        d = df[df["bess"] == cod].sort_values("fecha_hora")
+        if d.empty:
+            filas.append({"BESS": meta["nombre"], "Parque": meta["parque"],
+                          "Estado": "sin datos", "Neta MW": None, "Descarga MWh": None,
+                          "Carga MWh": None, "Horas desc.": None, "Horas carga": None,
+                          "Ciclos eq.": None})
+            continue
+        d24 = d[d["fecha_hora"] >= d["fecha_hora"].max() - pd.Timedelta(hours=24)]
+        neta = float(d.iloc[-1]["potencia_neta_mw"])
+        estado = "Descargando" if neta > 1 else ("Cargando" if neta < -1 else "Reposo")
+        desc = float(d24["inyeccion_mw"].sum())
+        carga = float(d24["retiro_mw"].sum())
+        cap = meta["pmax_mw"] * _HORAS_BESS
+        filas.append({
+            "BESS": meta["nombre"], "Parque": meta["parque"], "Estado": estado,
+            "Neta MW": round(neta, 1), "Descarga MWh": round(desc, 0),
+            "Carga MWh": round(carga, 0),
+            "Horas desc.": int((d24["inyeccion_mw"] > 0.5).sum()),
+            "Horas carga": int((d24["retiro_mw"] > 0.5).sum()),
+            "Ciclos eq.": round(desc / cap, 2) if cap else None,
+        })
+    dfr = pd.DataFrame(filas)
+    st.dataframe(dfr, hide_index=True, use_container_width=True)
+    st.download_button(
+        "Descargar resumen BESS (CSV)",
+        data=dfr.to_csv(index=False).encode("utf-8"),
+        file_name="bess_resumen_24h.csv", mime="text/csv", key="bess_csv_resumen",
     )
