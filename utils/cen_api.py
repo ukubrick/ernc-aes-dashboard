@@ -154,6 +154,72 @@ def fetch_gen_real(parque: str, start_date: str = None, end_date: str = None) ->
     return registros
 
 
+def fetch_gen_bess(start_date: str = None, end_date: str = None) -> list[dict]:
+    """
+    Descarga generación de los BESS de AES Andes desde gen-real/v3.
+
+    Los BESS aparecen con id_central=None, por lo que NO se pueden filtrar por
+    idCentral: hay que recorrer el feed completo y quedarse con las llaves de
+    BESS_LLAVE_MAP. Se agregan inyección y retiro por (bess, fecha_hora) y se
+    calcula la potencia neta (inyeccion - retiro). Ventana corta (2 días) para
+    acotar el costo del scan completo.
+
+    Retorna lista de registros para upsert_generacion_bess().
+    """
+    from config import BESS_LLAVE_MAP, BESS
+    key_sip, _ = _get_keys()
+    if start_date is None or end_date is None:
+        start_date, end_date = _ventana_fechas(2)
+
+    url = f"{API_BASE_SIP}/generacion-real/v3/findByDate"
+    # acc[(bess, fecha_hora)] = {"iny": x, "ret": y}
+    acc: dict[tuple[str, str], dict[str, float]] = {}
+
+    page = 1
+    while True:
+        params = {
+            "startDate": start_date, "endDate": end_date,
+            "pageSize": 5000, "page": page, "user_key": key_sip,
+        }
+        data = _get_with_retry(url, params)
+        items = data.get("data", data) if isinstance(data, dict) else data
+        if not items:
+            break
+
+        for item in items:
+            mapeo = BESS_LLAVE_MAP.get(item.get("llave_opreal"))
+            if not mapeo:
+                continue
+            cod, flujo = mapeo
+            hora_cen = int(item.get("hora", 1))
+            fecha_hora = _hora_cen_a_dt(item["fecha_hora"], hora_cen)
+            val = item.get("gen_real_mw") or 0.0
+            slot = acc.setdefault((cod, fecha_hora), {"iny": 0.0, "ret": 0.0})
+            slot[flujo] += float(val)
+
+        if isinstance(data, dict) and data.get("totalPages") is not None:
+            if page >= data["totalPages"]:
+                break
+        elif len(items) < 5000:
+            break
+        page += 1
+
+    registros = []
+    for (cod, fecha_hora), v in acc.items():
+        iny = round(v["iny"], 4)
+        ret = round(v["ret"], 4)
+        registros.append({
+            "bess":             cod,
+            "parque":           BESS[cod]["parque"],
+            "fecha_hora":       fecha_hora,
+            "inyeccion_mw":     iny,
+            "retiro_mw":        ret,
+            "potencia_neta_mw": round(iny - ret, 4),
+        })
+    print(f"[BESS] {len(registros)} registros de {len(BESS)} BESS")
+    return registros
+
+
 def fetch_gen_real_todos(start_date: str = None, end_date: str = None) -> list[dict]:
     """Descarga generación real para los 11 parques."""
     if start_date is None or end_date is None:

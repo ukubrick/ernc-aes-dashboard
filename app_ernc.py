@@ -15,6 +15,8 @@ AES_AZUL_OSC = "#2530B0"
 AES_CYAN    = "#4DC8DC"
 AES_VIOLETA = "#9B6FD4"
 AES_VERDE   = "#5AB848"
+AES_ROJO    = "#EF4444"
+AES_AMBAR   = "#F59E0B"
 AES_GRIS    = "#F5F7FA"
 AES_TEXTO   = "#1A1F36"
 AES_MUTED   = "#6B7280"
@@ -155,10 +157,13 @@ st.markdown(
     /* ── Barra de navegación (botones tipo tab) ────────────────────────────── */
     /* Solo afecta botones del área principal — los del sidebar tienen su propio scope */
     .block-container .stButton button {{
-        font-size: 12.5px;
+        font-size: 13px;
         font-weight: 600;
-        padding: 8px 10px;
-        border-radius: 8px;
+        padding: 11px 14px;
+        min-height: 46px;
+        line-height: 1.2;
+        white-space: normal;
+        border-radius: 10px;
         transition: all 0.18s cubic-bezier(0.4,0,0.2,1);
     }}
     /* Botón inactivo (secondary) — aspecto de tab en reposo */
@@ -273,6 +278,7 @@ from config import (
 from utils.db import (
     query_gen_real_ultimas_horas,
     query_gen_prog_ultimas_horas,
+    query_bess_ultimas_horas,
     query_cmg_ultimo,
     query_limitaciones_activas,
     query_ultima_hora_gen,
@@ -287,6 +293,7 @@ from components.tab_insights import render_tab_insights
 from components.tab_estadisticas import render_tab_estadisticas
 from components.tab_ml import render_tab_ml
 from components.tab_meteo_sistema import render_tab_meteo_sistema
+from components.tab_bess import render_tab_bess
 
 
 # ── Carga de datos ─────────────────────────────────────────────────────────────
@@ -296,11 +303,12 @@ def cargar_datos():
     # 168h = 7 días para soportar la ventana máxima del selector en Solar/Eólica
     gen_rows    = query_gen_real_ultimas_horas(168)
     prog_rows   = query_gen_prog_ultimas_horas(168)
+    bess_rows   = query_bess_ultimas_horas(168)
     cmg_rows    = query_cmg_ultimo()
     lim_rows    = query_limitaciones_activas()
     ultima_hora = query_ultima_hora_gen()
     actualizaciones = query_ultimas_actualizaciones()
-    return gen_rows, prog_rows, cmg_rows, lim_rows, ultima_hora, actualizaciones
+    return gen_rows, prog_rows, bess_rows, cmg_rows, lim_rows, ultima_hora, actualizaciones
 
 
 def ultima_gen_por_parque(gen_rows: list[dict]) -> dict[str, float | None]:
@@ -535,7 +543,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 
 # ── Navegación principal (vista única) ──────────────────────────────────────────
 
-VISTAS = ["Mapa & Resumen", "Solar FV", "Eolica", "Forecast 7d",
+VISTAS = ["Mapa & Resumen", "Solar FV", "Eolica", "BESS", "Forecast 7d",
           "Estadisticas", "ML Analysis", "Insights", "Meteo & Sistema", "CMG", "Limitaciones"]
 
 
@@ -549,19 +557,23 @@ def _navegacion() -> str:
     if vista not in VISTAS:
         vista = VISTAS[0]
 
-    cols = st.columns(len(VISTAS))
-    for i, v in enumerate(VISTAS):
-        with cols[i]:
-            if st.button(
-                v,
-                key=f"nav_{v}",
-                use_container_width=True,
-                type="primary" if v == vista else "secondary",
-            ):
-                st.session_state["vista"] = v
-                st.rerun()
+    # Dos filas de 5 botones para que no queden apretados y el texto se lea completo.
+    mitad = (len(VISTAS) + 1) // 2
+    filas = [VISTAS[:mitad], VISTAS[mitad:]]
+    for fila in filas:
+        cols = st.columns(len(fila))
+        for col, v in zip(cols, fila):
+            with col:
+                if st.button(
+                    v,
+                    key=f"nav_{v}",
+                    use_container_width=True,
+                    type="primary" if v == vista else "secondary",
+                ):
+                    st.session_state["vista"] = v
+                    st.rerun()
 
-    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     return vista
 
 
@@ -571,7 +583,7 @@ def main():
 
     with st.spinner("Cargando datos..."):
         try:
-            gen_rows, prog_rows, cmg_rows, lim_rows, ultima_hora, actualizaciones = cargar_datos()
+            gen_rows, prog_rows, bess_rows, cmg_rows, lim_rows, ultima_hora, actualizaciones = cargar_datos()
         except Exception as e:
             st.error(f"Error al conectar con Supabase: {e}")
             st.stop()
@@ -604,13 +616,9 @@ def main():
     parque_activo = render_sidebar(gen_por_parque, actualizaciones)
 
     # Header
-    hora_label = ultima_hora[11:16] if ultima_hora else "—"
     st.markdown(
-        f"<div style='display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px'>"
-        f"<h1 style='font-size:30px;font-weight:800;color:{AES_TEXTO};margin:0;letter-spacing:-0.5px'>"
-        f"Pulsar — AES Andes</h1>"
-        f"<span style='font-size:12px;color:{AES_MUTED}'>Ultima lectura: <b>{hora_label} hrs</b></span>"
-        f"</div>",
+        f"<h1 style='font-size:30px;font-weight:800;color:{AES_TEXTO};margin:0 0 8px 0;letter-spacing:-0.5px'>"
+        f"Pulsar — AES Andes</h1>",
         unsafe_allow_html=True,
     )
 
@@ -641,6 +649,8 @@ def main():
     elif vista == "Eolica":
         eolica_activo = parque_activo if parque_tec == "Eólica" else None
         render_tab_eolica(gen_por_parque, prog_por_parque, gen_rows, prog_rows, eolica_activo)
+    elif vista == "BESS":
+        render_tab_bess(bess_rows)
     elif vista == "Forecast 7d":
         render_tab_forecast()
     elif vista == "Estadisticas":
@@ -679,8 +689,12 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
                 unsafe_allow_html=True,
             )
         with cab_r:
+            from components.mapa_ernc import maptiler_disponible
+            _opciones_mapa = ["Claro", "Detallado"]
+            if maptiler_disponible():
+                _opciones_mapa.append("Satelite")
             estilo = st.selectbox(
-                "Estilo de mapa", ["Claro", "Detallado"],
+                "Estilo de mapa", _opciones_mapa,
                 key="mapa_estilo", label_visibility="collapsed",
             )
         render_mapa(gen_por_parque, parque_activo=parque_activo, estilo=estilo)
@@ -753,6 +767,33 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
 
 # ── Tab CMG ────────────────────────────────────────────────────────────────────
 
+def _cmg_alertas(cmg_actual, df_hist):
+    """Genera alertas de precio: costo cero/vertimiento, CMG muy alto, desacople entre nodos."""
+    import pandas as pd
+    alertas = []  # (prioridad, titulo, detalle)
+    vals = {n: r["cmg_usd_mwh"] for n, r in cmg_actual.items() if r.get("cmg_usd_mwh") is not None}
+    if vals:
+        nodo_min = min(vals, key=vals.get); v_min = vals[nodo_min]
+        nodo_max = max(vals, key=vals.get); v_max = vals[nodo_max]
+        if v_min <= 0.5:
+            alertas.append(("alta", "CMG en costo cero — vertimiento",
+                            f"{nodo_min.replace('_',' ').strip()} en {v_min:.1f} USD/MWh: energia sin valor, riesgo de curtailment forzado."))
+        if v_max >= 200:
+            alertas.append(("alta", "CMG muy alto — oportunidad de ingreso",
+                            f"{nodo_max.replace('_',' ').strip()} en {v_max:.1f} USD/MWh: ingreso por MWh excepcional."))
+        spread = v_max - v_min
+        if spread > 50:
+            alertas.append(("media", "Desacople de nodos (congestion)",
+                            f"Spread {spread:.0f} USD/MWh entre {nodo_max.replace('_',' ').strip()} y {nodo_min.replace('_',' ').strip()}: sistema congestionado."))
+    # Máximo histórico de la ventana
+    if df_hist is not None and not df_hist.empty:
+        fila_max = df_hist.loc[df_hist["cmg_usd_mwh"].idxmax()]
+        if vals and fila_max["cmg_usd_mwh"] >= max(vals.values()) and fila_max["cmg_usd_mwh"] >= 150:
+            alertas.append(("media", "Maximo de la ventana ahora mismo",
+                            f"{fila_max['nodo'].replace('_',' ').strip()} marca el maximo de 48h: {fila_max['cmg_usd_mwh']:.1f} USD/MWh."))
+    return alertas
+
+
 def _render_tab_cmg(cmg_rows):
     import plotly.graph_objects as go
     import pandas as pd
@@ -760,7 +801,7 @@ def _render_tab_cmg(cmg_rows):
     from datetime import datetime, timedelta, timezone
 
     st.markdown(
-        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:12px'>"
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:10px'>"
         f"Costo Marginal Local — todos los nodos disponibles</div>",
         unsafe_allow_html=True,
     )
@@ -771,44 +812,12 @@ def _render_tab_cmg(cmg_rows):
 
     cmg_actual = {r["nodo"]: r for r in cmg_rows}
 
-    filas_tabla = []
-    for nodo in CMG_NODOS_TODOS:
-        r = cmg_actual.get(nodo)
-        filas_tabla.append({
-            "Nodo": nodo.replace("_", " ").strip(),
-            "CMG (USD/MWh)": f"{r['cmg_usd_mwh']:.1f}" if r else "—",
-            "Hora": r["fecha_hora"][11:16] if r else "—",
-        })
-
-    col_norte, col_sur, col_tabla = st.columns([1, 1, 3])
-    with col_norte:
-        r_n = cmg_actual.get("CRUCERO_______220")
-        st.metric(
-            "CRUCERO 220 kV (norte/solar)",
-            f"{r_n['cmg_usd_mwh']:.1f} USD/MWh" if r_n else "—",
-            delta=r_n["fecha_hora"][11:16] if r_n else None,
-            help="Nodo de referencia para parques solares FV del norte (Atacama/Antofagasta). Fuente: JSON S3 Coordinador Electrico Nacional, actualiza cada ~15 min.",
-        )
-    with col_sur:
-        r_s = cmg_actual.get("CHARRUA_______220")
-        st.metric(
-            "CHARRUA 220 kV (sur/eolica)",
-            f"{r_s['cmg_usd_mwh']:.1f} USD/MWh" if r_s else "—",
-            delta=r_s["fecha_hora"][11:16] if r_s else None,
-            help="Nodo de referencia probable para parques eolicos del sur (Bio-Bio/Coquimbo). Pendiente confirmar con AES Andes. Fuente: JSON S3 CEN.",
-        )
-    with col_tabla:
-        st.dataframe(pd.DataFrame(filas_tabla), hide_index=True, use_container_width=True)
-
-    st.divider()
-    st.markdown(
-        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:8px'>"
-        f"Historico 48 horas — todos los nodos</div>",
-        unsafe_allow_html=True,
-    )
+    # Histórico 48h (hora Santiago, no UTC) — se usa para serie, máximos y alertas
+    df_hist = pd.DataFrame()
     try:
         sb = get_client()
-        desde = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
+        santiago = timezone(timedelta(hours=-3))
+        desde = (datetime.now(santiago) - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("cmg_ernc")
             .select("nodo,cmg_usd_mwh,fecha_hora")
@@ -820,35 +829,93 @@ def _render_tab_cmg(cmg_rows):
         if res.data:
             df_hist = pd.DataFrame(res.data)
             df_hist["fecha_hora"] = pd.to_datetime(df_hist["fecha_hora"])
-            paleta = [AES_AZUL, AES_CYAN, AES_VIOLETA, AES_VERDE,
-                      "#F59E0B", "#EF4444", "#6366F1", "#EC4899"]
-            nodos_presentes = df_hist["nodo"].unique().tolist()
-            fig = go.Figure()
-            for i, nodo in enumerate(nodos_presentes):
-                df_n = df_hist[df_hist["nodo"] == nodo].sort_values("fecha_hora")
-                es_principal = nodo in ("CRUCERO_______220", "CHARRUA_______220")
-                fig.add_trace(go.Scatter(
-                    x=df_n["fecha_hora"], y=df_n["cmg_usd_mwh"],
-                    name=nodo.replace("_", " ").strip(),
-                    line=dict(color=paleta[i % len(paleta)],
-                              width=2.5 if es_principal else 1.2,
-                              dash="solid" if es_principal else "dot"),
-                    hovertemplate="%{y:.1f} USD/MWh<extra>" + nodo + "</extra>",
-                ))
-            fig.update_layout(
-                template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
-                xaxis_title=None, yaxis_title="USD/MWh", height=380,
-                margin=dict(l=0, r=0, t=40, b=0),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
-                hovermode="x unified",
-            )
-            fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
-            fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
-            st.plotly_chart(fig, use_container_width=True, key="cmg_grafico_historico")
-        else:
-            st.info("Sin historico CMG en las ultimas 48 horas.")
     except Exception as e:
         st.warning(f"No se pudo cargar historico CMG: {e}")
+
+    # ── Alertas de precio ──
+    alertas = _cmg_alertas(cmg_actual, df_hist)
+    if alertas:
+        _bg = {"alta": "#FEF2F2", "media": "#FFFBEB"}
+        _bd = {"alta": AES_ROJO, "media": "#F59E0B"}
+        _lb = {"alta": "ALERTA", "media": "ATENCION"}
+        for sev, titulo, detalle in alertas:
+            st.markdown(
+                f"<div style='background:{_bg[sev]};border-left:4px solid {_bd[sev]};"
+                f"border-radius:0 8px 8px 0;padding:9px 16px;margin-bottom:7px'>"
+                f"<span style='font-size:9px;font-weight:700;color:{_bd[sev]};letter-spacing:1px;"
+                f"background:{_bd[sev]}22;padding:2px 8px;border-radius:20px'>{_lb[sev]}</span> "
+                f"<span style='font-size:13px;font-weight:600;color:{AES_TEXTO}'>{titulo}</span>"
+                f"<div style='font-size:12px;color:{AES_MUTED};margin-top:2px'>{detalle}</div></div>",
+                unsafe_allow_html=True,
+            )
+
+    # ── Serie de tiempo PRIMERO ──
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:10px 0 6px'>"
+        f"Historico 48 horas — todos los nodos</div>",
+        unsafe_allow_html=True,
+    )
+    if not df_hist.empty:
+        paleta = [AES_AZUL, AES_CYAN, AES_VIOLETA, AES_VERDE,
+                  "#F59E0B", "#EF4444", "#6366F1", "#EC4899"]
+        nodos_presentes = df_hist["nodo"].unique().tolist()
+        fig = go.Figure()
+        for i, nodo in enumerate(nodos_presentes):
+            df_n = df_hist[df_hist["nodo"] == nodo].sort_values("fecha_hora")
+            es_principal = nodo in ("CRUCERO_______220", "CHARRUA_______220")
+            fig.add_trace(go.Scatter(
+                x=df_n["fecha_hora"], y=df_n["cmg_usd_mwh"],
+                name=nodo.replace("_", " ").strip(),
+                line=dict(color=paleta[i % len(paleta)],
+                          width=2.5 if es_principal else 1.2,
+                          dash="solid" if es_principal else "dot"),
+                hovertemplate="%{y:.1f} USD/MWh<extra>" + nodo + "</extra>",
+            ))
+        fig.add_hline(y=0, line_dash="dot", line_color=AES_ROJO, line_width=1,
+                      annotation_text="Costo cero", annotation_position="bottom right",
+                      annotation_font_size=9, annotation_font_color=AES_ROJO)
+        fig.update_layout(
+            template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+            xaxis_title=None, yaxis_title="USD/MWh", height=380,
+            margin=dict(l=0, r=0, t=40, b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
+            hovermode="x unified",
+        )
+        fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+        fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+        st.plotly_chart(fig, use_container_width=True, key="cmg_grafico_historico")
+    else:
+        st.info("Sin historico CMG en las ultimas 48 horas.")
+
+    # ── Tabla con métricas DESPUÉS (incluye máximo de la ventana) ──
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:14px 0 6px'>"
+        f"Detalle por nodo — valor actual y maximo 48h</div>",
+        unsafe_allow_html=True,
+    )
+    max_por_nodo = (
+        df_hist.groupby("nodo")["cmg_usd_mwh"].max().to_dict() if not df_hist.empty else {}
+    )
+    min_por_nodo = (
+        df_hist.groupby("nodo")["cmg_usd_mwh"].min().to_dict() if not df_hist.empty else {}
+    )
+    filas_tabla = []
+    for nodo in CMG_NODOS_TODOS:
+        r = cmg_actual.get(nodo)
+        filas_tabla.append({
+            "Nodo": nodo.replace("_", " ").strip(),
+            "CMG actual": f"{r['cmg_usd_mwh']:.1f}" if r else "—",
+            "Max 48h": f"{max_por_nodo[nodo]:.1f}" if nodo in max_por_nodo else "—",
+            "Min 48h": f"{min_por_nodo[nodo]:.1f}" if nodo in min_por_nodo else "—",
+            "Hora": r["fecha_hora"][11:16] if r else "—",
+        })
+    st.dataframe(pd.DataFrame(filas_tabla), hide_index=True, use_container_width=True)
+    st.caption(
+        "CMG = costo marginal del sistema por nodo (USD/MWh). Los nodos convergen cuando "
+        "no hay congestion y se desacoplan cuando la red se satura. Alertas: costo cero "
+        "(<0.5, vertimiento), CMG alto (>200, oportunidad de ingreso) y desacople "
+        "(spread >50 entre nodos). Fuente: JSON S3 del Coordinador, actualiza cada ~15 min."
+    )
 
 
 # ── Tab Limitaciones ──────────────────────────────────────────────────────────

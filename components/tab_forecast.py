@@ -48,33 +48,6 @@ def _cargar_forecast() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-@st.cache_data(ttl=1800)
-def _cargar_pcp_forecast() -> pd.DataFrame:
-    """Carga PCP (gen programada) desde ahora hasta fin del día siguiente."""
-    try:
-        from utils.db import get_client
-        sb = get_client()
-        santiago = timezone(timedelta(hours=-3))
-        ahora = datetime.now(santiago).strftime("%Y-%m-%d %H:%M:%S")
-        # Hasta las 23:59 del día siguiente
-        manana = (datetime.now(santiago) + timedelta(days=2)).strftime("%Y-%m-%d 00:00:00")
-        res = (
-            sb.table("generacion_programada_ernc")
-            .select("parque,fecha_hora,gen_programada_mw")
-            .gte("fecha_hora", ahora)
-            .lte("fecha_hora", manana)
-            .order("fecha_hora")
-            .execute()
-        )
-        if res.data:
-            df = pd.DataFrame(res.data)
-            df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
-            return df
-    except Exception:
-        pass
-    return pd.DataFrame()
-
-
 def _tabla_diaria(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["fecha"] = df["fecha_hora"].dt.date
@@ -89,7 +62,7 @@ def _tabla_diaria(df: pd.DataFrame) -> pd.DataFrame:
     return agg
 
 
-def _grafico_portfolio(df: pd.DataFrame, df_pcp: pd.DataFrame) -> None:
+def _grafico_portfolio(df: pd.DataFrame) -> None:
     df_solar  = df[df["tecnologia"] == "Solar"].groupby("fecha_hora")["p_fv_estimada_mw"].sum().reset_index()
     df_eolica = df[df["tecnologia"] == "Eólica"].groupby("fecha_hora")["p_eolica_estimada_mw"].sum().reset_index()
     df_solar.columns  = ["fecha_hora", "mw"]
@@ -110,14 +83,6 @@ def _grafico_portfolio(df: pd.DataFrame, df_pcp: pd.DataFrame) -> None:
         fillcolor="rgba(59,76,232,0.18)",
         hovertemplate="%{y:.0f} MW<extra>Solar FV estimada</extra>",
     ))
-    # PCP total (todos los parques sumados)
-    if not df_pcp.empty:
-        df_pcp_tot = df_pcp.groupby("fecha_hora")["gen_programada_mw"].sum().reset_index()
-        fig.add_trace(go.Scatter(
-            x=df_pcp_tot["fecha_hora"], y=df_pcp_tot["gen_programada_mw"],
-            name="PCP programada", line=dict(color=AES_AMBAR, width=2, dash="dash"),
-            hovertemplate="%{y:.0f} MW<extra>PCP programada CEN</extra>",
-        ))
     fig.update_layout(
         template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
         height=380, margin=dict(l=0, r=0, t=10, b=0),
@@ -130,7 +95,7 @@ def _grafico_portfolio(df: pd.DataFrame, df_pcp: pd.DataFrame) -> None:
     st.plotly_chart(fig, use_container_width=True, key="forecast_grafico_portfolio")
 
 
-def _grafico_parque(df: pd.DataFrame, parque: str, df_pcp: pd.DataFrame) -> None:
+def _grafico_parque(df: pd.DataFrame, parque: str) -> None:
     tec  = TECNOLOGIA[parque]
     df_p = df[df["parque"] == parque].sort_values("fecha_hora")
     if df_p.empty:
@@ -151,16 +116,6 @@ def _grafico_parque(df: pd.DataFrame, parque: str, df_pcp: pd.DataFrame) -> None
         line=dict(color=color, width=2),
         hovertemplate="%{y:.1f} MW<extra>Estimado modelo</extra>",
     ))
-    # PCP por parque si disponible
-    if not df_pcp.empty:
-        df_pcp_p = df_pcp[df_pcp["parque"] == parque].sort_values("fecha_hora")
-        if not df_pcp_p.empty:
-            fig.add_trace(go.Scatter(
-                x=df_pcp_p["fecha_hora"], y=df_pcp_p["gen_programada_mw"],
-                name="PCP programada",
-                line=dict(color=AES_AMBAR, width=1.5, dash="dash"),
-                hovertemplate="%{y:.1f} MW<extra>PCP programada CEN</extra>",
-            ))
     if y2_col in df_p.columns:
         fig.add_trace(go.Scatter(
             x=df_p["fecha_hora"], y=df_p[y2_col],
@@ -189,7 +144,6 @@ def render_tab_forecast() -> None:
     )
 
     df = _cargar_forecast()
-    df_pcp = _cargar_pcp_forecast()
 
     if df.empty:
         st.markdown(
@@ -239,7 +193,12 @@ def render_tab_forecast() -> None:
         f"Potencia estimada portfolio — hora a hora</div>",
         unsafe_allow_html=True,
     )
-    _grafico_portfolio(df, df_pcp)
+    st.caption(
+        "Pronostico = modelo fisico propio aplicado al forecast meteorologico Open-Meteo "
+        "(7 dias). Reemplaza a la PCP del Coordinador, que solo se publica hasta el dia "
+        "siguiente y no cubre el horizonte de 7 dias."
+    )
+    _grafico_portfolio(df)
 
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:16px 0 8px'>"
@@ -268,4 +227,4 @@ def render_tab_forecast() -> None:
             format_func=lambda p: NOMBRE_DISPLAY[p],
             key="fcst_parque",
         )
-    _grafico_parque(df, parque_sel, df_pcp)
+    _grafico_parque(df, parque_sel)

@@ -23,6 +23,7 @@ from config import (
 )
 from utils.cen_api import (
     fetch_gen_real_todos,
+    fetch_gen_bess,
     fetch_gen_programada,
     fetch_cmg,
     cmg_a_registros,
@@ -32,6 +33,7 @@ from utils.cen_api import (
 )
 from utils.db import (
     upsert_generacion_real,
+    upsert_generacion_bess,
     upsert_generacion_programada,
     upsert_cmg,
     upsert_limitaciones,
@@ -54,6 +56,18 @@ def adquirir_gen_real() -> int:
         return 0
     n = upsert_generacion_real(registros)
     log(f"Upsert gen. real: {len(registros)} registros procesados.")
+    return len(registros)
+
+
+def adquirir_gen_bess() -> int:
+    log("=== GENERACIÓN BESS ===")
+    # Ventana corta: requiere scan completo del feed (BESS sin idCentral).
+    registros = fetch_gen_bess()
+    if not registros:
+        log("Sin registros de BESS.")
+        return 0
+    upsert_generacion_bess(registros)
+    log(f"Upsert BESS: {len(registros)} registros procesados.")
     return len(registros)
 
 
@@ -132,6 +146,12 @@ def main():
     except Exception as e:
         log(f"[ERROR] Gen. real: {e}")
         errores.append(f"gen_real: {e}")
+
+    try:
+        totales["bess"] = adquirir_gen_bess()
+    except Exception as e:
+        log(f"[ERROR] BESS: {e}")
+        errores.append(f"bess: {e}")
 
     try:
         totales["gen_prog"] = adquirir_gen_programada()

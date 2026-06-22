@@ -425,21 +425,55 @@ def _render_eficiencia() -> None:
     k = min(3, max(2, len(dc) // 30))
     dc["cluster"] = KMeans(n_clusters=k, n_init=10, random_state=42).fit_predict(Xc)
 
+    # Centroides en unidades reales (no escaladas) y etiqueta por nivel de eficiencia
+    cent = dc.groupby("cluster").agg(
+        x=(var_rec, "mean"), y=("pr", "mean"), n=("pr", "size")
+    ).reset_index().sort_values("y", ascending=False)
+    niveles = ["Alta eficiencia", "Media eficiencia", "Baja eficiencia"]
+    colores = [AES_VERDE, AES_AMBAR, AES_ROJO]
+    etq_cluster, color_cluster = {}, {}
+    for rank, (_, row) in enumerate(cent.iterrows()):
+        etq_cluster[row["cluster"]] = niveles[rank] if rank < len(niveles) else f"Grupo {rank+1}"
+        color_cluster[row["cluster"]] = colores[rank] if rank < len(colores) else AES_VIOLETA
+
     _titulo(f"Eficiencia vs recurso — {NOMBRE_DISPLAY[parque_sel]}", "12px 0 6px")
-    paleta = [AES_AZUL, AES_AMBAR, AES_VERDE, AES_VIOLETA]
     figc = go.Figure()
-    for c in sorted(dc["cluster"].unique()):
+    for c in cent["cluster"]:
         sub = dc[dc["cluster"] == c]
-        figc.add_trace(go.Scatter(x=sub[var_rec], y=sub["pr"], mode="markers",
-                                  name=f"Cluster {c+1}",
-                                  marker=dict(color=paleta[c % len(paleta)], size=6, opacity=0.7)))
+        figc.add_trace(go.Scatter(
+            x=sub[var_rec], y=sub["pr"], mode="markers",
+            name=f"{etq_cluster[c]} (n={len(sub)})",
+            marker=dict(color=color_cluster[c], size=6, opacity=0.55),
+            hovertemplate=f"{lbl_rec}: %{{x:.1f}}<br>PR: %{{y:.2f}}<extra>{etq_cluster[c]}</extra>",
+        ))
+    # Centroides: una X grande por grupo
+    for _, row in cent.iterrows():
+        figc.add_trace(go.Scatter(
+            x=[row["x"]], y=[row["y"]], mode="markers+text",
+            marker=dict(color=color_cluster[row["cluster"]], size=18, symbol="x",
+                        line=dict(color="white", width=1.5)),
+            text=["centroide"], textposition="top center", textfont=dict(size=9),
+            showlegend=False,
+            hovertemplate=f"Centroide {etq_cluster[row['cluster']]}<br>"
+                          f"{lbl_rec}: %{{x:.1f}}<br>PR medio: %{{y:.2f}}<extra></extra>",
+        ))
+    figc.add_hline(y=1.0, line_dash="dot", line_color=AES_MUTED, line_width=1,
+                   annotation_text="PR = 1.0 (real = teórico)", annotation_font_size=9)
     figc.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
-                       height=340, margin=dict(l=0, r=0, t=10, b=0),
-                       xaxis_title=lbl_rec, yaxis_title="Performance ratio",
+                       height=360, margin=dict(l=0, r=0, t=10, b=0),
+                       xaxis_title=lbl_rec, yaxis_title="Performance ratio (real / teórico)",
                        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
     figc.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     figc.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
     st.plotly_chart(figc, use_container_width=True, key=f"ml_efi_cluster_{parque_sel}")
+    st.caption(
+        "Cómo leerlo: cada punto es una hora de operación. Eje X = recurso disponible "
+        f"({lbl_rec}); eje Y = performance ratio (cuánto generó vs lo que el modelo "
+        "físico esperaba). La X marca el centroide (condición típica) de cada grupo. "
+        "Verde = horas de alta eficiencia (PR cerca de 1); rojo = baja eficiencia "
+        "(posible suciedad, sombras, limitaciones o fallas). Puntos rojos con buen "
+        "recurso a la derecha y PR bajo son los que conviene investigar."
+    )
 
 
 # ── Entrada principal ──────────────────────────────────────────────────────────

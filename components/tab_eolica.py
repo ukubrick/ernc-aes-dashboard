@@ -214,19 +214,23 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
 
     # Shear α en gráfico propio — eje Y automático
     if "wind_shear_alpha" in df_meteo.columns:
-        df_sh = df_meteo[df_meteo["wind_shear_alpha"].notna()]
+        df_sh = df_meteo[df_meteo["wind_shear_alpha"].notna()].copy()
         if not df_sh.empty:
+            # El cizalle es físicamente acotado a [-0.10, 0.60]. Datos antiguos en DB
+            # (pre-Sesión 14) traen valores absurdos (-2..+5); se recortan para el
+            # gráfico hasta que la re-adquisición meteo los repueble.
+            df_sh["wind_shear_alpha"] = df_sh["wind_shear_alpha"].clip(-0.10, 0.60)
             fig_s = go.Figure()
             fig_s.add_trace(go.Scatter(
                 x=df_sh["fecha_hora"], y=df_sh["wind_shear_alpha"],
                 name="Wind shear alpha",
                 line=dict(color=AES_VIOLETA, width=1.5),
-                fill="tozeroy", fillcolor="rgba(155,111,212,0.06)",
                 hovertemplate="%{y:.3f}<extra>Wind shear α</extra>",
             ))
+            fig_s.add_hline(y=0, line_width=1, line_color=AES_BORDE)
             fig_s.add_hline(
                 y=0.30, line_dash="dot", line_color=AES_AMBAR, line_width=1,
-                annotation_text="α = 0.30 (umbral)", annotation_position="right",
+                annotation_text="α = 0.30 (umbral atm. estable)", annotation_position="right",
                 annotation_font_size=9, annotation_font_color=AES_AMBAR,
             )
             fig_s.update_layout(
@@ -239,18 +243,38 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
                 xaxis_title=None,
                 yaxis_title="α (shear)",
                 xaxis=dict(range=[x_min, x_max]),
+                yaxis=dict(range=[-0.15, 0.65]),
                 hovermode="x unified",
                 showlegend=False,
             )
             fig_s.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
-            fig_s.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
+            fig_s.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
             st.plotly_chart(fig_s, use_container_width=True, key=f"eolica_grafico_shear_{parque}")
 
 
-def _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel):
+def _gen_prog_mismo_hora(gen_rows, prog_rows, parque):
+    """(gen, prog) en la última hora con gen real, con la PCP de esa misma hora."""
+    gen = prog = None
+    if gen_rows:
+        d = pd.DataFrame(gen_rows)
+        d["fecha_hora"] = pd.to_datetime(d["fecha_hora"]).dt.tz_localize(None)
+        d = d[(d["parque"] == parque) & (d["gen_real_mw"] >= 0)].sort_values("fecha_hora")
+        if not d.empty:
+            last = d.iloc[-1]
+            gen = last["gen_real_mw"]
+            hora = last["fecha_hora"]
+            if prog_rows:
+                dp = pd.DataFrame(prog_rows)
+                dp["fecha_hora"] = pd.to_datetime(dp["fecha_hora"]).dt.tz_localize(None)
+                dp = dp[(dp["parque"] == parque) & (dp["fecha_hora"] == hora)]
+                if not dp.empty:
+                    prog = dp.iloc[-1]["gen_programada_mw"]
+    return gen, prog
+
+
+def _panel_metricas(gen_rows, prog_rows, df_meteo, parque_sel):
     """Fila de métricas horizontales debajo del gráfico de generación."""
-    gen  = gen_por_parque.get(parque_sel)
-    prog = prog_por_parque.get(parque_sel)
+    gen, prog = _gen_prog_mismo_hora(gen_rows, prog_rows, parque_sel)
     fp   = calcular_factor_planta(gen, PMAX[parque_sel])
     dev  = calcular_desvio(gen, prog)
 
@@ -265,52 +289,33 @@ def _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel):
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
-        st.metric(
-            "Generacion actual",
-            f"{gen:.1f} MW" if gen is not None else "—",
-            help=f"Ultimo valor gen_real_mw para {NOMBRE_DISPLAY[parque_sel]}. Fuente: CEN gen-real/v3.",
-        )
+        st.metric("Generacion actual", f"{gen:.1f} MW" if gen is not None else "—")
     with c2:
-        st.metric(
-            "Cap. instalada",
-            f"{PMAX[parque_sel]:.1f} MW",
-            help=f"Potencia maxima declarada en CEN para {NOMBRE_DISPLAY[parque_sel]}.",
-        )
+        st.metric("Cap. instalada", f"{PMAX[parque_sel]:.1f} MW")
     with c3:
-        st.metric(
-            "Factor de planta",
-            f"{fp:.1f}%" if fp else "—",
-            help="FP = Gen.real / Cap.instalada x 100.",
-        )
+        st.metric("Factor de planta", f"{fp:.1f}%" if fp is not None else "—")
     with c4:
         desvio_str = f"{dev['desvio_pct']:+.1f}%" if dev["desvio_pct"] is not None else "—"
         st.metric(
             "Desvio vs PCP",
             desvio_str,
             delta=f"{dev['desvio_mw']:+.1f} MW" if dev["desvio_mw"] is not None else None,
-            help="Desvio = (Gen.real - PCP) / PCP x 100.",
         )
     with c5:
-        st.metric(
-            "Viento 100m",
-            f"{v100:.1f} m/s" if v100 else "—",
-            help=(
-                "Velocidad de viento interpolada a 100m (altura hub tipica). "
-                "Formula: v100 = v80 × (100/80)^α (ley de potencia). "
-                "Fuente: Open-Meteo windspeed_80m + windspeed_120m."
-            ),
-        )
+        st.metric("Viento 100m", f"{v100:.1f} m/s" if v100 is not None else "—")
     with c6:
         st.metric(
             "Rafagas / Shear α",
-            f"{gusts:.1f} m/s" if gusts else "—",
-            delta=f"α = {alpha:.3f}" if alpha else None,
-            help=(
-                "Rafagas maximas a 10m [m/s]. Cut-out tipico ~20 m/s. "
-                "Wind shear α: exponente de la ley de potencia v(h) = v_ref × (h/h_ref)^α. "
-                "α > 0.30 → atm. estable, estelas mas persistentes."
-            ),
+            f"{gusts:.1f} m/s" if gusts is not None else "—",
+            delta=f"α = {alpha:.3f}" if alpha is not None else None,
         )
+
+    st.caption(
+        "Generacion: ultimo gen_real CEN · Cap. instalada: Pmax declarada · "
+        "FP = Gen/Cap × 100 · Desvio = (Gen − PCP)/PCP × 100 a la misma hora · "
+        "Viento 100m: interpolado v80/v120 con ley de potencia v(h)=v_ref·(h/h_ref)^α · "
+        "Rafagas: maximas a 10m (cut-out ~20 m/s) · Shear α>0.30 → atmosfera estable."
+    )
 
 
 def render_tab_eolica(
@@ -368,7 +373,7 @@ def render_tab_eolica(
         _grafico_gen(gen_rows, prog_rows, df_meteo, parque_sel, horas_ventana)
 
     # ── Métricas entre los dos gráficos ──
-    _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
+    _panel_metricas(gen_rows, prog_rows, df_meteo, parque_sel)
 
     # ── Segunda serie de tiempo: viento + shear (antes que leyenda/fórmulas) ──
     st.markdown(

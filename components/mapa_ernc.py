@@ -1,9 +1,35 @@
 """Mapa 2D pydeck para los 11 parques ERNC — Carto Light + ScatterplotLayer + TextLayer."""
+import os
 import pydeck as pdk
 import streamlit as st
 import pandas as pd
 
 from config import NOMBRE_DISPLAY, COORDENADAS, TECNOLOGIA, PMAX, PARQUES_TODOS
+
+
+def _secret(nombre: str) -> str | None:
+    """Lee una credencial de st.secrets primero, luego de variables de entorno."""
+    try:
+        if nombre in st.secrets:
+            return st.secrets[nombre]
+    except Exception:
+        pass
+    return os.environ.get(nombre)
+
+
+def maptiler_disponible() -> bool:
+    return bool(_secret("MAPTILER_KEY"))
+
+
+def _satelite_style_url(key: str) -> str:
+    """URL del style satelital hospedado por MapTiler (imagen + etiquetas).
+
+    IMPORTANTE: el componente DeckGlJsonChart de Streamlit exige que map_style sea
+    un STRING (hace `.indexOf` sobre él). Un dict de style raster MapLibre revienta
+    con 'e.mapStyle?.indexOf is not a function'. Por eso se usa la URL hospedada.
+    La capa de nubes OpenWeather no puede inyectarse en una URL de style; requiere
+    otro renderer (folium) y queda pendiente."""
+    return f"https://api.maptiler.com/maps/hybrid/style.json?key={key}"
 
 # Paleta AES por tecnologia (RGB)
 _COLOR = {
@@ -19,31 +45,6 @@ MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 MAP_STYLES = {
     "Claro":    "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
     "Detallado": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
-}
-
-# Style raster MapLibre token-free: imagen satelital ESRI + etiquetas Carto encima.
-# Se usa con map_provider="mapbox" (el token de Mapbox sólo se valida para fuentes
-# mapbox://; estas son tiles https públicas, así que renderizan sin token).
-_ESRI_SAT_STYLE = {
-    "version": 8,
-    "sources": {
-        "esri": {
-            "type": "raster",
-            "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/"
-                      "World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-            "tileSize": 256,
-            "attribution": "Tiles © Esri — World Imagery",
-        },
-        "labels": {
-            "type": "raster",
-            "tiles": ["https://basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}.png"],
-            "tileSize": 256,
-        },
-    },
-    "layers": [
-        {"id": "esri", "type": "raster", "source": "esri"},
-        {"id": "labels", "type": "raster", "source": "labels"},
-    ],
 }
 
 # Ciudades de referencia para dar contexto geográfico al mapa
@@ -118,10 +119,17 @@ def render_mapa(
 ) -> None:
     df = _df(gen_por_parque)
     es_satelite = estilo == "Satelite"
-    # Satelital: style raster MapLibre con provider mapbox (token-free, ver nota arriba).
-    if es_satelite:
-        map_style = _ESRI_SAT_STYLE
+    key_mt = _secret("MAPTILER_KEY")
+    # Satelital: style raster MapLibre (MapTiler + nubes OpenWeather). Si no hay key,
+    # se degrada a Detallado para no romper el render.
+    if es_satelite and key_mt:
+        map_style = _satelite_style_url(key_mt)
         map_provider = "mapbox"
+    elif es_satelite and not key_mt:
+        st.info("Vista satelital requiere MAPTILER_KEY en secrets. Mostrando mapa Detallado.")
+        es_satelite = False
+        map_style = MAP_STYLES["Detallado"]
+        map_provider = "carto"
     else:
         map_style = MAP_STYLES.get(estilo, MAP_STYLES["Claro"])
         map_provider = "carto"

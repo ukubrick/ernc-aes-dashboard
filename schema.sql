@@ -173,3 +173,19 @@ LEFT JOIN LATERAL (
     ORDER BY fuente DESC
     LIMIT 1
 ) p ON TRUE;
+
+-- ── BESS (almacenamiento) de AES Andes (Sesión 17) ───────────────────────────
+-- inyeccion_mw = descarga (BESS→sistema) | retiro_mw = carga (sistema→BESS)
+-- potencia_neta_mw = inyeccion - retiro (>0 descargando, <0 cargando)
+CREATE TABLE IF NOT EXISTS generacion_bess_ernc (
+    bess             TEXT        NOT NULL,
+    parque           TEXT,
+    fecha_hora       TIMESTAMP   NOT NULL,
+    inyeccion_mw     REAL,
+    retiro_mw        REAL,
+    potencia_neta_mw REAL,
+    PRIMARY KEY (bess, fecha_hora)
+);
+ALTER TABLE generacion_bess_ernc ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_select" ON generacion_bess_ernc FOR SELECT USING (true);
+CREATE INDEX IF NOT EXISTS idx_bess_fecha ON generacion_bess_ernc (fecha_hora DESC);
