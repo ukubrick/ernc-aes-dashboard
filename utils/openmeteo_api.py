@@ -88,10 +88,13 @@ def _response_to_registros(response, parque: str, variables: list[str]) -> list[
         calcular_densidad_aire,
         calcular_potencia_eolica_estimada,
     )
-    from config import TECNOLOGIA, PMAX
+    from config import TURBINA_V_CUTIN, TURBINA_V_RATED, TURBINA_V_CUTOUT
+    from config import TECNOLOGIA, PMAX, PMAX_FP, TURBINA_PARQUE
 
     tecnologia = TECNOLOGIA[parque]
-    pmax = PMAX[parque]
+    pmax = PMAX[parque]                       # capacidad bruta — modelo FV
+    pmax_eo = PMAX_FP.get(parque, pmax)       # Pmax neta CEN — modelo eólico
+    turbina = TURBINA_PARQUE.get(parque, {})
     ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     datos = response.Hourly()
@@ -146,7 +149,12 @@ def _response_to_registros(response, parque: str, variables: list[str]) -> list[
             row["wind_speed_100m"] = v100m
             row["wind_shear_alpha"] = alpha
             row["densidad_aire"] = rho
-            row["p_eolica_estimada_mw"] = calcular_potencia_eolica_estimada(v100m, rho, pmax)
+            row["p_eolica_estimada_mw"] = calcular_potencia_eolica_estimada(
+                v100m, rho, pmax_eo,
+                v_cutin=turbina.get("v_cutin", TURBINA_V_CUTIN),
+                v_rated=turbina.get("v_rated", TURBINA_V_RATED),
+                v_cutout=turbina.get("v_cutout", TURBINA_V_CUTOUT),
+            )
 
         registros.append(row)
 

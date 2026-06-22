@@ -1208,5 +1208,38 @@ no puede superponer capas raster (nubes) ni renderizar styles dict (crash
 
 ---
 
-*Actualizado 2026-06-22 — Sesiones 1–17.*
+## SESIÓN 18 — PARÁMETROS TÉCNICOS REALES (CARTAS CEN) + PESTAÑA INFOTÉCNICA (2026-06-22)
+
+Erick aportó `parametros_pe_pulsar.xlsx` + `parametros_pfv_pulsar.xlsx` (cartas CEN
+y fichas de fabricante). Se ajustaron los cálculos y se agregó una pestaña de referencia.
+
+### Cambios en `config.py`
+- **`PMAX_NETA`**: Pmax neta CEN por parque (None donde no hay carta: BOL, MSM).
+- **`PMAX_FP`**: Pmax para FACTOR DE PLANTA — neta CEN si existe, si no la config.
+  Caso especial **MSM = 67.2 MW** (potencia total instalada, no la config 70.56).
+  Totales: `PMAX_FP_TOTAL` (1108), `_SOLAR` (682), `_EOLICA` (426).
+- **`TURBINA_PARQUE`**: curva de potencia por parque eólico (cut-in/rated/cut-out +
+  fabricante/modelo/n_wtg/rotor/hub). CL: Vestas V150-4.3 (cut-out **24.5**), MSM:
+  Nordex N149-4.8. Resto default 3/12/25.
+- **`BESS_HORAS`**: duración declarada (AS2B 4.95 h, AS3 3 h, AS4 5 h).
+- **`INFOTECNICA`**: ficha consolidada por parque (Pmax bruta/neta, Pmin, SSCC,
+  equipos, nota de cálculo, fuente) — solo para la pestaña de referencia.
+
+### Regla de cálculo (FP)
+Prioridad AES: **Pmax neta CEN aceptada > potencia neta verificada SSCC > potencia
+total instalada documentada**. Se cambió el FP a `PMAX_FP` en `kpis_generales.py`
+(totales y notas), `tab_solar.py`, `tab_eolica.py` (métrica ahora "Pmax neta CEN"),
+`tab_estadisticas.py`, `utils/insights.py`, `utils/pdf_report.py` y las tablas/botones
+del sidebar en `app_ernc.py`. El **modelo FV** sigue usando `PMAX` (bruta); el **modelo
+eólico** usa `PMAX_FP` (neta) + la curva `TURBINA_PARQUE` en `utils/openmeteo_api.py`.
+**Requiere re-correr `Adquisicion_meteo_ernc.py`** para repoblar `p_eolica_estimada_mw`.
+
+### Nueva pestaña Infotécnica (`components/tab_infotecnica.py`)
+Vista `"Infotecnica"` (última en `VISTAS`). Tablas: potencias+SSCC FV, potencias+SSCC
+eólica, curva de potencia eólica por parque, BESS (energía = Pmax×horas), y fichas
+expandibles por parque con equipos y fuentes. Solo lectura, sin Plotly.
+
+---
+
+*Actualizado 2026-06-22 — Sesiones 1–18.*
 *Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*

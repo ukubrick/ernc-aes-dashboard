@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from config import (
-    NOMBRE_DISPLAY, TECNOLOGIA, PMAX,
+    NOMBRE_DISPLAY, TECNOLOGIA, PMAX, PMAX_FP,
     PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODO,
 )
 from utils.calculos import calcular_factor_planta, calcular_desvio
@@ -267,7 +267,7 @@ def _check_sin_telemetria(parque: str, gen_por_parque: dict, insights: list[Insi
 
 def _check_factor_planta_alto(parque: str, gen_por_parque: dict, insights: list[Insight]) -> None:
     gen = gen_por_parque.get(parque)
-    fp = calcular_factor_planta(gen, PMAX[parque])
+    fp = calcular_factor_planta(gen, PMAX_FP[parque])
     if fp and fp > 90:
         insights.append(Insight(
             severidad="positivo",

@@ -272,7 +272,7 @@ st.markdown(
 
 # ── Imports propios ────────────────────────────────────────────────────────────
 from config import (
-    NOMBRE_DISPLAY, TECNOLOGIA, PARQUES_TODOS, PMAX,
+    NOMBRE_DISPLAY, TECNOLOGIA, PARQUES_TODOS, PMAX, PMAX_FP,
     PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODO, CMG_NODOS_TODOS,
 )
 from utils.db import (
@@ -294,6 +294,7 @@ from components.tab_estadisticas import render_tab_estadisticas
 from components.tab_ml import render_tab_ml
 from components.tab_meteo_sistema import render_tab_meteo_sistema
 from components.tab_bess import render_tab_bess
+from components.tab_infotecnica import render_tab_infotecnica
 
 
 # ── Carga de datos ─────────────────────────────────────────────────────────────
@@ -469,7 +470,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
         for p in PARQUES_SOLAR:
             gen = gen_por_parque.get(p)
             gen_str = f"{gen:.1f} MW" if gen is not None else "— MW"
-            fp = round(gen / PMAX[p] * 100, 0) if gen and PMAX[p] > 0 else None
+            fp = round(gen / PMAX_FP[p] * 100, 0) if gen and PMAX_FP[p] > 0 else None
             fp_str = f"  {fp:.0f}%" if fp else ""
             is_activo = (p == parque_activo)
             container = st.container()
@@ -500,7 +501,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
         for p in PARQUES_EOLICA:
             gen = gen_por_parque.get(p)
             gen_str = f"{gen:.1f} MW" if gen is not None else "— MW"
-            fp = round(gen / PMAX[p] * 100, 0) if gen and PMAX[p] > 0 else None
+            fp = round(gen / PMAX_FP[p] * 100, 0) if gen and PMAX_FP[p] > 0 else None
             fp_str = f"  {fp:.0f}%" if fp else ""
             is_activo = (p == parque_activo)
             if is_activo:
@@ -544,7 +545,8 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 # ── Navegación principal (vista única) ──────────────────────────────────────────
 
 VISTAS = ["Mapa & Resumen", "Solar FV", "Eolica", "BESS", "Forecast 7d",
-          "Estadisticas", "ML Analysis", "Insights", "Meteo & Sistema", "CMG", "Limitaciones"]
+          "Estadisticas", "ML Analysis", "Insights", "Meteo & Sistema", "CMG",
+          "Limitaciones", "Infotecnica"]
 
 
 def _navegacion() -> str:
@@ -670,6 +672,8 @@ def main():
         _render_tab_cmg(cmg_rows)
     elif vista == "Limitaciones":
         _render_tab_limitaciones(lim_rows)
+    elif vista == "Infotecnica":
+        render_tab_infotecnica()
 
 
 # ── Tab Resumen ───────────────────────────────────────────────────────────────
@@ -705,7 +709,7 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
         filas = []
         for p in PARQUES_TODOS:
             gen = gen_por_parque.get(p)
-            fp  = round(gen / PMAX[p] * 100, 1) if gen and PMAX[p] > 0 else None
+            fp  = round(gen / PMAX_FP[p] * 100, 1) if gen and PMAX_FP[p] > 0 else None
             filas.append({
                 "Parque":   NOMBRE_DISPLAY[p],
                 "Tipo":     TECNOLOGIA[p],
