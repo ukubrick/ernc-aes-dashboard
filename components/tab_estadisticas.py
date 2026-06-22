@@ -3,7 +3,13 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 
-from config import NOMBRE_DISPLAY, PMAX, PMAX_FP, TECNOLOGIA, PARQUES_TODOS, PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODO
+from config import (
+    NOMBRE_DISPLAY, PMAX, PMAX_FP, PMAX_FP_TOTAL, TECNOLOGIA,
+    PARQUES_TODOS, PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODO,
+)
+
+# Factor de emisión evitado del SEN chileno (tCO2/MWh, referencia ~0.4).
+_FACTOR_CO2 = 0.4
 
 AES_AZUL    = "#3B4CE8"
 AES_CYAN    = "#4DC8DC"
@@ -106,17 +112,41 @@ def render_tab_estadisticas(
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("Produccion total", f"{total_mwh:,.0f} MWh",
-                  help=f"Suma de gen_real_mw hora a hora para los 11 parques en las ultimas {n_horas_ref} horas.")
+        st.metric("Produccion total", f"{total_mwh:,.0f} MWh",)
     with c2:
-        st.metric("Solar FV", f"{solar_mwh:,.0f} MWh",
-                  help="Produccion acumulada de los 6 parques solares en el periodo.")
+        st.metric("Solar FV", f"{solar_mwh:,.0f} MWh",)
     with c3:
-        st.metric("Eolica", f"{eolica_mwh:,.0f} MWh",
-                  help="Produccion acumulada de los 5 parques eolicos en el periodo.")
+        st.metric("Eolica", f"{eolica_mwh:,.0f} MWh",)
     with c4:
-        st.metric("Ingreso estimado", f"USD {total_ingreso:,.0f}",
-                  help="Ingreso = MWh x CMG del nodo asignado a cada parque. CMG es el ultimo valor disponible, no el historico hora a hora.")
+        st.metric("Ingreso estimado", f"USD {total_ingreso:,.0f}",)
+
+    # ── Segunda fila: indicadores derivados ──────────────────────────────────
+    fp_portfolio = (total_mwh / (PMAX_FP_TOTAL * n_horas_ref) * 100) if n_horas_ref else None
+    df_fp = df_stats[df_stats["fp_prom"].notna()]
+    mejor = df_fp.sort_values("fp_prom", ascending=False).iloc[0] if not df_fp.empty else None
+    co2_evit = total_mwh * _FACTOR_CO2
+    precio_medio = (total_ingreso / total_mwh) if total_mwh else None
+    # Cumplimiento PCP: % de parques dentro de ±15% de desvío
+    df_pcp = df_stats[df_stats["desvio_pct"].notna()]
+    cumpl = (df_pcp["desvio_pct"].abs() <= 15).mean() * 100 if not df_pcp.empty else None
+
+    d1, d2, d3, d4 = st.columns(4)
+    with d1:
+        st.metric("FP portfolio", f"{fp_portfolio:.1f}%" if fp_portfolio is not None else "—")
+    with d2:
+        st.metric("Mejor parque (FP)",
+                  f"{mejor['fp_prom']:.1f}%" if mejor is not None else "—",
+                  delta=mejor["nombre"] if mejor is not None else None, delta_color="off")
+    with d3:
+        st.metric("Precio medio capturado",
+                  f"{precio_medio:,.1f} USD/MWh" if precio_medio is not None else "—")
+    with d4:
+        st.metric("CO₂ evitado (aprox.)", f"{co2_evit:,.0f} tCO₂")
+    st.caption(
+        f"FP portfolio = MWh / (Pmax neta total × horas). CO₂ evitado ≈ producción × "
+        f"{_FACTOR_CO2} tCO₂/MWh (factor SEN referencial). "
+        + (f"Cumplimiento PCP (±15%): {cumpl:.0f}% de los parques." if cumpl is not None else "")
+    )
 
     st.divider()
 
@@ -291,6 +321,18 @@ def render_tab_estadisticas(
         })
 
     st.dataframe(pd.DataFrame(filas_tabla), hide_index=True, use_container_width=True)
+
+    csv = df_stats.drop(columns=["parque"], errors="ignore").rename(columns={
+        "nombre": "parque", "tecnologia": "tipo", "pmax_mw": "pmax_neta_mw",
+        "mwh": "produccion_mwh", "fp_prom": "fp_prom_pct",
+        "desvio_pct": "desvio_pcp_pct", "ingreso_usd": "ingreso_usd_estimado",
+        "n_horas": "horas",
+    }).to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Descargar estadísticas (CSV)", data=csv,
+        file_name="estadisticas_portfolio_ernc.csv", mime="text/csv",
+        key="stats_csv",
+    )
 
     # ── Gráfico desvío vs PCP ───────────────────────────────────────────────
     df_dev = df_stats[df_stats["desvio_pct"].notna()].sort_values("desvio_pct")

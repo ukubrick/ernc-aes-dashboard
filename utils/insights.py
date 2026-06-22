@@ -35,6 +35,7 @@ class Insight:
     valor: float | None = None
     unidad: str = ""
     categoria: str = "general"  # general | meteo | operacional | mercado
+    timestamp: str | None = None  # "YYYY-MM-DD HH:MM:SS" — momento del dato evaluado
 
     @property
     def icono(self) -> str:
@@ -341,10 +342,14 @@ def evaluar_insights(
     prog_por_parque: dict[str, float | None],
     cmg_crucero: float | None,
     lim_rows: list[dict],
+    ultima_hora: str | None = None,
 ) -> list[Insight]:
     """
     Evalúa todas las reglas y retorna lista de Insights ordenados por severidad.
     Llama a Supabase para obtener datos meteo actuales.
+
+    `ultima_hora` es la hora de referencia de los datos (gen-real); se estampa en
+    cada alarma que no tenga timestamp propio para mostrar la fecha/hora del evento.
     """
     insights: list[Insight] = []
 
@@ -368,6 +373,12 @@ def evaluar_insights(
         _check_wind_shear(p, insights)
         _check_eficiencia_eolica(p, gen_por_parque, insights)
         _check_factor_planta_alto(p, gen_por_parque, insights)
+
+    # Estampar la hora de referencia en las alarmas que no tengan una propia
+    if ultima_hora:
+        for i in insights:
+            if i.timestamp is None:
+                i.timestamp = ultima_hora
 
     # Ordenar: crítico → alerta → info → positivo
     insights.sort(key=lambda x: _ORDEN[x.severidad])

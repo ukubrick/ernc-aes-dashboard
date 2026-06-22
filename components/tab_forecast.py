@@ -172,19 +172,16 @@ def render_tab_forecast() -> None:
         st.metric(
             "Solar FV — 7 dias",
             f"{solar_tot:,.0f} MWh",
-            help="Suma de p_fv_estimada_mw (1 fila = 1 hora = 1 MWh) para todos los parques solares. Modelo: P=Ppico x GTI/1000 x [1+γ(Tc-25)]. Fuente: Open-Meteo forecast.",
         )
     with c2:
         st.metric(
             "Eolica — 7 dias",
             f"{eolica_tot:,.0f} MWh",
-            help="Suma de p_eolica_estimada_mw. Modelo: P=0.5 x ρ x A x Cp x v³, cap a Pmax. Fuente: Open-Meteo forecast viento 80m+120m interpolado a 100m.",
         )
     with c3:
         st.metric(
             "Total portfolio",
             f"{total_mwh:,.0f} MWh",
-            help="Solar + Eolica estimados para los proximos 7 dias segun modelo meteorologico Open-Meteo.",
         )
 
     st.divider()

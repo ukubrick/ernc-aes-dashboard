@@ -236,9 +236,7 @@ def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
     with c1:
         st.metric("Generacion actual", f"{gen:.1f} MW" if gen is not None else "—")
     with c2:
-        st.metric("Pmax neta CEN", f"{PMAX_FP[parque_sel]:.1f} MW",
-                  help="Potencia máxima neta CEN usada para factor de planta. "
-                       f"Capacidad config dashboard: {PMAX[parque_sel]:.1f} MW.")
+        st.metric("Pmax neta CEN", f"{PMAX_FP[parque_sel]:.1f} MW")
     with c3:
         st.metric("Factor de planta", f"{fp:.1f}%" if fp is not None else "—")
     with c4:

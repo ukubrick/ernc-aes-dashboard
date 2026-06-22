@@ -1241,5 +1241,36 @@ expandibles por parque con equipos y fuentes. Solo lectura, sin Plotly.
 
 ---
 
-*Actualizado 2026-06-22 — Sesiones 1–18.*
+## SESIÓN 19 — UX MAYOR: ALARMAS, NAV POR CATEGORÍAS, BESS/ML/ESTADÍSTICAS (2026-06-22)
+
+1. **Insights → Alarmas** (`tab_insights.py` + `utils/insights.py`): sección renombrada.
+   `Insight` ahora tiene `timestamp`; `evaluar_insights(..., ultima_hora)` lo estampa.
+   Cards muestran **fecha/hora** del evento. Semáforo verde/amarillo/rojo (3 tarjetas de
+   conteo) + filtros por **severidad** y categoría. Subtab meteo: columna **Fecha/hora**
+   por parque + última lectura. Dispatch pasa `ultima_hora`.
+2. **Mapa & Resumen** (`app_ernc._render_tab_resumen`): mapa a **ancho completo**; tabla
+   de estado **debajo** con Pmax neta, FP, **% capacidad (ProgressColumn)**, PCP y Desvío.
+   Serie 24h ahora **apilada Solar/Eólica** + línea PCP ámbar.
+3. **BESS** (`tab_bess.py`): métricas extra (máx desc/carga, horas desc/carga, energía neta),
+   **CSV** de la serie del BESS, y **tabla resumen de los 6 BESS** (estado, carga/descarga,
+   horas, ciclos) con CSV. Nueva subsección ML **"BESS — operación"** en `tab_ml.py`
+   (perfil horario, dispersión neta vs CMG, correlación de arbitraje, importancia hora/CMG).
+4. **Estadísticas** (`tab_estadisticas.py`): 2ª fila de KPIs (FP portfolio, mejor parque,
+   precio medio capturado, **CO₂ evitado**), cumplimiento PCP, y **CSV** de detalle.
+5. **ML Analysis** (`tab_ml.py`): **fix R² absurdo** — el forecast de generación usa
+   `train_test_split` aleatorio (la gen depende del clima concurrente, no de su pasado),
+   con `np.clip` a [0,Pmax]; el backtest cronológico queda solo para visualización.
+   Expanders de **metodología/fundamento teórico** en las 4 subsecciones. Eficiencia usa
+   `PMAX_FP`.
+6. **Sidebar/Nav** (`app_ernc.py`): logo **más grande (210px) y más arriba** (padding
+   reducido + recorte de `stSidebarUserContent`). Nueva **card KPI BESS** (estado + % de
+   uso, neta) en `kpis_generales.py` (grid 4-col responsive, 8 cards). Navegación en **2
+   niveles**: `st.segmented_control` de **categorías** (Operación / Análisis / Alarmas &
+   Mercado / Referencia) → botones de vista; auto-curado al saltar desde el sidebar.
+7. **Tooltips `?` eliminados** de TODO el software (`help=` quitado en forecast, ml,
+   estadísticas, meteo_sistema, solar, eólica).
+
+---
+
+*Actualizado 2026-06-22 — Sesiones 1–19.*
 *Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*

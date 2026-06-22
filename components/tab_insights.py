@@ -1,4 +1,6 @@
-"""Tab Insights — tema claro, paleta AES, sin emojis."""
+"""Tab Alarmas — alarmas operacionales del portfolio + condiciones meteo.
+Tema claro, paleta AES, sin emojis, categorizadas por severidad (verde/amarillo/rojo)
+con fecha y hora del evento."""
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, timezone
@@ -20,6 +22,18 @@ _BG     = {"critico": "#FEF2F2", "alerta": "#FFFBEB", "info": "#EFF6FF", "positi
 _BORDER = {"critico": AES_ROJO,  "alerta": AES_AMBAR,  "info": AES_AZUL,  "positivo": AES_VERDE}
 _LABEL  = {"critico": "CRITICO", "alerta": "ALERTA",   "info": "INFO",    "positivo": "OK"}
 _DOT_C  = {"critico": AES_ROJO,  "alerta": AES_AMBAR,  "info": AES_AZUL,  "positivo": AES_VERDE}
+# Semáforo de severidad: rojo (crítico), amarillo (alerta), verde (positivo/info).
+_SEMAFORO = {"critico": "Rojo", "alerta": "Amarillo", "info": "Verde", "positivo": "Verde"}
+
+
+def _fmt_ts(ts: str | None) -> str:
+    if not ts:
+        return "—"
+    try:
+        d = pd.to_datetime(ts)
+        return d.strftime("%d/%m %H:%M")
+    except Exception:
+        return str(ts)[:16]
 
 
 def _card(insight: Insight, idx: int = 0) -> None:
@@ -33,6 +47,7 @@ def _card(insight: Insight, idx: int = 0) -> None:
         "info":     "rgba(59,76,232,0.10)",
         "positivo": "rgba(90,184,72,0.10)",
     }[sev]
+    ts_str = _fmt_ts(insight.timestamp)
     st.markdown(
         f"<div class='{card_class}' style='"
         f"background:{_BG[sev]};"
@@ -53,6 +68,9 @@ def _card(insight: Insight, idx: int = 0) -> None:
         f"background:{badge_bg};padding:2px 8px;border-radius:20px'>"
         f"    {_LABEL[sev]}"
         f"  </span>"
+        f"  <span style='font-size:10.5px;color:{AES_MUTED};font-weight:600'>"
+        f"    {_fmt_ts(insight.timestamp)} hrs"
+        f"  </span>"
         f"  <span style='font-size:11px;color:{AES_MUTED};margin-left:auto;font-weight:500'>"
         f"    {insight.nombre_parque}"
         f"  </span>"
@@ -72,7 +90,7 @@ def _cargar_meteo_actual() -> pd.DataFrame:
     try:
         from utils.db import get_client
         sb = get_client()
-        desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=4)).strftime("%Y-%m-%d %H:%M:%S")
+        desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("meteo_ernc")
             .select(
@@ -89,60 +107,82 @@ def _cargar_meteo_actual() -> pd.DataFrame:
         if res.data:
             df = pd.DataFrame(res.data)
             df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
-            # Un registro por parque (el más reciente)
             return df.drop_duplicates(subset="parque", keep="first").reset_index(drop=True)
     except Exception:
         pass
     return pd.DataFrame()
 
 
-def _render_subtab_alertas(gen_por_parque, prog_por_parque, cmg_crucero, lim_rows):
+def _resumen_semaforo(insights: list[Insight]) -> None:
+    """Barra de semáforo: conteo por severidad con color de fondo."""
+    n_rojo  = sum(1 for i in insights if i.severidad == "critico")
+    n_amar  = sum(1 for i in insights if i.severidad == "alerta")
+    n_verde = sum(1 for i in insights if i.severidad in ("positivo", "info"))
+    tarjetas = [
+        ("Rojo — críticas",     n_rojo,  AES_ROJO,  "#FEF2F2"),
+        ("Amarillo — alertas",  n_amar,  AES_AMBAR, "#FFFBEB"),
+        ("Verde — normales/OK", n_verde, AES_VERDE, "#F0FDF4"),
+    ]
+    html = "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px'>"
+    for label, n, col, bg in tarjetas:
+        html += (
+            f"<div style='background:{bg};border:1px solid {col}44;border-left:5px solid {col};"
+            f"border-radius:10px;padding:12px 16px;animation:fadeInUp .4s ease both'>"
+            f"<div style='font-size:28px;font-weight:800;color:{col};line-height:1'>{n}</div>"
+            f"<div style='font-size:11px;font-weight:600;color:{AES_MUTED};margin-top:4px'>{label}</div>"
+            f"</div>"
+        )
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def _render_subtab_alertas(gen_por_parque, prog_por_parque, cmg_crucero, lim_rows, ultima_hora=None):
+    hdr = "Alarmas operacionales del portfolio"
+    if ultima_hora:
+        hdr += f" — datos al {_fmt_ts(ultima_hora)} hrs"
     st.markdown(
-        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:12px'>"
-        f"Hallazgos automaticos del portfolio</div>",
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:12px'>{hdr}</div>",
         unsafe_allow_html=True,
     )
 
     with st.spinner("Evaluando condiciones..."):
-        insights = evaluar_insights(gen_por_parque, prog_por_parque, cmg_crucero, lim_rows)
+        insights = evaluar_insights(gen_por_parque, prog_por_parque, cmg_crucero, lim_rows, ultima_hora)
 
     if not insights:
         st.markdown(
             f"<div style='background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;"
             f"padding:14px 18px;color:#166534;font-size:13px'>"
-            f"Sin alertas activas. El portfolio opera dentro de parametros normales.</div>",
+            f"Sin alarmas activas. El portfolio opera dentro de parametros normales.</div>",
             unsafe_allow_html=True,
         )
         return
 
-    n_critico  = sum(1 for i in insights if i.severidad == "critico")
-    n_alerta   = sum(1 for i in insights if i.severidad == "alerta")
-    n_positivo = sum(1 for i in insights if i.severidad == "positivo")
+    _resumen_semaforo(insights)
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Criticos",  n_critico,  help="Condiciones que requieren atencion inmediata.")
-    with c2:
-        st.metric("Alertas",   n_alerta,   help="Condiciones fuera de rango normal, monitorear.")
-    with c3:
-        st.metric("Positivos", n_positivo, help="Parques con rendimiento destacado.")
-    with c4:
-        st.metric("Total",     len(insights))
+    # Filtros: severidad (semáforo) + categoría
+    c_sev, c_cat = st.columns([1, 1])
+    with c_sev:
+        sev_sel = st.segmented_control(
+            "Severidad",
+            ["Todas", "Rojo", "Amarillo", "Verde"],
+            default="Todas",
+            key="alarmas_severidad",
+        )
+    with c_cat:
+        categorias = ["Todas"] + sorted({i.categoria for i in insights})
+        cat_sel = st.segmented_control(
+            "Categoria", categorias, default="Todas", key="alarmas_categoria",
+        )
 
-    st.divider()
-
-    categorias = ["Todos"] + sorted({i.categoria for i in insights})
-    cat_sel = st.segmented_control(
-        "Categoria",
-        categorias,
-        default="Todos",
-        key="insights_categoria",
-    )
-
-    filtrados = insights if cat_sel == "Todos" else [i for i in insights if i.categoria == cat_sel]
+    sev_map = {"Rojo": {"critico"}, "Amarillo": {"alerta"}, "Verde": {"positivo", "info"}}
+    filtrados = insights
+    if sev_sel and sev_sel != "Todas":
+        filtrados = [i for i in filtrados if i.severidad in sev_map[sev_sel]]
+    if cat_sel and cat_sel != "Todas":
+        filtrados = [i for i in filtrados if i.categoria == cat_sel]
 
     if not filtrados:
-        st.info("Sin hallazgos en esta categoria.")
+        st.info("Sin alarmas en este filtro.")
         return
 
     for idx, insight in enumerate(filtrados):
@@ -151,13 +191,7 @@ def _render_subtab_alertas(gen_por_parque, prog_por_parque, cmg_crucero, lim_row
 
 def _render_subtab_meteo():
     """Tabla de condiciones meteorológicas actuales de todos los parques."""
-    from config import NOMBRE_DISPLAY, TECNOLOGIA, PARQUES_SOLAR, PARQUES_EOLICA
-
-    st.markdown(
-        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:12px'>"
-        f"Condiciones meteorologicas actuales — todos los parques</div>",
-        unsafe_allow_html=True,
-    )
+    from config import NOMBRE_DISPLAY, PARQUES_SOLAR, PARQUES_EOLICA
 
     df = _cargar_meteo_actual()
 
@@ -167,6 +201,17 @@ def _render_subtab_meteo():
             "Ejecuta Adquisicion_meteo_ernc.py o espera al proximo cron (:10 UTC)."
         )
         return
+
+    ult_meteo = df["fecha_hora"].max()
+    ult_str = ult_meteo.strftime("%d/%m/%Y %H:%M") if pd.notna(ult_meteo) else "—"
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:2px'>"
+        f"Condiciones meteorologicas actuales — todos los parques</div>"
+        f"<div style='font-size:11.5px;color:{AES_MUTED};margin-bottom:12px'>"
+        f"Última lectura meteo (Open-Meteo, hora Santiago): <b>{ult_str}</b>. "
+        f"La columna Fecha/hora indica el timestamp del dato de cada parque.</div>",
+        unsafe_allow_html=True,
+    )
 
     # ── Tabla Solar FV ──
     st.markdown(
@@ -178,15 +223,9 @@ def _render_subtab_meteo():
     for p in PARQUES_SOLAR:
         row = df[df["parque"] == p]
         if row.empty:
-            filas_solar.append({
-                "Parque": NOMBRE_DISPLAY[p],
-                "Hora": "—",
-                "GHI (W/m²)": "—",
-                "Temp. celda (°C)": "—",
-                "Nub. baja %": "—",
-                "Modelo FV (MW)": "—",
-                "Diurno": "—",
-            })
+            filas_solar.append({"Parque": NOMBRE_DISPLAY[p], "Fecha/hora": "—",
+                                "GHI (W/m²)": "—", "Temp. celda (°C)": "—",
+                                "Nub. baja %": "—", "Modelo FV (MW)": "—", "Diurno": "—"})
         else:
             r = row.iloc[0]
             ghi   = r.get("ghi_wm2")
@@ -194,10 +233,10 @@ def _render_subtab_meteo():
             cl    = r.get("cloudcover_low_pct")
             p_est = r.get("p_fv_estimada_mw")
             is_d  = r.get("is_day")
-            hora  = str(r["fecha_hora"])[11:16] if pd.notna(r["fecha_hora"]) else "—"
+            fh    = r["fecha_hora"].strftime("%d/%m %H:%M") if pd.notna(r["fecha_hora"]) else "—"
             filas_solar.append({
                 "Parque": NOMBRE_DISPLAY[p],
-                "Hora": hora,
+                "Fecha/hora": fh,
                 "GHI (W/m²)": f"{ghi:.0f}" if ghi is not None else "—",
                 "Temp. celda (°C)": f"{tc:.1f}" if tc is not None else "—",
                 "Nub. baja %": f"{cl:.0f}" if cl is not None else "—",
@@ -224,15 +263,9 @@ def _render_subtab_meteo():
     for p in PARQUES_EOLICA:
         row = df[df["parque"] == p]
         if row.empty:
-            filas_eolica.append({
-                "Parque": NOMBRE_DISPLAY[p],
-                "Hora": "—",
-                "V10m (m/s)": "—",
-                "V100m (m/s)": "—",
-                "Rafagas (m/s)": "—",
-                "Shear α": "—",
-                "Modelo EO (MW)": "—",
-            })
+            filas_eolica.append({"Parque": NOMBRE_DISPLAY[p], "Fecha/hora": "—",
+                                 "V10m (m/s)": "—", "V100m (m/s)": "—", "Rafagas (m/s)": "—",
+                                 "Shear α": "—", "Modelo EO (MW)": "—"})
         else:
             r = row.iloc[0]
             v10   = r.get("wind_speed_10m")
@@ -240,23 +273,21 @@ def _render_subtab_meteo():
             gusts = r.get("wind_gusts_10m")
             alpha = r.get("wind_shear_alpha")
             p_est = r.get("p_eolica_estimada_mw")
-            hora  = str(r["fecha_hora"])[11:16] if pd.notna(r["fecha_hora"]) else "—"
+            fh    = r["fecha_hora"].strftime("%d/%m %H:%M") if pd.notna(r["fecha_hora"]) else "—"
 
-            # Alerta de rafagas
             gusts_str = f"{gusts:.1f}" if gusts is not None else "—"
             if gusts and gusts > 20:
                 gusts_str = f"{gusts:.1f} !"
             elif gusts and gusts > 16:
                 gusts_str = f"{gusts:.1f} ~"
 
-            # Alerta de shear
             alpha_str = f"{alpha:.3f}" if alpha is not None else "—"
             if alpha and alpha > 0.30:
                 alpha_str = f"{alpha:.3f} !"
 
             filas_eolica.append({
                 "Parque": NOMBRE_DISPLAY[p],
-                "Hora": hora,
+                "Fecha/hora": fh,
                 "V10m (m/s)": f"{v10:.1f}" if v10 is not None else "—",
                 "V100m (m/s)": f"{v100:.1f}" if v100 is not None else "—",
                 "Rafagas (m/s)": gusts_str,
@@ -280,11 +311,12 @@ def render_tab_insights(
     prog_por_parque: dict,
     cmg_crucero: float | None,
     lim_rows: list,
+    ultima_hora: str | None = None,
 ) -> None:
-    subtab_alertas, subtab_meteo = st.tabs(["Alertas operacionales", "Condiciones meteorologicas"])
+    subtab_alertas, subtab_meteo = st.tabs(["Alarmas operacionales", "Condiciones meteorologicas"])
 
     with subtab_alertas:
-        _render_subtab_alertas(gen_por_parque, prog_por_parque, cmg_crucero, lim_rows)
+        _render_subtab_alertas(gen_por_parque, prog_por_parque, cmg_crucero, lim_rows, ultima_hora)
 
     with subtab_meteo:
         _render_subtab_meteo()

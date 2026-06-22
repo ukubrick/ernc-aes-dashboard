@@ -97,6 +97,9 @@ st.markdown(
     }}
     [data-testid="stSidebar"] * {{ color: rgba(255,255,255,0.88) !important; }}
     [data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.12) !important; }}
+    /* Logo más arriba: recortar el padding superior del contenido del sidebar */
+    [data-testid="stSidebarUserContent"] {{ padding-top: 0.4rem !important; }}
+    [data-testid="stSidebar"] .block-container {{ padding-top: 0.4rem !important; }}
 
     /* Botones sidebar */
     [data-testid="stSidebar"] .stButton button {{
@@ -284,6 +287,7 @@ from utils.db import (
     query_ultima_hora_gen,
     query_ultimas_actualizaciones,
 )
+from utils.calculos import calcular_desvio
 from components.kpis_generales import render_kpis
 from components.mapa_ernc import render_mapa
 from components.tab_solar import render_tab_solar
@@ -432,16 +436,16 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
             _rgba = _np.zeros((_arr.shape[0], _arr.shape[1], 4), dtype=_np.uint8)
             _rgba[:, :, :3] = 255
             _rgba[:, :, 3] = _alpha
-            _out = _PILImage.fromarray(_rgba, "RGBA").resize((320, 320), _PILImage.LANCZOS)
+            _out = _PILImage.fromarray(_rgba, "RGBA").resize((420, 420), _PILImage.LANCZOS)
             _buf = _io.BytesIO()
             _out.save(_buf, format="PNG")
             _logo_b64 = _b64.b64encode(_buf.getvalue()).decode()
 
             st.markdown(
-                f"<div style='padding:20px 4px 6px;text-align:center'>"
+                f"<div style='padding:2px 4px 6px;text-align:center'>"
                 f"<img src='data:image/png;base64,{_logo_b64}' "
-                f"style='width:160px;display:block;margin:0 auto;' />"
-                f"<div style='font-size:11px;color:rgba(255,255,255,0.55);margin-top:10px'>"
+                f"style='width:210px;display:block;margin:0 auto;' />"
+                f"<div style='font-size:11px;color:rgba(255,255,255,0.55);margin-top:6px'>"
                 f"Creado por <b style='color:rgba(255,255,255,0.80)'>Erick Herrera</b></div>"
                 f"</div>",
                 unsafe_allow_html=True,
@@ -544,36 +548,58 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 
 # ── Navegación principal (vista única) ──────────────────────────────────────────
 
-VISTAS = ["Mapa & Resumen", "Solar FV", "Eolica", "BESS", "Forecast 7d",
-          "Estadisticas", "ML Analysis", "Insights", "Meteo & Sistema", "CMG",
-          "Limitaciones", "Infotecnica"]
+# Navegación en 2 niveles: categorías → vistas. Reduce el desorden de tener
+# muchos botones sueltos. La categoría activa se deriva de la vista activa y
+# se puede cambiar con las pestañas-categoría (animación fadeInUp en los botones).
+CATEGORIAS = {
+    "Operación":         ["Mapa & Resumen", "Solar FV", "Eolica", "BESS"],
+    "Análisis":          ["Forecast 7d", "Estadisticas", "ML Analysis"],
+    "Alarmas & Mercado": ["Alarmas", "Meteo & Sistema", "CMG", "Limitaciones"],
+    "Referencia":        ["Infotecnica"],
+}
+VISTAS = [v for grupo in CATEGORIAS.values() for v in grupo]
+
+
+def _categoria_de(vista: str) -> str:
+    for cat, vistas in CATEGORIAS.items():
+        if vista in vistas:
+            return cat
+    return next(iter(CATEGORIAS))
 
 
 def _navegacion() -> str:
-    """Barra de navegación con botones. Devuelve la vista activa.
+    """Navegación de 2 niveles (categoría → vista). Devuelve la vista activa.
 
-    Usa una variable de estado normal (`vista`), no la key de un widget, para
+    Usa variables de estado normales (`vista`, `nav_cat`), no keys de widgets, para
     que el sidebar pueda forzar la vista escribiendo en session_state.
     """
     vista = st.session_state.get("vista", VISTAS[0])
     if vista not in VISTAS:
         vista = VISTAS[0]
 
-    # Dos filas de 5 botones para que no queden apretados y el texto se lea completo.
-    mitad = (len(VISTAS) + 1) // 2
-    filas = [VISTAS[:mitad], VISTAS[mitad:]]
-    for fila in filas:
-        cols = st.columns(len(fila))
-        for col, v in zip(cols, fila):
-            with col:
-                if st.button(
-                    v,
-                    key=f"nav_{v}",
-                    use_container_width=True,
-                    type="primary" if v == vista else "secondary",
-                ):
-                    st.session_state["vista"] = v
-                    st.rerun()
+    # Nivel 1: selector de categoría (segmented_control nativo, animado).
+    # Sincroniza antes de crear el widget si el sidebar saltó a otra categoría.
+    cat_de_vista = _categoria_de(vista)
+    cat_prev = st.session_state.get("nav_cat")
+    if cat_prev not in CATEGORIAS or vista not in CATEGORIAS.get(cat_prev, []):
+        st.session_state["nav_cat"] = cat_de_vista
+
+    cat_activa = st.segmented_control(
+        "Sección", list(CATEGORIAS), key="nav_cat", label_visibility="collapsed",
+    ) or cat_de_vista
+
+    # Nivel 2: vistas de la categoría activa
+    vistas_cat = CATEGORIAS[cat_activa]
+    cols_v = st.columns(len(vistas_cat))
+    for col, v in zip(cols_v, vistas_cat):
+        with col:
+            if st.button(
+                v, key=f"nav_{v}", use_container_width=True,
+                type="primary" if v == vista else "secondary",
+            ):
+                st.session_state["vista"] = v
+                st.session_state["nav_cat"] = cat_activa
+                st.rerun()
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     return vista
@@ -631,6 +657,7 @@ def main():
         n_limitaciones_activas=n_lim,
         ultima_hora=ultima_hora,
         cmg_rows=cmg_rows,
+        bess_rows=bess_rows,
     )
 
     st.divider()
@@ -659,12 +686,13 @@ def main():
         render_tab_estadisticas(gen_rows=gen_rows, prog_rows=prog_rows, cmg_rows=cmg_rows)
     elif vista == "ML Analysis":
         render_tab_ml()
-    elif vista == "Insights":
+    elif vista == "Alarmas":
         render_tab_insights(
             gen_por_parque=gen_por_parque,
             prog_por_parque=prog_por_parque,
             cmg_crucero=cmg_val,
             lim_rows=lim_rows,
+            ultima_hora=ultima_hora,
         )
     elif vista == "Meteo & Sistema":
         render_tab_meteo_sistema(cmg_rows)
@@ -682,45 +710,66 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
     import plotly.graph_objects as go
     import pandas as pd
 
-    col_mapa, col_tabla = st.columns([3, 2])
-
-    with col_mapa:
-        cab_l, cab_r = st.columns([2, 1])
-        with cab_l:
-            st.markdown(
-                f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:8px'>"
-                f"Generacion actual por parque</div>",
-                unsafe_allow_html=True,
-            )
-        with cab_r:
-            # Satélite (folium + ESRI, token-free) por defecto; nubes/día-noche si hay key OWM
-            estilo = st.selectbox(
-                "Estilo de mapa", ["Satelite", "Claro", "Detallado"],
-                key="mapa_estilo", label_visibility="collapsed",
-            )
-        render_mapa(gen_por_parque, parque_activo=parque_activo, estilo=estilo)
-
-    with col_tabla:
+    # ── Mapa a ancho completo ────────────────────────────────────────────────
+    cab_l, cab_r = st.columns([3, 1])
+    with cab_l:
         st.markdown(
             f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:8px'>"
-            f"Estado del portfolio</div>",
+            f"Generacion actual por parque</div>",
             unsafe_allow_html=True,
         )
-        filas = []
-        for p in PARQUES_TODOS:
-            gen = gen_por_parque.get(p)
-            fp  = round(gen / PMAX_FP[p] * 100, 1) if gen and PMAX_FP[p] > 0 else None
-            filas.append({
-                "Parque":   NOMBRE_DISPLAY[p],
-                "Tipo":     TECNOLOGIA[p],
-                "Gen. MW":  f"{gen:.1f}" if gen is not None else "—",
-                "FP %":     f"{fp:.1f}"  if fp  is not None else "—",
-            })
-        st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
+    with cab_r:
+        # Satélite (folium + ESRI, token-free) por defecto; nubes/día-noche si hay key OWM
+        estilo = st.selectbox(
+            "Estilo de mapa", ["Satelite", "Claro", "Detallado"],
+            key="mapa_estilo", label_visibility="collapsed",
+        )
+    render_mapa(gen_por_parque, parque_activo=parque_activo, estilo=estilo)
 
+    # ── Tabla de estado del portfolio, debajo del mapa y con más valor ───────
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:14px 0 8px'>"
+        f"Estado del portfolio — por parque</div>",
+        unsafe_allow_html=True,
+    )
+    prog_por_parque = ultima_prog_por_parque(prog_rows) if prog_rows else {}
+    filas = []
+    for p in PARQUES_TODOS:
+        gen  = gen_por_parque.get(p)
+        prog = prog_por_parque.get(p)
+        pmax = PMAX_FP[p]
+        fp   = round(gen / pmax * 100, 1) if gen is not None and pmax > 0 else None
+        usocap = round(gen / pmax * 100, 0) if gen is not None and pmax > 0 else None
+        dev = calcular_desvio(gen, prog)
+        filas.append({
+            "Parque":       NOMBRE_DISPLAY[p],
+            "Tipo":         TECNOLOGIA[p],
+            "Gen. MW":      round(gen, 1) if gen is not None else None,
+            "Pmax neta MW": round(pmax, 1),
+            "FP %":         fp,
+            "% capacidad":  usocap,
+            "PCP MW":       round(prog, 1) if prog is not None else None,
+            "Desvío %":     dev["desvio_pct"],
+        })
+    df_estado = pd.DataFrame(filas)
+    st.dataframe(
+        df_estado, hide_index=True, use_container_width=True,
+        column_config={
+            "% capacidad": st.column_config.ProgressColumn(
+                "% capacidad", min_value=0, max_value=100, format="%d%%"),
+            "FP %": st.column_config.NumberColumn("FP %", format="%.1f"),
+            "Desvío %": st.column_config.NumberColumn("Desvío %", format="%+.1f"),
+        },
+    )
+    st.caption(
+        "FP = gen / Pmax neta CEN. % capacidad = uso instantáneo sobre la Pmax neta. "
+        "Desvío = (gen − PCP)/PCP de la misma hora; verde ≤15%, ámbar ≤25%, rojo >25%."
+    )
+
+    # ── Serie de tiempo 24h: total + desglose por tecnología (apilado) ───────
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:16px 0 8px'>"
-        f"Generacion total portfolio — ultimas 24 horas</div>",
+        f"Generacion del portfolio — ultimas 24 horas</div>",
         unsafe_allow_html=True,
     )
     if not gen_rows:
@@ -729,41 +778,52 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
 
     df_gen = pd.DataFrame(gen_rows)
     df_gen["fecha_hora"] = pd.to_datetime(df_gen["fecha_hora"])
-    df_gen = df_gen[df_gen["fecha_hora"] >= df_gen["fecha_hora"].max() - pd.Timedelta(hours=24)]
-    df_total = df_gen.groupby("fecha_hora")["gen_real_mw"].sum().reset_index()
-    df_total.rename(columns={"gen_real_mw": "Real MW"}, inplace=True)
+    df_gen = df_gen[df_gen["fecha_hora"] >= df_gen["fecha_hora"].max() - pd.Timedelta(hours=24)].copy()
+    df_gen["tec"] = df_gen["parque"].map(TECNOLOGIA)
+    piv = df_gen.pivot_table(index="fecha_hora", columns="tec", values="gen_real_mw",
+                             aggfunc="sum").reset_index()
+    for col in ("Solar", "Eólica"):
+        if col not in piv.columns:
+            piv[col] = 0.0
+    piv["Total"] = piv["Solar"].fillna(0) + piv["Eólica"].fillna(0)
 
     if prog_rows:
         df_prog = pd.DataFrame(prog_rows)
         df_prog["fecha_hora"] = pd.to_datetime(df_prog["fecha_hora"])
         df_prog = df_prog[df_prog["fecha_hora"] >= df_prog["fecha_hora"].max() - pd.Timedelta(hours=24)]
         df_prog_t = df_prog.groupby("fecha_hora")["gen_programada_mw"].sum().reset_index()
-        df_prog_t.rename(columns={"gen_programada_mw": "Programada MW"}, inplace=True)
-        df_total = df_total.merge(df_prog_t, on="fecha_hora", how="left")
+        df_prog_t.rename(columns={"gen_programada_mw": "Programada"}, inplace=True)
+        piv = piv.merge(df_prog_t, on="fecha_hora", how="left")
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df_total["fecha_hora"], y=df_total["Real MW"],
-        name="Real", line=dict(color=AES_AZUL, width=2.5),
-        fill="tozeroy", fillcolor="rgba(59,76,232,0.08)",
-        hovertemplate="%{y:.1f} MW<extra>Real</extra>",
+        x=piv["fecha_hora"], y=piv["Solar"], name="Solar FV", stackgroup="gen",
+        line=dict(color=AES_AZUL, width=0.5), fillcolor="rgba(59,76,232,0.55)",
+        hovertemplate="%{y:.1f} MW<extra>Solar FV</extra>",
     ))
-    if "Programada MW" in df_total.columns:
+    fig.add_trace(go.Scatter(
+        x=piv["fecha_hora"], y=piv["Eólica"], name="Eólica", stackgroup="gen",
+        line=dict(color=AES_CYAN, width=0.5), fillcolor="rgba(77,200,220,0.55)",
+        hovertemplate="%{y:.1f} MW<extra>Eólica</extra>",
+    ))
+    if "Programada" in piv.columns:
         fig.add_trace(go.Scatter(
-            x=df_total["fecha_hora"], y=df_total["Programada MW"],
-            name="Programada", line=dict(color=AES_CYAN, width=1.5, dash="dash"),
+            x=piv["fecha_hora"], y=piv["Programada"],
+            name="Programada PCP", line=dict(color=AES_AMBAR, width=1.8, dash="dash"),
             hovertemplate="%{y:.1f} MW<extra>Programada PCP</extra>",
         ))
     fig.update_layout(
         template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
         xaxis_title=None, yaxis_title="MW", legend_title=None,
-        height=300, margin=dict(l=0, r=0, t=10, b=0),
+        height=320, margin=dict(l=0, r=0, t=10, b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         hovermode="x unified",
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
     st.plotly_chart(fig, use_container_width=True, key="mapa_grafico_tendencia")
+    st.caption("Área apilada = aporte de Solar FV y Eólica a la generación total; "
+               "línea ámbar = programa PCP del CEN para el portfolio.")
 
 
 # ── Tab CMG ────────────────────────────────────────────────────────────────────

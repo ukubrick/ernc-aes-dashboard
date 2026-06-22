@@ -209,15 +209,12 @@ def _seccion_cmg_sistema(cmg_rows: list) -> None:
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric("CMG Norte (CRUCERO)", f"{norte:.1f} USD/MWh" if norte is not None else "—",
-                  help="Nodo de referencia de los parques solares del norte.")
+        st.metric("CMG Norte (CRUCERO)", f"{norte:.1f} USD/MWh" if norte is not None else "—",)
     with c2:
-        st.metric("CMG Sur (CHARRUA)", f"{sur:.1f} USD/MWh" if sur is not None else "—",
-                  help="Nodo de referencia de los parques eolicos del sur.")
+        st.metric("CMG Sur (CHARRUA)", f"{sur:.1f} USD/MWh" if sur is not None else "—",)
     with c3:
         spread = (norte - sur) if (norte is not None and sur is not None) else None
-        st.metric("Spread Norte-Sur", f"{spread:+.1f} USD/MWh" if spread is not None else "—",
-                  help="Diferencia de precio entre zonas. Un spread alto indica congestion/desacople del sistema.")
+        st.metric("Spread Norte-Sur", f"{spread:+.1f} USD/MWh" if spread is not None else "—",)
 
     vals = [(n.replace("_", " ").strip(), idx.get(n)) for n in CMG_NODOS_TODOS if idx.get(n) is not None]
     if vals:
