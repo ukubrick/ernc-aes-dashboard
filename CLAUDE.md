@@ -1,7 +1,7 @@
 # CLAUDE.md — Dashboard ERNC AES Andes
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-06-20 (Sesión 10 — fix paginación PCP v4, ventana adquisición 5 días).
+> Última actualización: 2026-06-21 (Sesión 16 — rebranding a "Pulsar" + logo en sidebar).
 
 ---
 
@@ -1052,5 +1052,29 @@ pero publica con días de rezago y son ~260k páginas. No usable en tiempo real.
 
 ---
 
-*Actualizado 2026-06-21 — Sesiones 1–15.*
+## SESIÓN 16 — REBRANDING A "PULSAR" + LOGO EN SIDEBAR (2026-06-21)
+
+El dashboard pasa a llamarse **Pulsar** (enfoque en predicción). Cambios en `app_ernc.py`:
+
+- **Nombre:** "Dashboard ERNC — AES Andes" → **"Pulsar — AES Andes"** en `page_title`,
+  `page_icon` (`assets/logo_pulsar.png`) y header principal (`<h1>`).
+- **Logo en sidebar:** `assets/logo_pulsar.png` reemplaza el título de texto. Debajo va
+  "Creado por **Erick Herrera**". Se eliminó el título "AES Andes ERNC" del top y la firma
+  "Dashboard creado por…" del pie del sidebar.
+
+### Keying del logo (importante)
+El PNG entregado venía **flatten en RGB con el patrón de transparencia (checkerboard)
+horneado como píxeles reales**: fondo 242–249, logo blanco 251–255. Por eso `st.image()`
+y los filtros CSS (`brightness/invert/mix-blend-mode`) dejaban un recuadro gris.
+**Solución (PIL + numpy en `render_sidebar`):** key por luminancia con corte en **251**
+(justo encima del máximo del checkerboard) → `alpha = clip((bright-251)*80)`, color forzado
+a blanco puro, reescalado a 320px con LANCZOS, embebido como base64 en `<img>`. Resultado:
+fondo 100% transparente, logo blanco nítido sobre el gradiente azul del sidebar.
+
+**Regla:** si se reemplaza el logo, usar un PNG con transparencia real (no flatten). Si trae
+checkerboard horneado, ajustar el umbral del key al máximo del fondo (~251 en este archivo).
+
+---
+
+*Actualizado 2026-06-21 — Sesiones 1–16.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*

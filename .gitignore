@@ -5,6 +5,7 @@ __pycache__/
 .cache_openmeteo/
 *.egg-info/
 .DS_Store
-assets/
+assets/*
+!assets/logo_pulsar.png
 .venv/
 .streamlit/secrets.toml
