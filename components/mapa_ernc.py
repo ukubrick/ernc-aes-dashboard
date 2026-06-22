@@ -123,7 +123,9 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
         center = [COORDENADAS[parque_activo]["lat"], COORDENADAS[parque_activo]["lon"]]
         zoom = 11
     else:
-        center, zoom = [-32.0, -70.5], 4
+        # Vista por defecto centrada en la región de Antofagasta (complejo solar norte),
+        # para observar la nubosidad sobre ese sector.
+        center, zoom = [-23.8, -69.1], 7
 
     m = folium.Map(location=center, zoom_start=zoom, tiles=None, control_scale=True)
     folium.TileLayer(
@@ -138,12 +140,17 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
 
     owm = _secret("OPENWEATHER_KEY")
     if owm:
-        # opacity alto: la densidad de nubes ya viene codificada en el tile OWM
-        # (más nubosidad = píxel más blanco/opaco), así que se ve el gris denso.
+        # Nubosidad OWM: la densidad ya viene codificada en el tile (más nubes =
+        # píxel más blanco). Para que se vea bien opaca se usa opacity=1.0 y se
+        # apila la capa dos veces (la segunda sin control) → intensifica el alfa.
+        cloud_url = f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={owm}"
         folium.TileLayer(
-            tiles=f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={owm}",
-            attr="© OpenWeather", name="Nubosidad (en vivo)", overlay=True,
-            control=True, opacity=0.9,
+            tiles=cloud_url, attr="© OpenWeather", name="Nubosidad (en vivo)",
+            overlay=True, control=True, opacity=1.0,
+        ).add_to(m)
+        folium.TileLayer(
+            tiles=cloud_url, attr="© OpenWeather", name="Nubosidad (refuerzo)",
+            overlay=True, control=False, opacity=1.0, show=True,
         ).add_to(m)
 
     # Sombra día/noche en tiempo real
