@@ -191,6 +191,26 @@ st.markdown(
         box-shadow: 0 4px 12px rgba(59,76,232,0.28);
     }}
 
+    /* ── Menú de navegación (selectbox de categoría) ──────────────────────── */
+    .block-container div[data-baseweb="select"] > div {{
+        border-radius: 10px;
+        border: 1.6px solid #C7CDF5;
+        background: linear-gradient(180deg, #FFFFFF 0%, #F3F5FF 100%);
+        min-height: 48px;
+        font-weight: 700;
+        font-size: 14px;
+        color: {AES_AZUL_OSC};
+        transition: all 0.20s cubic-bezier(0.4,0,0.2,1);
+    }}
+    .block-container div[data-baseweb="select"]:hover > div {{
+        border-color: {AES_AZUL};
+        box-shadow: 0 4px 16px rgba(59,76,232,0.20);
+        transform: translateY(-1px);
+    }}
+    .block-container div[data-baseweb="select"] svg {{ fill: {AES_AZUL}; }}
+    /* Popover de opciones del desplegable */
+    [data-baseweb="popover"] li:hover {{ background: rgba(59,76,232,0.08) !important; }}
+
     /* ── Cards genéricas ──────────────────────────────────────────────────── */
     .aes-card {{
         background: {AES_BLANCO};
@@ -491,6 +511,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
                 if clicked:
                     st.session_state["parque_activo"] = p
                     st.session_state["vista"] = "Solar FV"
+                    st.session_state["_force_cat"] = "Operación"   # sincroniza la categoría del menú
                     st.session_state["_sync_parque"] = p   # one-shot: fuerza el selectbox una vez
                     st.rerun()
 
@@ -520,6 +541,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
             if clicked:
                 st.session_state["parque_activo"] = p
                 st.session_state["vista"] = "Eolica"
+                st.session_state["_force_cat"] = "Operación"   # sincroniza la categoría del menú
                 st.session_state["_sync_parque"] = p   # one-shot: fuerza el selectbox una vez
                 st.rerun()
 
@@ -578,19 +600,23 @@ def _navegacion() -> str:
         vista = VISTAS[0]
 
     # Nivel 1: menú desplegable de categoría (selectbox real), centrado y grande.
-    # Sincroniza ANTES de crear el widget si el sidebar saltó a otra categoría.
-    # (No se puede escribir nav_cat DESPUÉS de instanciar el widget → por eso el
-    #  handler de los botones de vista NO toca nav_cat.)
-    cat_de_vista = _categoria_de(vista)
-    cat_prev = st.session_state.get("nav_cat")
-    if cat_prev not in CATEGORIAS or vista not in CATEGORIAS.get(cat_prev, []):
-        st.session_state["nav_cat"] = cat_de_vista
+    # Solo se fuerza la categoría cuando el sidebar pide un salto (_force_cat);
+    # de lo contrario se respeta lo que el usuario eligió en el desplegable.
+    # (No se puede escribir nav_cat DESPUÉS de instanciar el widget → el handler
+    #  de los botones de vista NO toca nav_cat.)
+    forced = st.session_state.pop("_force_cat", None)
+    if forced in CATEGORIAS:
+        st.session_state["nav_cat"] = forced
+    elif st.session_state.get("nav_cat") not in CATEGORIAS:
+        st.session_state["nav_cat"] = _categoria_de(vista)
 
+    st.markdown("<div class='nav-menu'>", unsafe_allow_html=True)
     cc1, cc2, cc3 = st.columns([1, 2, 1])
     with cc2:
         cat_activa = st.selectbox(
             "Sección", list(CATEGORIAS), key="nav_cat", label_visibility="collapsed",
-        ) or cat_de_vista
+        ) or _categoria_de(vista)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # Nivel 2: botones de vista de la categoría activa, centrados y grandes.
     vistas_cat = CATEGORIAS[cat_activa]
