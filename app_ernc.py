@@ -577,28 +577,37 @@ def _navegacion() -> str:
     if vista not in VISTAS:
         vista = VISTAS[0]
 
-    # Nivel 1: selector de categoría (segmented_control nativo, animado).
-    # Sincroniza antes de crear el widget si el sidebar saltó a otra categoría.
+    # Nivel 1: menú desplegable de categoría (selectbox real), centrado y grande.
+    # Sincroniza ANTES de crear el widget si el sidebar saltó a otra categoría.
+    # (No se puede escribir nav_cat DESPUÉS de instanciar el widget → por eso el
+    #  handler de los botones de vista NO toca nav_cat.)
     cat_de_vista = _categoria_de(vista)
     cat_prev = st.session_state.get("nav_cat")
     if cat_prev not in CATEGORIAS or vista not in CATEGORIAS.get(cat_prev, []):
         st.session_state["nav_cat"] = cat_de_vista
 
-    cat_activa = st.segmented_control(
-        "Sección", list(CATEGORIAS), key="nav_cat", label_visibility="collapsed",
-    ) or cat_de_vista
+    cc1, cc2, cc3 = st.columns([1, 2, 1])
+    with cc2:
+        cat_activa = st.selectbox(
+            "Sección", list(CATEGORIAS), key="nav_cat", label_visibility="collapsed",
+        ) or cat_de_vista
 
-    # Nivel 2: vistas de la categoría activa
+    # Nivel 2: botones de vista de la categoría activa, centrados y grandes.
     vistas_cat = CATEGORIAS[cat_activa]
-    cols_v = st.columns(len(vistas_cat))
-    for col, v in zip(cols_v, vistas_cat):
+    n = len(vistas_cat)
+    if n >= 4:
+        btn_cols = st.columns(n)
+    else:
+        pad = 4 - n  # columnas de relleno a cada lado para centrar
+        cols = st.columns([pad] + [3] * n + [pad])
+        btn_cols = cols[1:1 + n]
+    for col, v in zip(btn_cols, vistas_cat):
         with col:
             if st.button(
                 v, key=f"nav_{v}", use_container_width=True,
                 type="primary" if v == vista else "secondary",
             ):
                 st.session_state["vista"] = v
-                st.session_state["nav_cat"] = cat_activa
                 st.rerun()
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
