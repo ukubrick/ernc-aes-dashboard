@@ -60,9 +60,22 @@ def _cargar_forecast_meteo(horas: int = 48) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+_ALERTAS_CSS = """
+<style>
+@keyframes alertaIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
+@keyframes pulseAlta{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.0)}
+  50%{box-shadow:0 0 0 4px rgba(239,68,68,0.12)}}
+.alerta-card{border-radius:0 10px 10px 0;padding:10px 16px;margin-bottom:8px;
+  animation:alertaIn .35s ease both}
+.alerta-alta{animation:alertaIn .35s ease both, pulseAlta 2.2s ease-in-out infinite}
+.alerta-dot{display:inline-block;width:8px;height:8px;border-radius:50%}
+</style>
+"""
+
+
 def _seccion_alertas(df: pd.DataFrame) -> None:
     st.markdown(
-        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:10px'>"
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:4px 0 10px'>"
         f"Alertas meteorologicas anticipadas — proximas 48 horas</div>",
         unsafe_allow_html=True,
     )
@@ -70,8 +83,8 @@ def _seccion_alertas(df: pd.DataFrame) -> None:
         st.info("Sin forecast meteo disponible. Ejecuta Adquisicion_meteo_ernc.py o espera el cron.")
         return
 
-    alertas = []
-    # Eólica: ráfagas sobre umbral cut-out / acercándose
+    alertas = []  # (prioridad, parque, titulo, detalle)
+    # Eólica: ráfagas (cut-out) y déficit de recurso
     for p in PARQUES_EOLICA:
         sub = df[df["parque"] == p]
         if sub.empty:
@@ -80,22 +93,33 @@ def _seccion_alertas(df: pd.DataFrame) -> None:
         altas    = sub[(sub["wind_gusts_10m"] > 16) & (sub["wind_gusts_10m"] <= 20)]
         if not criticas.empty:
             r = criticas.iloc[0]
-            alertas.append(("critico", NOMBRE_DISPLAY[p], "Rafagas sobre cut-out",
+            alertas.append(("alta", NOMBRE_DISPLAY[p], "Rafagas sobre cut-out",
                             f"{r['wind_gusts_10m']:.1f} m/s a las {str(r['fecha_hora'])[5:16]} — riesgo de parada de turbinas"))
         elif not altas.empty:
             r = altas.iloc[0]
-            alertas.append(("alerta", NOMBRE_DISPLAY[p], "Rafagas altas",
+            alertas.append(("media", NOMBRE_DISPLAY[p], "Rafagas altas",
                             f"{r['wind_gusts_10m']:.1f} m/s a las {str(r['fecha_hora'])[5:16]} — acercandose al cut-out"))
-    # Solar: nubosidad alta que reduce recurso en horas diurnas con GHI esperado
+        else:
+            # Recurso eólico pobre sostenido (>6 h con viento hub < 3 m/s = bajo cut-in)
+            flojo = sub[sub["wind_speed_100m"] < 3]
+            if len(flojo) >= 6:
+                alertas.append(("baja", NOMBRE_DISPLAY[p], "Recurso eolico bajo",
+                                f"{len(flojo)} h con viento hub < 3 m/s (cut-in) — generacion limitada"))
+    # Solar: nubosidad que reduce recurso en horas diurnas
     for p in PARQUES_SOLAR:
         sub = df[(df["parque"] == p) & (df["ghi_wm2"] > 150)]
         if sub.empty:
             continue
-        nublado = sub[sub["cloud_cover_pct"] > 70]
-        if not nublado.empty:
-            r = nublado.iloc[0]
-            alertas.append(("alerta", NOMBRE_DISPLAY[p], "Nubosidad alta en horas de sol",
+        nublado_alto = sub[sub["cloud_cover_pct"] > 70]
+        nublado_med  = sub[(sub["cloud_cover_pct"] > 50) & (sub["cloud_cover_pct"] <= 70)]
+        if not nublado_alto.empty:
+            r = nublado_alto.iloc[0]
+            alertas.append(("media", NOMBRE_DISPLAY[p], "Nubosidad alta en horas de sol",
                             f"Cobertura {r['cloud_cover_pct']:.0f}% a las {str(r['fecha_hora'])[5:16]} — caida de GHI esperada"))
+        elif not nublado_med.empty:
+            r = nublado_med.iloc[0]
+            alertas.append(("baja", NOMBRE_DISPLAY[p], "Nubosidad moderada",
+                            f"Cobertura {r['cloud_cover_pct']:.0f}% a las {str(r['fecha_hora'])[5:16]} — leve merma de recurso"))
 
     if not alertas:
         st.markdown(
@@ -106,15 +130,29 @@ def _seccion_alertas(df: pd.DataFrame) -> None:
         )
         return
 
-    orden = {"critico": 0, "alerta": 1}
-    alertas.sort(key=lambda a: orden.get(a[0], 2))
-    _bg = {"critico": "#FEF2F2", "alerta": "#FFFBEB"}
-    _bd = {"critico": AES_ROJO, "alerta": AES_AMBAR}
-    _lb = {"critico": "CRITICO", "alerta": "ALERTA"}
+    orden = {"alta": 0, "media": 1, "baja": 2}
+    alertas.sort(key=lambda a: orden.get(a[0], 3))
+
+    # Resumen por prioridad
+    n_alta  = sum(1 for a in alertas if a[0] == "alta")
+    n_media = sum(1 for a in alertas if a[0] == "media")
+    n_baja  = sum(1 for a in alertas if a[0] == "baja")
+    st.markdown(
+        _ALERTAS_CSS +
+        f"<div style='display:flex;gap:10px;margin-bottom:12px;font-size:11px;font-weight:600'>"
+        f"<span><span class='alerta-dot' style='background:{AES_ROJO}'></span> {n_alta} alta</span>"
+        f"<span><span class='alerta-dot' style='background:{AES_AMBAR}'></span> {n_media} media</span>"
+        f"<span><span class='alerta-dot' style='background:{AES_AZUL}'></span> {n_baja} baja</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    _bg  = {"alta": "#FEF2F2", "media": "#FFFBEB", "baja": "#EFF6FF"}
+    _bd  = {"alta": AES_ROJO, "media": AES_AMBAR, "baja": AES_AZUL}
+    _lb  = {"alta": "PRIORIDAD ALTA", "media": "PRIORIDAD MEDIA", "baja": "PRIORIDAD BAJA"}
+    _cls = {"alta": "alerta-card alerta-alta", "media": "alerta-card", "baja": "alerta-card"}
     for sev, parque, titulo, detalle in alertas:
         st.markdown(
-            f"<div style='background:{_bg[sev]};border-left:4px solid {_bd[sev]};"
-            f"border-radius:0 8px 8px 0;padding:10px 16px;margin-bottom:8px'>"
+            f"<div class='{_cls[sev]}' style='background:{_bg[sev]};border-left:4px solid {_bd[sev]}'>"
             f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:3px'>"
             f"<span style='font-size:9px;font-weight:700;color:{_bd[sev]};letter-spacing:1px;"
             f"background:{_bd[sev]}22;padding:2px 8px;border-radius:20px'>{_lb[sev]}</span>"
@@ -202,9 +240,7 @@ def _seccion_cmg_sistema(cmg_rows: list) -> None:
 def render_tab_meteo_sistema(cmg_rows: list | None = None) -> None:
     df = _cargar_forecast_meteo(48)
 
-    _seccion_alertas(df)
-    st.divider()
-
+    # 1) Heatmaps primero (nubosidad → viento)
     if not df.empty:
         _heatmap(
             df, PARQUES_SOLAR, "cloud_cover_pct",
@@ -218,6 +254,11 @@ def render_tab_meteo_sistema(cmg_rows: list | None = None) -> None:
             [[0, "#F5F7FA"], [0.5, AES_CYAN], [1, AES_AZUL]],
             "meteo_hm_viento", ".1f",
         )
+        st.divider()
 
+    # 2) Alertas priorizadas (alta/media/baja)
+    _seccion_alertas(df)
+
+    # 3) Contexto de mercado CMG
     st.divider()
     _seccion_cmg_sistema(cmg_rows or [])

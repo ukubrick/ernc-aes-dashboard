@@ -1,7 +1,7 @@
 # CLAUDE.md — Dashboard ERNC AES Andes
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-06-21 (Sesión 16 — rebranding a "Pulsar" + logo en sidebar).
+> Última actualización: 2026-06-22 (Sesión 17 — KPIs, fixes solar/eólica/CMG, mapa satelital MapTiler, sección BESS).
 
 ---
 
@@ -1076,5 +1076,114 @@ checkerboard horneado, ajustar el umbral del key al máximo del fondo (~251 en e
 
 ---
 
-*Actualizado 2026-06-21 — Sesiones 1–16.*
+## SESIÓN 17 — SECCIÓN PRINCIPAL, FIXES SOLAR/EÓLICA, CMG, MAPA SATELITAL Y BESS (2026-06-22)
+
+### Sección principal (KPIs) — `components/kpis_generales.py`
+- Reemplazados los `st.metric` (con tooltip `?`) por **cards HTML** en grid `kpi-grid`
+  (6 columnas → 3 → 2 responsive). Cada card lleva borde-top de color, valor, delta y
+  una **nota inline** con la explicación del cálculo + la **última hora** del dato.
+- **CMG ahora es un promedio** ("CMG Promedio") de los nodos del SEN **excluyendo
+  `P.MONTT_______220`** (otro sistema). El ingreso estimado se calcula sobre ese promedio.
+  Se pasó de 7 a 6 cards.
+- Eliminado el header "Ultima lectura: HH:MM" (ya está en el sidebar) y el **punto rojo
+  suelto** bajo Desvío vs PCP.
+
+### Navegación — `app_ernc.py`
+- Botones de sección repartidos en **2 filas** (no apretados), padding mayor,
+  `min-height:46px`, `white-space:normal`. Nueva vista **"BESS"** entre Eólica y Forecast.
+
+### Fix métricas Solar y Eólica — `tab_solar.py` / `tab_eolica.py`
+- **Desvío vs PCP**: ahora compara gen real y PCP **en la misma hora**
+  (`_gen_prog_mismo_hora`). Antes comparaba la última hora de gen contra la última PCP
+  (a veces futura) → daba −100% o "—".
+- **GHI / Temp / Viento**: eran `if valor else "—"` → con valor 0 mostraban "—"
+  (0 es *falsy*). Corregido a `is not None`. De noche GHI muestra "0 W/m²" honestamente.
+- Eliminados todos los `?` (help) de los paneles; la explicación quedó en `st.caption`.
+- **Shear**: quitado `fill="tozeroy"`+`rangemode="tozero"` (rompía con α negativo),
+  rango fijo `[-0.15, 0.65]` y **clip a `[-0.10, 0.60]`** de valores viejos absurdos.
+  Los α de −2..+5 eran datos pre-Sesión 14; se corrigen al repoblar meteo.
+
+### Forecast — `tab_forecast.py`
+- **Eliminada la línea PCP** (solo llegaba a D+1, engañosa en 7 días). El pronóstico
+  ahora es el **modelo físico propio** sobre el forecast Open-Meteo, con nota explicativa.
+  Borrada `_cargar_pcp_forecast()`.
+
+### ML Analysis — clustering de eficiencia — `tab_ml.py`
+- Scatter rediseñado: **centroides** (X grande por grupo), etiquetas por nivel
+  (**Alta/Media/Baja eficiencia** ordenadas por PR, verde/ámbar/rojo), línea PR=1.0,
+  leyenda con conteo y `st.caption` con guía de interpretación.
+
+### Meteo & Sistema — `tab_meteo_sistema.py`
+- Reordenado: **heatmaps primero** (nubosidad → viento), luego **alertas con 3
+  prioridades** (alta/media/baja) con colores, contador-resumen y animación leve
+  (`alertaIn` + `pulseAlta` en críticas). Nuevas reglas: recurso eólico bajo, nubosidad
+  moderada.
+
+### CMG — `app_ernc.py::_render_tab_cmg`
+- **Serie de tiempo primero, tabla después** (con **máx/mín 48h** por nodo).
+  Quitados los `?`. Corregido el filtro histórico **UTC→Santiago**. Nuevas **alertas**:
+  costo cero (<0.5, vertimiento), CMG alto (>200, oportunidad), desacople (spread>50),
+  máximo de ventana. Línea de costo cero en el gráfico.
+- **Nota:** la convergencia de nodos tras 21-jun 00:00 **no es bug** — es real (nodos
+  convergen sin congestión) + los 6 nodos nuevos solo tienen datos desde el fix Sesión 14.
+
+### Mapa satelital — `components/mapa_ernc.py`
+- Vista **"Satelite"** con **MapTiler** (style `hybrid` hospedado). Aparece solo si hay
+  `MAPTILER_KEY`. **CRÍTICO:** el `DeckGlJsonChart` de Streamlit exige `map_style` como
+  **STRING URL** — un dict de style raster MapLibre revienta con
+  `e.mapStyle?.indexOf is not a function`. Por eso se usa la URL hospedada, NO un dict.
+- La capa de **nubes OpenWeather NO** puede inyectarse en un style-URL (pydeck no
+  renderiza raster dicts ni TileLayers raster). Quedaría para un mapa folium aparte.
+  `OPENWEATHER_KEY` ya configurada pero sin uso por esta limitación.
+- Eliminado el dict muerto `_ESRI_SAT_STYLE`. Helpers nuevos: `_secret()`,
+  `maptiler_disponible()`, `_satelite_style_url()`.
+
+### Secrets nuevas (gitignored: `.env` y `.streamlit/secrets.toml`)
+```
+MAPTILER_KEY      ← satélite (MapTiler free)
+OPENWEATHER_KEY   ← reservada para nubes (pendiente folium)
+```
+En Streamlit Cloud: agregarlas en Settings → Secrets.
+
+### BESS — sección completa nueva
+Los BESS de AES aparecen en gen-real/v3 como **centrales separadas** (`id_central=None`,
+`tipo='BESS'`) con llaves `(Inyección)`=descarga y `(Retiro)`=carga, ambas positivas.
+**No** se filtran por idCentral → hay que escanear el feed completo.
+
+- **6 BESS confirmados** (`config.py::BESS`, llaves validadas contra la API 21-jun):
+  | Código | BESS | Parque | Pmax desc. (MW) |
+  |--------|------|--------|-----------------|
+  | AS2A_B | Andes Solar IIA | AS2A | 84.0 |
+  | AS2B_B | Andes Solar IIB | AS2B | 136.5 |
+  | AS3_B  | Andes Solar III | AS3 | 177.0 |
+  | AS4_B  | Andes Solar IV | AS4 | 140.0 |
+  | BOL_B  | Bolero | BOL | 160.0 |
+  | ET1_B  | Andes ET1 | AS1 | 14.08 |
+- Convención: `potencia_neta_mw = inyeccion - retiro` (>0 descarga, <0 carga).
+  AS3 y BOL tienen 2 llaves de retiro ("de central" + "del sistema") → se suman.
+- `utils/cen_api.py::fetch_gen_bess()` (ventana 2 días, scan completo, agrega por
+  `(bess, fecha_hora)`). Validado: 254 registros, signos correctos (carga mediodía,
+  descarga punta tarde).
+- `utils/db.py`: `upsert_generacion_bess()` (on_conflict `bess,fecha_hora`) +
+  `query_bess_ultimas_horas()` (try/except → `[]` si la tabla no existe).
+- `schema.sql`: tabla `generacion_bess_ernc` + RLS `anon_select` + índice
+  `idx_bess_fecha`. **Ejecutado en Supabase (Sesión 17).**
+- `Adquisicion_ernc.py`: paso `adquirir_gen_bess()` integrado al cron.
+- `components/tab_bess.py`: estado (cargando/descargando/reposo), potencia neta,
+  descarga/carga 24h, ciclos eq. (cap. energía = Pmax × 4h asumido), gráfico
+  carga/descarga + **SoC estimado** (integración del flujo neto, anclado al mínimo),
+  y **arbitraje vs CMG** del nodo del parque (ingreso descarga − costo carga + spread).
+
+### Pendientes Sesión 17
+- [ ] Nubes/día-noche reales en el mapa → requiere `streamlit-folium` (pydeck no soporta
+      raster overlays). `OPENWEATHER_KEY` ya disponible.
+- [ ] Re-correr `Adquisicion_meteo_ernc.py` para repoblar shear acotado y viento en m/s.
+- [ ] Capacidad real de energía (MWh) de cada BESS para SoC/ciclos exactos — hoy se
+      asume duración 4h (`_HORAS_BESS`). La API CEN no publica MWh.
+- [ ] (item 6 usuario) Info técnica del Coordinador para recalcular fórmulas y confirmar
+      el nodo CMG real de cada parque.
+
+---
+
+*Actualizado 2026-06-22 — Sesiones 1–17.*
 *Stack: Streamlit + pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*

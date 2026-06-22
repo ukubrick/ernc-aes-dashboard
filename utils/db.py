@@ -66,6 +66,20 @@ def upsert_generacion_programada(registros: list[dict]) -> int:
     return len(unicos)
 
 
+# ── BESS ───────────────────────────────────────────────────────────────────────
+
+def upsert_generacion_bess(registros: list[dict]) -> int:
+    if not registros:
+        return 0
+    sb = get_client()
+    for i in range(0, len(registros), 500):
+        lote = registros[i:i + 500]
+        sb.table("generacion_bess_ernc").upsert(
+            lote, on_conflict="bess,fecha_hora"
+        ).execute()
+    return len(registros)
+
+
 # ── Meteorología ───────────────────────────────────────────────────────────────
 
 def upsert_meteo(registros: list[dict]) -> int:
@@ -133,6 +147,22 @@ def query_gen_real_ultimas_horas(horas: int = 48) -> list[dict]:
              .order("fecha_hora", desc=True)
              .execute())
     return res.data or []
+
+
+def query_bess_ultimas_horas(horas: int = 168) -> list[dict]:
+    """Generación de BESS. Devuelve [] si la tabla aún no existe (no rompe el dashboard)."""
+    from datetime import timedelta
+    try:
+        sb = get_client()
+        desde = (_ahora_santiago() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+        res = (sb.table("generacion_bess_ernc")
+                 .select("bess,parque,fecha_hora,inyeccion_mw,retiro_mw,potencia_neta_mw")
+                 .gte("fecha_hora", desde)
+                 .order("fecha_hora")
+                 .execute())
+        return res.data or []
+    except Exception:
+        return []
 
 
 def query_gen_prog_ultimas_horas(horas: int = 48) -> list[dict]:

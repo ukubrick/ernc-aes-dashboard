@@ -198,10 +198,29 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
     st.plotly_chart(fig, use_container_width=True, key=f"solar_grafico_ghi_{parque}")
 
 
-def _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel):
+def _gen_prog_mismo_hora(df_gen, df_prog, parque):
+    """Devuelve (gen, prog, hora) en la ÚLTIMA hora con gen real, con la PCP de
+    esa MISMA hora. Comparar contra la última PCP (a veces futura) daba desvíos
+    sin sentido (-100%) o nulos."""
+    gen = prog = None
+    hora = None
+    if df_gen is not None and not df_gen.empty:
+        d = df_gen[df_gen["parque"] == parque]
+        d = d[d["gen_real_mw"] >= 0].sort_values("fecha_hora")
+        if not d.empty:
+            last = d.iloc[-1]
+            gen = last["gen_real_mw"]
+            hora = last["fecha_hora"]
+            if df_prog is not None and not df_prog.empty:
+                dp = df_prog[(df_prog["parque"] == parque) & (df_prog["fecha_hora"] == hora)]
+                if not dp.empty:
+                    prog = dp.iloc[-1]["gen_programada_mw"]
+    return gen, prog, hora
+
+
+def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
     """Fila de métricas horizontales debajo del gráfico de generación."""
-    gen  = gen_por_parque.get(parque_sel)
-    prog = prog_por_parque.get(parque_sel)
+    gen, prog, _ = _gen_prog_mismo_hora(df_gen, df_prog, parque_sel)
     fp   = calcular_factor_planta(gen, PMAX[parque_sel])
     dev  = calcular_desvio(gen, prog)
 
@@ -215,52 +234,29 @@ def _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel):
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
-        st.metric(
-            "Generacion actual",
-            f"{gen:.1f} MW" if gen is not None else "—",
-            help=f"Ultimo valor gen_real_mw para {NOMBRE_DISPLAY[parque_sel]}. Fuente: CEN gen-real/v3.",
-        )
+        st.metric("Generacion actual", f"{gen:.1f} MW" if gen is not None else "—")
     with c2:
-        st.metric(
-            "Cap. instalada",
-            f"{PMAX[parque_sel]:.1f} MW",
-            help=f"Potencia maxima declarada en API CEN para {NOMBRE_DISPLAY[parque_sel]}.",
-        )
+        st.metric("Cap. instalada", f"{PMAX[parque_sel]:.1f} MW")
     with c3:
-        st.metric(
-            "Factor de planta",
-            f"{fp:.1f}%" if fp else "—",
-            help="FP = Gen.real / Cap.instalada x 100. Fraccion de la capacidad en uso.",
-        )
+        st.metric("Factor de planta", f"{fp:.1f}%" if fp is not None else "—")
     with c4:
-        color = _SEM.get(dev["semaforo"], AES_MUTED) if dev["desvio_pct"] is not None else AES_MUTED
         desvio_str = f"{dev['desvio_pct']:+.1f}%" if dev["desvio_pct"] is not None else "—"
         st.metric(
             "Desvio vs PCP",
             desvio_str,
             delta=f"{dev['desvio_mw']:+.1f} MW" if dev["desvio_mw"] is not None else None,
-            help="Desvio = (Gen.real - PCP) / PCP x 100. Verde: <15%, Amarillo: 15-25%, Rojo: >25%.",
         )
     with c5:
-        st.metric(
-            "GHI",
-            f"{ghi:.0f} W/m²" if ghi else "—",
-            help=(
-                "Global Horizontal Irradiance [W/m²]. Irradiancia solar total sobre superficie horizontal. "
-                "Fuente: Open-Meteo shortwave_radiation, sin API key, resolucion horaria."
-            ),
-        )
+        st.metric("GHI", f"{ghi:.0f} W/m²" if ghi is not None else "—")
     with c6:
-        st.metric(
-            "Temp. celda",
-            f"{tc:.1f} °C" if tc else "—",
-            help=(
-                "Temperatura de celda FV [degC]. "
-                "Formula: Tc = T_amb + (NOCT - 20) / 800 x GHI x f_viento. "
-                "NOCT = 45 degC. A mayor Tc, menor eficiencia (gamma = -0.4%/degC). "
-                "Fuente: calculos.py usando Open-Meteo."
-            ),
-        )
+        st.metric("Temp. celda", f"{tc:.1f} °C" if tc is not None else "—")
+
+    st.caption(
+        "Generacion: ultimo gen_real CEN · Cap. instalada: Pmax declarada · "
+        "FP = Gen/Cap × 100 · Desvio = (Gen − PCP)/PCP × 100 a la misma hora "
+        "(verde ≤15% · ambar ≤25% · rojo >25%) · GHI: irradiancia global horizontal "
+        "Open-Meteo · Temp. celda: modelo NOCT (Tc = Tamb + (NOCT−20)/800 · GHI · f_viento)."
+    )
 
 
 def render_tab_solar(
@@ -335,7 +331,7 @@ def render_tab_solar(
         _grafico_gen(df_gen, df_prog, df_meteo, parque_sel, corte)
 
     # ── Métricas entre los dos gráficos ──
-    _panel_metricas(gen_por_parque, prog_por_parque, df_meteo, parque_sel)
+    _panel_metricas(df_gen, df_prog, df_meteo, parque_sel)
 
     # ── Segunda serie de tiempo: GHI + nubosidad (antes que leyenda/fórmulas) ──
     st.markdown(

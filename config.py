@@ -164,6 +164,56 @@ LLAVES_SSCC = {
     "PE-SANMATIAS": "STM",
 }
 
+# ── BESS (sistemas de almacenamiento) de AES Andes ─────────────────────────────
+# Aparecen en gen-real/v3 como centrales separadas (id_central=None, tipo='BESS')
+# con llaves de (Inyección)=descarga y (Retiro)=carga, ambas en magnitud positiva.
+# Convención dashboard: potencia_neta = inyeccion - retiro
+#   neta > 0 → descargando (entrega al sistema) | neta < 0 → cargando.
+# pmax_mw = potencia de descarga (inyección) declarada en la API.
+# Llaves confirmadas contra la API CEN el 2026-06-21.
+BESS = {
+    "AS2A_B": {
+        "nombre": "BESS Andes Solar IIA", "parque": "AS2A", "pmax_mw": 84.0,
+        "iny": ["BESS ANDES SOLAR IIA (inyección)"],
+        "ret": ["BESS ANDES SOLAR IIA (retiro)"],
+    },
+    "AS2B_B": {
+        "nombre": "BESS Andes Solar IIB", "parque": "AS2B", "pmax_mw": 136.5,
+        "iny": ["BESS ANDES SOLAR IIB (inyección)"],
+        "ret": ["BESS ANDES SOLAR IIB (retiro)"],
+    },
+    "AS3_B": {
+        "nombre": "BESS Andes Solar III", "parque": "AS3", "pmax_mw": 177.0,
+        "iny": ["SAE PFV Andes Solar III (Inyección)"],
+        "ret": ["SAE PFV Andes Solar III (Retiro de central)",
+                "SAE PFV Andes Solar III (Retiro del sistema)"],
+    },
+    "AS4_B": {
+        "nombre": "BESS Andes Solar IV", "parque": "AS4", "pmax_mw": 140.0,
+        "iny": ["BESS ANDES SOLAR IV (inyección)"],
+        "ret": ["BESS ANDES SOLAR IV (retiro)"],
+    },
+    "BOL_B": {
+        "nombre": "BESS Bolero", "parque": "BOL", "pmax_mw": 160.0,
+        "iny": ["SAE PFV Bolero (Inyección)"],
+        "ret": ["SAE PFV Bolero (Retiro de central)",
+                "SAE PFV Bolero (Retiro del sistema)"],
+    },
+    "ET1_B": {
+        "nombre": "BESS Andes ET1", "parque": "AS1", "pmax_mw": 14.08,
+        "iny": ["BESS ANDES ET1 (Inyección)"],
+        "ret": ["BESS ANDES ET1 (retiro)"],
+    },
+}
+
+# Mapa inverso llave_opreal → (codigo_bess, flujo) para clasificar filas en adquisición.
+BESS_LLAVE_MAP = {}
+for _cod, _b in BESS.items():
+    for _ll in _b["iny"]:
+        BESS_LLAVE_MAP[_ll] = (_cod, "iny")
+    for _ll in _b["ret"]:
+        BESS_LLAVE_MAP[_ll] = (_cod, "ret")
+
 # ── Open-Meteo: variables por tecnología ──────────────────────────────────────
 OPENMETEO_VARS_SOLAR = [
     "shortwave_radiation",          # GHI (W/m²)

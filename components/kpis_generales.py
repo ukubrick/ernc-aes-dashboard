@@ -1,9 +1,9 @@
-"""KPIs generales del portfolio ERNC — tema claro, paleta AES, tooltips explicativos."""
+"""KPIs generales del portfolio ERNC — tema claro, paleta AES, cards con explicacion inline."""
 import streamlit as st
 
 from config import (
     PMAX_TOTAL, PMAX_TOTAL_SOLAR, PMAX_TOTAL_EOLICA,
-    PARQUES_SOLAR, PARQUES_EOLICA,
+    PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODOS_TODOS,
 )
 from utils.calculos import calcular_factor_planta, calcular_desvio
 
@@ -18,6 +18,44 @@ AES_MUTED   = "#6B7280"
 AES_TEXTO   = "#1A1F36"
 
 _SEM_COLOR = {"verde": AES_VERDE, "amarillo": AES_AMBAR, "rojo": AES_ROJO}
+
+# Nodo de otro sistema eléctrico (SIC sur extremo) — se excluye del promedio CMG.
+_CMG_NODO_EXCLUIDO = "P.MONTT_______220"
+
+_GRID_CSS = """
+<style>
+.kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:4px 0 2px 0}
+@media(max-width:1500px){.kpi-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:820px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
+.kpi-card{background:#FFFFFF;border:1px solid #E5E7EB;border-radius:12px;
+  padding:14px 16px;box-shadow:0 2px 12px rgba(59,76,232,0.07);
+  display:flex;flex-direction:column;gap:3px;
+  transition:transform .2s ease,box-shadow .2s ease;animation:fadeInUp .4s ease both}
+.kpi-card:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(59,76,232,0.14)}
+.kpi-label{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.8px;color:#6B7280}
+.kpi-value{font-size:23px;font-weight:800;color:#1A1F36;line-height:1.15}
+.kpi-delta{font-size:12px;font-weight:600;min-height:16px}
+.kpi-note{font-size:10px;color:#9aa1ad;line-height:1.35;margin-top:3px;
+  border-top:1px solid #F1F2F4;padding-top:5px}
+</style>
+"""
+
+
+def _card(color: str, label: str, value: str, delta: str | None,
+          delta_color: str, note: str) -> str:
+    delta_html = (
+        f"<div class='kpi-delta' style='color:{delta_color}'>{delta}</div>"
+        if delta else "<div class='kpi-delta'></div>"
+    )
+    return (
+        f"<div class='kpi-card' style='border-top:4px solid {color}'>"
+        f"<div class='kpi-label'>{label}</div>"
+        f"<div class='kpi-value'>{value}</div>"
+        f"{delta_html}"
+        f"<div class='kpi-note'>{note}</div>"
+        f"</div>"
+    )
 
 
 def render_kpis(
@@ -40,110 +78,61 @@ def render_kpis(
     semaforo   = desvio["semaforo"]
     desvio_pct = desvio["desvio_pct"]
 
-    # CMG por nodo desde cmg_rows
-    cmg_idx = {r["nodo"]: r.get("cmg_usd_mwh") for r in (cmg_rows or [])}
-    cmg_charrua = cmg_idx.get("CHARRUA_______220")
-    ingreso_solar  = round(gen_solar  * (cmg_crucero or 0) / 1000, 1) if cmg_crucero else None
-    ingreso_eolica = round(gen_eolica * (cmg_charrua or 0) / 1000, 1) if cmg_charrua else None
+    # CMG promedio del SEN — excluye P.MONTT (pertenece a otro sistema).
+    nodos_validos = [n for n in CMG_NODOS_TODOS if n != _CMG_NODO_EXCLUIDO]
+    cmg_idx  = {r["nodo"]: r.get("cmg_usd_mwh") for r in (cmg_rows or [])}
+    cmg_hora_idx = {r["nodo"]: r.get("fecha_hora") for r in (cmg_rows or [])}
+    cmg_vals = [cmg_idx[n] for n in nodos_validos if cmg_idx.get(n) is not None]
+    cmg_prom = round(sum(cmg_vals) / len(cmg_vals), 1) if cmg_vals else None
+    cmg_horas = [cmg_hora_idx[n] for n in nodos_validos if cmg_hora_idx.get(n)]
+    cmg_hora = max(cmg_horas)[11:16] if cmg_horas else "—"
+    ingreso_total = round(gen_total * (cmg_prom or 0) / 1000, 1) if cmg_prom else None
 
-    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    hora_gen = ultima_hora[11:16] if ultima_hora else "—"
 
-    with c1:
-        st.metric(
-            label="Generacion Total",
-            value=f"{gen_total:,.1f} MW",
-            delta=f"FP {fp_total:.1f}%" if fp_total else None,
-            help=(
-                f"Suma de generacion real de los 11 parques en la ultima hora disponible. "
-                f"Cap. instalada total: {PMAX_TOTAL:,.0f} MW. "
-                f"Fuente: API CEN gen-real/v3. "
-                f"Ultima lectura: {ultima_hora[11:16] if ultima_hora else '—'} hrs."
-            ),
-        )
+    # ── Construcción de las 6 cards ──────────────────────────────────────────
+    cards = []
 
-    with c2:
-        st.metric(
-            label="Solar FV",
-            value=f"{gen_solar:,.1f} MW",
-            delta=f"FP {fp_solar:.1f}%" if fp_solar else None,
-            help=(
-                f"Generacion real de los 6 parques solares FV (norte). "
-                f"Cap. instalada solar: {PMAX_TOTAL_SOLAR:,.0f} MW. "
-                f"Factor de planta = Gen.real / Cap.instalada x 100. "
-                f"Fuente: CEN gen-real/v3, id_central por parque."
-            ),
-        )
+    cards.append(_card(
+        AES_AZUL, "Generacion Total", f"{gen_total:,.1f} MW",
+        f"↑ FP {fp_total:.1f}%" if fp_total else None, AES_VERDE,
+        f"Suma 11 parques · cap. {PMAX_TOTAL:,.0f} MW · CEN gen-real · {hora_gen} hrs",
+    ))
 
-    with c3:
-        st.metric(
-            label="Eolica",
-            value=f"{gen_eolica:,.1f} MW",
-            delta=f"FP {fp_eolica:.1f}%" if fp_eolica else None,
-            help=(
-                f"Generacion real de los 5 parques eolicos (sur). "
-                f"Cap. instalada eolica: {PMAX_TOTAL_EOLICA:,.0f} MW. "
-                f"Factor de planta = Gen.real / Cap.instalada x 100. "
-                f"Fuente: CEN gen-real/v3."
-            ),
-        )
+    cards.append(_card(
+        AES_AZUL, "Solar FV", f"{gen_solar:,.1f} MW",
+        f"↑ FP {fp_solar:.1f}%" if fp_solar else None, AES_VERDE,
+        f"6 parques FV norte · cap. {PMAX_TOTAL_SOLAR:,.0f} MW · FP=gen/cap · {hora_gen} hrs",
+    ))
 
-    with c4:
-        dev_val = f"{desvio_pct:+.1f}%" if desvio_pct is not None else "—"
-        dev_mw  = f"{desvio['desvio_mw']:+.1f} MW" if desvio["desvio_mw"] is not None else None
-        color   = _SEM_COLOR.get(semaforo, AES_MUTED)
-        st.metric(
-            label="Desvio vs PCP",
-            value=dev_val,
-            delta=dev_mw,
-            delta_color="normal",
-            help=(
-                "Desvio = (Gen.real - Gen.programada) / Gen.programada x 100. "
-                "Verde: |desvio| <= 15% | Amarillo: 15-25% | Rojo: >25%. "
-                "Fuente programada: CEN gen-programada-pcp/v4, llave_gen por parque."
-            ),
-        )
-        if semaforo:
-            st.markdown(
-                f"<div style='width:8px;height:8px;border-radius:50%;"
-                f"background:{color};margin-top:-12px;display:inline-block'></div>",
-                unsafe_allow_html=True,
-            )
+    cards.append(_card(
+        AES_CYAN, "Eolica", f"{gen_eolica:,.1f} MW",
+        f"↑ FP {fp_eolica:.1f}%" if fp_eolica else None, AES_VERDE,
+        f"5 parques sur · cap. {PMAX_TOTAL_EOLICA:,.0f} MW · FP=gen/cap · {hora_gen} hrs",
+    ))
 
-    with c5:
-        st.metric(
-            label="CMG Crucero 220",
-            value=f"{cmg_crucero:.1f} USD/MWh" if cmg_crucero else "—",
-            delta=f"~{ingreso_solar:.0f} kUSD/h solar" if ingreso_solar else None,
-            help=(
-                "Costo Marginal Local nodo CRUCERO_______220 — referencia parques solares norte. "
-                "Ingreso estimado solar = Gen.solar x CMG / 1000 (kUSD/hora). "
-                "Fuente: JSON S3 Coordinador Electrico Nacional, actualiza cada ~15 min."
-            ),
-        )
+    dev_val   = f"{desvio_pct:+.1f}%" if desvio_pct is not None else "—"
+    dev_mw    = f"{desvio['desvio_mw']:+.1f} MW" if desvio["desvio_mw"] is not None else None
+    dev_color = _SEM_COLOR.get(semaforo, AES_MUTED)
+    cards.append(_card(
+        dev_color, "Desvio vs PCP", dev_val, dev_mw, dev_color,
+        f"(real−PCP)/PCP · verde ≤15% ámbar ≤25% rojo &gt;25% · CEN PCP · {hora_gen} hrs",
+    ))
 
-    with c6:
-        st.metric(
-            label="CMG Charrua 220",
-            value=f"{cmg_charrua:.1f} USD/MWh" if cmg_charrua else "—",
-            delta=f"~{ingreso_eolica:.0f} kUSD/h eolica" if ingreso_eolica else None,
-            help=(
-                "Costo Marginal Local nodo CHARRUA_______220 — referencia parques eolicos sur. "
-                "Ingreso estimado eolica = Gen.eolica x CMG / 1000 (kUSD/hora). "
-                "Pendiente confirmar nodo correcto con AES Andes. "
-                "Fuente: JSON S3 Coordinador Electrico Nacional."
-            ),
-        )
+    cards.append(_card(
+        AES_VIOLETA, "CMG Promedio",
+        f"{cmg_prom:.1f} USD/MWh" if cmg_prom else "—",
+        f"~{ingreso_total:.0f} kUSD/h" if ingreso_total else None, AES_VIOLETA,
+        f"Prom. {len(cmg_vals)} nodos SEN (excl. P.Montt) · ingreso=gen×CMG · CEN S3 · {cmg_hora} hrs",
+    ))
 
-    with c7:
-        lim_delta = "activas" if n_limitaciones_activas > 0 else "sin restricciones"
-        st.metric(
-            label="Limitaciones",
-            value=str(n_limitaciones_activas),
-            delta=lim_delta,
-            delta_color="inverse" if n_limitaciones_activas > 0 else "normal",
-            help=(
-                "Limitaciones de transmision activas que afectan al portfolio. "
-                "Activa = fecha_efectiva_retorno IS NULL. "
-                "Fuente: CEN limitaciones-transmision/v4, ventana 30 dias."
-            ),
-        )
+    lim_color = AES_ROJO if n_limitaciones_activas > 0 else AES_VERDE
+    lim_delta = "↑ activas" if n_limitaciones_activas > 0 else "sin restricciones"
+    cards.append(_card(
+        lim_color, "Limitaciones", str(n_limitaciones_activas),
+        lim_delta, lim_color,
+        "Restricciones de transmisión activas · CEN limitaciones-transmision/v4",
+    ))
+
+    st.markdown(_GRID_CSS + "<div class='kpi-grid'>" + "".join(cards) + "</div>",
+                unsafe_allow_html=True)
