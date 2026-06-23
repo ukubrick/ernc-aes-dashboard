@@ -191,25 +191,33 @@ st.markdown(
         box-shadow: 0 4px 12px rgba(59,76,232,0.28);
     }}
 
-    /* ── Menú de navegación (selectbox de categoría) ──────────────────────── */
-    .block-container div[data-baseweb="select"] > div {{
-        border-radius: 10px;
-        border: 1.6px solid #C7CDF5;
+    /* ── Menú de navegación (barra de categorías tipo escritorio) ─────────── */
+    /* Cada categoría es un st.popover a todo el ancho que se despliega hacia
+       abajo mostrando sus vistas como botones. Patrón replicado del dashboard
+       CTM (ver CLAUDE.md — Sesión 21). */
+    [data-testid="stPopover"] > div > button {{
+        width: 100%;
         background: linear-gradient(180deg, #FFFFFF 0%, #F3F5FF 100%);
+        border: 1.6px solid #C7CDF5;
+        border-radius: 10px;
         min-height: 48px;
         font-weight: 700;
         font-size: 14px;
         color: {AES_AZUL_OSC};
+        justify-content: center;
         transition: all 0.20s cubic-bezier(0.4,0,0.2,1);
     }}
-    .block-container div[data-baseweb="select"]:hover > div {{
+    [data-testid="stPopover"] > div > button:hover {{
         border-color: {AES_AZUL};
         box-shadow: 0 4px 16px rgba(59,76,232,0.20);
         transform: translateY(-1px);
     }}
-    .block-container div[data-baseweb="select"] svg {{ fill: {AES_AZUL}; }}
-    /* Popover de opciones del desplegable */
-    [data-baseweb="popover"] li:hover {{ background: rgba(59,76,232,0.08) !important; }}
+    [data-testid="stPopover"] > div > button[aria-expanded="true"] {{
+        background: linear-gradient(135deg, {AES_AZUL} 0%, {AES_AZUL_OSC} 100%);
+        color: #fff;
+        border-color: {AES_AZUL_OSC};
+        box-shadow: 0 4px 12px rgba(59,76,232,0.30);
+    }}
 
     /* ── Cards genéricas ──────────────────────────────────────────────────── */
     .aes-card {{
@@ -590,51 +598,38 @@ def _categoria_de(vista: str) -> str:
 
 
 def _navegacion() -> str:
-    """Navegación de 2 niveles (categoría → vista). Devuelve la vista activa.
+    """Navegación tipo barra de menú de escritorio. Devuelve la vista activa.
 
-    Usa variables de estado normales (`vista`, `nav_cat`), no keys de widgets, para
-    que el sidebar pueda forzar la vista escribiendo en session_state.
+    Cada categoría es un `st.popover` a todo el ancho que se despliega hacia abajo
+    mostrando sus vistas como botones (primary = vista activa). La categoría activa
+    muestra inline la vista seleccionada. Patrón replicado del dashboard CTM
+    (ver CLAUDE.md — Sesión 21). Usa la variable de estado normal `vista` (no key de
+    widget) para que el sidebar pueda forzar la vista escribiendo en session_state.
     """
     vista = st.session_state.get("vista", VISTAS[0])
     if vista not in VISTAS:
         vista = VISTAS[0]
 
-    # Nivel 1: menú desplegable de categoría (selectbox real), centrado y grande.
-    # Solo se fuerza la categoría cuando el sidebar pide un salto (_force_cat);
-    # de lo contrario se respeta lo que el usuario eligió en el desplegable.
-    # (No se puede escribir nav_cat DESPUÉS de instanciar el widget → el handler
-    #  de los botones de vista NO toca nav_cat.)
-    forced = st.session_state.pop("_force_cat", None)
-    if forced in CATEGORIAS:
-        st.session_state["nav_cat"] = forced
-    elif st.session_state.get("nav_cat") not in CATEGORIAS:
-        st.session_state["nav_cat"] = _categoria_de(vista)
+    # `_force_cat` quedó obsoleto: la categoría activa se deriva de la vista. Se
+    # consume para limpiar estado heredado de la navegación de 2 niveles anterior.
+    st.session_state.pop("_force_cat", None)
+    st.session_state.pop("nav_cat", None)
 
-    st.markdown("<div class='nav-menu'>", unsafe_allow_html=True)
-    cc1, cc2, cc3 = st.columns([1, 2, 1])
-    with cc2:
-        cat_activa = st.selectbox(
-            "Sección", list(CATEGORIAS), key="nav_cat", label_visibility="collapsed",
-        ) or _categoria_de(vista)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Nivel 2: botones de vista de la categoría activa, centrados y grandes.
-    vistas_cat = CATEGORIAS[cat_activa]
-    n = len(vistas_cat)
-    if n >= 4:
-        btn_cols = st.columns(n)
-    else:
-        pad = 4 - n  # columnas de relleno a cada lado para centrar
-        cols = st.columns([pad] + [3] * n + [pad])
-        btn_cols = cols[1:1 + n]
-    for col, v in zip(btn_cols, vistas_cat):
+    st.markdown("<div class='menubar'>", unsafe_allow_html=True)
+    cols = st.columns(len(CATEGORIAS))
+    for col, (cat, vistas_cat) in zip(cols, CATEGORIAS.items()):
         with col:
-            if st.button(
-                v, key=f"nav_{v}", use_container_width=True,
-                type="primary" if v == vista else "secondary",
-            ):
-                st.session_state["vista"] = v
-                st.rerun()
+            activa = vista in vistas_cat
+            etiqueta = f"{cat}  ·  {vista}" if activa else cat
+            with st.popover(etiqueta, use_container_width=True):
+                for v in vistas_cat:
+                    if st.button(
+                        v, key=f"nav_{v}", use_container_width=True,
+                        type="primary" if v == vista else "secondary",
+                    ):
+                        st.session_state["vista"] = v
+                        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     return vista

@@ -1309,5 +1309,37 @@ helper `_agregado_bess(bess_rows)`. Grid pasó a `repeat(4,1fr)` responsive (8 c
 
 ---
 
-*Actualizado 2026-06-22 — Sesiones 1–20.*
+## SESIÓN 21 — MENÚ DESPLEGABLE TIPO ESCRITORIO (REPLICADO DEL CTM) (2026-06-22)
+
+Se reemplazó la navegación de 2 niveles (selectbox de categoría → botones de vista,
+Sesión 19/20) por el **patrón de barra de menú de escritorio** que funcionó bien en el
+dashboard CTM (`dashboard_api/app.py`).
+
+### Cambio en `app_ernc.py::_navegacion()`
+- Cada **categoría** de `CATEGORIAS` es ahora un `st.popover` a todo el ancho, en una
+  fila (`st.columns(len(CATEGORIAS))`). Al hacer clic, el popover **se despliega hacia
+  abajo** mostrando las vistas de esa categoría como botones (`type="primary"` = vista
+  activa). La categoría activa muestra inline la vista elegida: `f"{cat}  ·  {vista}"`.
+- Se eliminó el `st.selectbox` de categoría y la lógica de `nav_cat` / `_force_cat`
+  (la categoría activa se **deriva** de `vista`, no se almacena). El handler consume y
+  limpia `nav_cat`/`_force_cat` heredados. `_categoria_de()` queda sin uso (inocuo).
+- El sidebar sigue saltando a Solar/Eólica escribiendo solo `st.session_state["vista"]`.
+
+### CSS (en `get_css()`)
+Se cambió el bloque del selectbox por el del popover:
+```css
+[data-testid="stPopover"] > div > button { width:100%; min-height:48px; font-weight:700;
+  background:linear-gradient(180deg,#FFFFFF,#F3F5FF); border:1.6px solid #C7CDF5;
+  border-radius:10px; color:#2530B0; justify-content:center; }
+[data-testid="stPopover"] > div > button[aria-expanded="true"] {
+  background:linear-gradient(135deg,#3B4CE8,#2530B0); color:#fff; border-color:#2530B0; }
+```
+
+**Ventaja:** se ve como app de escritorio, ocupa todo el ancho, y al renderizar solo la
+vista activa evita el bug de Plotly width=0 dentro de `st.tabs`. **Regla:** mantener este
+patrón sincronizado con el CTM si se rediseña la navegación en cualquiera de los dos.
+
+---
+
+*Actualizado 2026-06-22 — Sesiones 1–21.*
 *Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*
