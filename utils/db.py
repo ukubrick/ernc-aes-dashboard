@@ -271,6 +271,7 @@ def query_ultimas_actualizaciones() -> dict[str, str | None]:
         "gen_prog": None,
         "meteo": None,
         "cmg": None,
+        "nasa": None,
     }
     try:
         r = sb.table("generacion_real_ernc").select("fecha_hora").order("fecha_hora", desc=True).limit(1).execute()
@@ -287,6 +288,11 @@ def query_ultimas_actualizaciones() -> dict[str, str | None]:
     try:
         r = sb.table("cmg_ernc").select("fecha_hora").order("fecha_hora", desc=True).limit(1).execute()
         if r.data: resultado["cmg"] = r.data[0]["fecha_hora"]
+    except Exception: pass
+    try:
+        r = (sb.table("meteo_ernc").select("fecha_hora")
+             .eq("fuente", "nasa-power").order("fecha_hora", desc=True).limit(1).execute())
+        if r.data: resultado["nasa"] = r.data[0]["fecha_hora"]
     except Exception: pass
     return resultado
 
