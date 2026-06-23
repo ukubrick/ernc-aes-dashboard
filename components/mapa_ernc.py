@@ -24,70 +24,46 @@ _COLOR = {
 }
 
 
-# ── Nubosidad como área de colores (Open-Meteo, sin key) ───────────────────────
-
-@st.cache_data(ttl=300)
-def _cloud_grid(lat0: float, lon0: float, delta: float, n: int = 9) -> list[tuple]:
-    """Grilla n×n de nubosidad actual (%) alrededor de (lat0,lon0) ±delta.
-    Una sola llamada a Open-Meteo (coords separadas por coma, sin API key).
-    Retorna [(lat, lon, cloud_pct), ...]."""
-    import requests
-    lats = [lat0 - delta + 2 * delta * i / (n - 1) for i in range(n)]
-    lons = [lon0 - delta + 2 * delta * j / (n - 1) for j in range(n)]
-    pares = [(la, lo) for la in lats for lo in lons]
-    try:
-        r = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": ",".join(f"{la:.3f}" for la, _ in pares),
-                "longitude": ",".join(f"{lo:.3f}" for _, lo in pares),
-                "current": "cloud_cover",
-                "timezone": "America/Santiago",
-            },
-            timeout=20,
-        )
-        r.raise_for_status()
-        data = r.json()
-    except Exception:
-        return []
-    # Open-Meteo devuelve los objetos EN EL MISMO ORDEN que las coords de entrada
-    # (pares = lats×lons, row-major). Se conserva el índice → no depende de que las
-    # coordenadas devueltas (redondeadas por Open-Meteo) coincidan exactamente.
-    objs = data if isinstance(data, list) else [data]
-    out = []
-    for idx, (la, lo) in enumerate(pares):
-        cc = None
-        if idx < len(objs):
-            cc = objs[idx].get("current", {}).get("cloud_cover")
-        out.append((la, lo, float(cc) if cc is not None else None))
-    return out
+# ── Nubosidad: tile OWM clouds_new (textura real) + filtros de color ────────────
+# El tile gratuito clouds_new entrega nubes blancas/grises sobre fondo transparente,
+# donde la densidad se codifica como opacidad. El color se logra con filtros CSS
+# (sepia+saturate+hue-rotate) aplicados por className → permite paletas, incl. ROJA.
+_CLOUD_FILTROS = {
+    "f-natural": "filter:contrast(1.5) brightness(1.05) saturate(1.0);",
+    "f-azul":    "filter:sepia(1) saturate(6) hue-rotate(175deg) brightness(1.0) contrast(1.5);",
+    "f-roja":    "filter:sepia(1) saturate(10) hue-rotate(-55deg) brightness(1.1) contrast(1.6);",
+    "f-violeta": "filter:sepia(1) saturate(7) hue-rotate(240deg) brightness(1.05) contrast(1.5);",
+}
+# clase = filtro de color · refuerzo = nº de capas apiladas (densifica) · opacity.
+_CLOUD_PRESETS = {
+    "Natural (blanco)": {"opacity": 1.0, "refuerzo": 2, "clase": "f-natural"},
+    "Azul":             {"opacity": 1.0, "refuerzo": 2, "clase": "f-azul"},
+    "Roja":             {"opacity": 1.0, "refuerzo": 2, "clase": "f-roja"},
+    "Violeta":          {"opacity": 1.0, "refuerzo": 2, "clase": "f-violeta"},
+}
 
 
-def _cloud_image(grid: list[tuple], lat0: float, lon0: float, delta: float, n: int):
-    """Convierte la grilla n×n de nubosidad en una imagen RGBA suavizada (PNG base64)
-    para overlay continuo (sin cuadrados). Retorna (data_uri, bounds) o (None, None)."""
-    if not grid or len(grid) < n * n:
-        return None, None
-    import numpy as np, io, base64
-    from PIL import Image
-    # grid viene row-major sobre lats×lons (lat ascendente i, lon ascendente j)
-    vals = np.array([cc if cc is not None else np.nan for _, _, cc in grid], dtype=float)
-    z = vals.reshape((n, n))
-    media = np.nanmean(z) if np.isfinite(z).any() else 0.0
-    z = np.nan_to_num(z, nan=media)
-    p = np.clip(z, 0, 100) / 100.0
-    # color despejado (azul claro) → cubierto (gris-blanco)
-    r = (127 + (232 - 127) * p).astype(np.uint8)
-    g = (178 + (236 - 178) * p).astype(np.uint8)
-    b = (255 + (242 - 255) * p).astype(np.uint8)
-    a = (np.clip(0.12 + 0.62 * p, 0, 1) * 255).astype(np.uint8)
-    rgba = np.dstack([r, g, b, a])
-    rgba = np.flipud(rgba)  # fila 0 = norte (lat máx) para ImageOverlay
-    img = Image.fromarray(rgba, "RGBA").resize((360, 360), Image.BILINEAR)
-    buf = io.BytesIO(); img.save(buf, format="PNG")
-    uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
-    bounds = [[lat0 - delta, lon0 - delta], [lat0 + delta, lon0 + delta]]
-    return uri, bounds
+def _build_cloud_layers(folium, key: str, cfg: dict) -> list:
+    """TileLayers de nubosidad OWM clouds_new para el preset (color) elegido."""
+    url = f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={key}"
+    clase = cfg.get("clase")
+    n = max(1, int(cfg.get("refuerzo", 1)))
+    layers = []
+    for i in range(n):
+        layers.append(folium.TileLayer(
+            tiles=url, attr="© OpenWeather",
+            name="Nubosidad" if i == 0 else f"Nubosidad (refuerzo {i})",
+            overlay=True, control=(i == 0), opacity=cfg["opacity"], show=True,
+            className=clase or "",
+        ))
+    return layers
+
+
+def _css_filtros_nubes() -> str:
+    """<style> con los filtros de color (se inyecta en el <head> del mapa folium)."""
+    reglas = "".join(f".{c} img{{{f}}}" for c, f in _CLOUD_FILTROS.items())
+    reglas += "".join(f".leaflet-layer.{c}{{{f}}}" for c, f in _CLOUD_FILTROS.items())
+    return f"<style>{reglas}</style>"
 
 
 @st.cache_data(ttl=300)
@@ -133,7 +109,7 @@ MAP_STYLES = {
 
 # Ciudades de referencia para dar contexto geográfico al mapa
 # Nota: la nubosidad dejó de usar el tile OWM clouds_new (baja resolución, color fijo).
-# Ahora se dibuja como área de colores interpolada de Open-Meteo (ver _cloud_grid).
+# Ver _build_cloud_layers (tile OWM clouds_new + filtros de color).
 
 
 _CIUDADES = [
@@ -241,22 +217,20 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
     ).add_to(m)
 
     # Controles de capas meteorológicas
-    cc1, cc2 = st.columns(2)
-    ver_nubes = cc1.checkbox("Nubosidad (área)", value=True,
+    cc1, cc2, cc3 = st.columns([1, 1, 1.2])
+    ver_nubes = cc1.checkbox("Nubosidad", value=True,
                              key=f"chk_nubes_{parque_activo or 'all'}")
     ver_viento = cc2.checkbox("Dirección del viento", value=True,
                               key=f"chk_viento_{parque_activo or 'all'}")
+    color_nubes = cc3.selectbox("Color de nubes", list(_CLOUD_PRESETS),
+                                index=0, key=f"cloud_color_{parque_activo or 'all'}")
 
-    # ── Nubosidad como ÁREA suave (imagen interpolada, sin cuadrados) ──
-    if ver_nubes:
-        delta = 0.35 if (parque_activo and parque_activo in COORDENADAS) else 1.8
-        n = 12
-        grid = _cloud_grid(center[0], center[1], delta, n)
-        uri, bounds = _cloud_image(grid, center[0], center[1], delta, n)
-        if uri:
-            folium.raster_layers.ImageOverlay(
-                image=uri, bounds=bounds, opacity=0.85, name="Nubosidad", interactive=False,
-            ).add_to(m)
+    # ── Nubosidad: tile OWM clouds_new (textura real) con filtro de color ──
+    owm = _secret("OPENWEATHER_KEY")
+    if ver_nubes and owm:
+        m.get_root().header.add_child(folium.Element(_css_filtros_nubes()))
+        for layer in _build_cloud_layers(folium, owm, _CLOUD_PRESETS[color_nubes]):
+            layer.add_to(m)
 
     # Sombra día/noche en tiempo real
     Terminator().add_to(m)
@@ -329,8 +303,8 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
     ahora = datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m %H:%M")
     st.caption(
         f"Hora actual (Santiago): {ahora} hrs · Sombra día/noche en tiempo real · "
-        "Nubosidad: área interpolada de % de cobertura (Open-Meteo, actual) — azul=despejado, "
-        "gris=cubierto · Flechas = dirección a la que sopla el viento (color por velocidad) · "
+        "Nubosidad: cobertura en vivo (OpenWeather, ~cada 10 min) — color configurable · "
+        "Flechas = dirección a la que sopla el viento (color por velocidad) · "
         "Imagen satelital: composición estática Esri World Imagery (sin fecha por tile)."
     )
 
@@ -345,7 +319,7 @@ def render_mapa(
 
     # Auto-refresco del mapa cada 5 min: refresca nubosidad/viento/día-noche sin que
     # el usuario tenga que recargar la página ni cambiar de sección. Combinado con el
-    # TTL de 5 min de _cloud_grid/_viento_actual_parques, trae datos nuevos.
+    # TTL de 5 min de _viento_actual_parques + tile OWM en vivo, trae datos nuevos.
     try:
         from streamlit_autorefresh import st_autorefresh
         st_autorefresh(interval=300_000, key="mapa_autorefresh")
