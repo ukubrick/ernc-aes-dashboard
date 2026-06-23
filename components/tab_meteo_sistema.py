@@ -163,7 +163,8 @@ def _seccion_alertas(df: pd.DataFrame) -> None:
         )
 
 
-def _heatmap(df: pd.DataFrame, parques: list, col: str, titulo: str, escala, key: str, fmt: str) -> None:
+def _heatmap(df: pd.DataFrame, parques: list, col: str, titulo: str, escala, key: str, fmt: str,
+             zmin: float | None = None, zmax: float | None = None) -> None:
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:14px 0 6px'>{titulo}</div>",
         unsafe_allow_html=True,
@@ -183,6 +184,7 @@ def _heatmap(df: pd.DataFrame, parques: list, col: str, titulo: str, escala, key
         x=pivot.columns,
         y=[NOMBRE_DISPLAY[p] for p in pivot.index],
         colorscale=escala,
+        zmin=zmin, zmax=zmax,
         hovertemplate="%{y} · %{x}: %{z:" + fmt + "}<extra></extra>",
         colorbar=dict(thickness=12),
     ))
@@ -243,13 +245,13 @@ def render_tab_meteo_sistema(cmg_rows: list | None = None) -> None:
             df, PARQUES_SOLAR, "cloud_cover_pct",
             "Nubosidad total pronosticada (%) — anticipa caidas de recurso solar",
             [[0, "#FEF9C3"], [0.5, AES_CYAN], [1, "#1E3A8A"]],
-            "meteo_hm_nubes", ".0f",
+            "meteo_hm_nubes", ".0f", zmin=0, zmax=100,
         )
         _heatmap(
             df, PARQUES_EOLICA, "wind_speed_100m",
             "Viento hub 100m pronosticado (m/s) — recurso eolico proximas 48h",
             [[0, "#F5F7FA"], [0.5, AES_CYAN], [1, AES_AZUL]],
-            "meteo_hm_viento", ".1f",
+            "meteo_hm_viento", ".1f", zmin=0, zmax=15,
         )
         st.divider()
 

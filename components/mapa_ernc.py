@@ -23,6 +23,76 @@ _COLOR = {
     "Eólica": [77, 200, 220],   # AES_CYAN
 }
 
+
+# ── Nubosidad como área de colores (Open-Meteo, sin key) ───────────────────────
+
+@st.cache_data(ttl=300)
+def _cloud_grid(lat0: float, lon0: float, delta: float, n: int = 9) -> list[tuple]:
+    """Grilla n×n de nubosidad actual (%) alrededor de (lat0,lon0) ±delta.
+    Una sola llamada a Open-Meteo (coords separadas por coma, sin API key).
+    Retorna [(lat, lon, cloud_pct), ...]."""
+    import requests
+    lats = [lat0 - delta + 2 * delta * i / (n - 1) for i in range(n)]
+    lons = [lon0 - delta + 2 * delta * j / (n - 1) for j in range(n)]
+    pares = [(la, lo) for la in lats for lo in lons]
+    try:
+        r = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": ",".join(f"{la:.3f}" for la, _ in pares),
+                "longitude": ",".join(f"{lo:.3f}" for _, lo in pares),
+                "current": "cloud_cover",
+                "timezone": "America/Santiago",
+            },
+            timeout=20,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return []
+    # Con múltiples coords Open-Meteo devuelve una lista de objetos
+    objs = data if isinstance(data, list) else [data]
+    out = []
+    for o in objs:
+        cur = o.get("current", {})
+        cc = cur.get("cloud_cover")
+        if cc is not None:
+            out.append((o.get("latitude"), o.get("longitude"), float(cc)))
+    return out
+
+
+def _cloud_color(pct: float) -> str:
+    """Color HEX para un % de nubosidad: azul translúcido (despejado) → blanco/gris (cubierto)."""
+    p = max(0.0, min(100.0, pct)) / 100.0
+    # interpola de azul claro (#7FB2FF) a gris-blanco (#E8ECF2)
+    r = int(127 + (232 - 127) * p)
+    g = int(178 + (236 - 178) * p)
+    b = int(255 + (242 - 255) * p)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+@st.cache_data(ttl=300)
+def _meteo_viento_por_parque() -> dict:
+    """Última dirección/velocidad de viento (hub) por parque desde meteo_ernc.
+    Retorna {parque: {"dir": grados_meteo, "vel": m/s}}."""
+    from utils.db import query_meteo_parque
+    out = {}
+    for p in PARQUES_TODOS:
+        try:
+            filas = query_meteo_parque(p, horas=6)
+        except Exception:
+            filas = []
+        if not filas:
+            continue
+        # más reciente con dirección válida
+        for f in reversed(filas):
+            d = f.get("wind_dir_80m")
+            v = f.get("wind_speed_100m") or f.get("wind_speed_10m")
+            if d is not None:
+                out[p] = {"dir": float(d), "vel": float(v) if v is not None else None}
+                break
+    return out
+
 MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 
 # Estilos de mapa base SIN token. Claro/Detallado usan estilos GL de Carto (string URL).
@@ -34,48 +104,8 @@ MAP_STYLES = {
 }
 
 # Ciudades de referencia para dar contexto geográfico al mapa
-# ── Presets de nubosidad (OpenWeather, tile legacy gratuito) ───────────────────
-# El endpoint Weather Maps 2.0 (con `palette`) requiere suscripción de pago, así que
-# se usa el tile gratuito `clouds_new` (paleta blanca fija). La intensidad/color se
-# ajusta por: opacity, `refuerzo` (apila la capa N veces para densificar) y un filtro
-# CSS (contraste/brillo/tinte) aplicado vía className → permite variantes visuales.
-_CLOUD_FILTROS = {
-    "f-densa":     "filter:contrast(1.5) brightness(0.92) saturate(0.9);",
-    "f-contraste": "filter:contrast(2.0) brightness(0.78);",
-    "f-azul":      "filter:contrast(1.5) brightness(0.9) sepia(0.5) hue-rotate(175deg) saturate(2.2);",
-}
-_CLOUD_PRESETS = {
-    "Suave":          {"opacity": 0.6, "refuerzo": 1, "clase": None},
-    "Normal":         {"opacity": 0.9, "refuerzo": 1, "clase": None},
-    "Densa":          {"opacity": 1.0, "refuerzo": 2, "clase": "f-densa"},
-    "Alto contraste": {"opacity": 1.0, "refuerzo": 3, "clase": "f-contraste"},
-    "Azulada":        {"opacity": 1.0, "refuerzo": 2, "clase": "f-azul"},
-}
-
-
-def _build_cloud_layers(folium, key: str, cfg: dict) -> list:
-    """Construye las TileLayer de nubosidad (tile legacy) para el preset elegido."""
-    url = f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={key}"
-    clase = cfg.get("clase")
-    layers = []
-    n = max(1, int(cfg.get("refuerzo", 1)))
-    for i in range(n):
-        kwargs = {"className": clase} if clase else {}
-        layers.append(folium.TileLayer(
-            tiles=url, attr="© OpenWeather",
-            name="Nubosidad (en vivo)" if i == 0 else f"Nubosidad (refuerzo {i})",
-            overlay=True, control=(i == 0), opacity=cfg["opacity"], show=True,
-            **kwargs,
-        ))
-    return layers
-
-
-def _css_filtros_nubes() -> str:
-    """Bloque <style> con los filtros CSS de las paletas (se inyecta en el mapa folium)."""
-    reglas = "".join(f".leaflet-layer .{c}, .{c}{{{f}}}" for c, f in _CLOUD_FILTROS.items())
-    # Leaflet aplica className al contenedor de tiles; el filtro afecta sus imágenes.
-    reglas += "".join(f".{c} img{{{f}}}" for c, f in _CLOUD_FILTROS.items())
-    return f"<style>{reglas}</style>"
+# Nota: la nubosidad dejó de usar el tile OWM clouds_new (baja resolución, color fijo).
+# Ahora se dibuja como área de colores interpolada de Open-Meteo (ver _cloud_grid).
 
 
 _CIUDADES = [
@@ -182,19 +212,56 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
         attr="© CARTO", name="Etiquetas", overlay=True, control=True, opacity=0.9,
     ).add_to(m)
 
-    owm = _secret("OPENWEATHER_KEY")
-    if owm:
-        preset = st.selectbox(
-            "Paleta de nubosidad", list(_CLOUD_PRESETS),
-            index=list(_CLOUD_PRESETS).index("Densa"),
-            key=f"cloud_preset_{parque_activo or 'all'}",
-        )
-        m.get_root().header.add_child(folium.Element(_css_filtros_nubes()))
-        for layer in _build_cloud_layers(folium, owm, _CLOUD_PRESETS[preset]):
-            layer.add_to(m)
+    # Controles de capas meteorológicas
+    cc1, cc2 = st.columns(2)
+    ver_nubes = cc1.checkbox("Nubosidad (área)", value=True,
+                             key=f"chk_nubes_{parque_activo or 'all'}")
+    ver_viento = cc2.checkbox("Dirección del viento", value=True,
+                              key=f"chk_viento_{parque_activo or 'all'}")
+
+    # ── Nubosidad como ÁREA de colores (Open-Meteo, grilla interpolada) ──
+    if ver_nubes:
+        delta = 0.35 if (parque_activo and parque_activo in COORDENADAS) else 1.8
+        n = 9
+        grid = _cloud_grid(center[0], center[1], delta, n)
+        if grid:
+            fg = folium.FeatureGroup(name="Nubosidad", show=True)
+            paso = (2 * delta) / (n - 1)
+            for la, lo, cc in grid:
+                # opacidad sube con la nubosidad (cielo despejado casi transparente)
+                op = 0.10 + 0.55 * (max(0.0, min(100.0, cc)) / 100.0)
+                folium.Rectangle(
+                    bounds=[[la - paso / 2, lo - paso / 2], [la + paso / 2, lo + paso / 2]],
+                    color=None, weight=0, fill=True,
+                    fill_color=_cloud_color(cc), fill_opacity=op,
+                    tooltip=f"Nubosidad {cc:.0f}%",
+                ).add_to(fg)
+            fg.add_to(m)
 
     # Sombra día/noche en tiempo real
     Terminator().add_to(m)
+
+    # ── Dirección del viento: flecha por parque (apunta a donde sopla) ──
+    if ver_viento:
+        viento = _meteo_viento_por_parque()
+        fgv = folium.FeatureGroup(name="Viento", show=True)
+        for _, r in df.iterrows():
+            w = viento.get(r["parque"])
+            if not w or w.get("dir") is None:
+                continue
+            vel = w.get("vel")
+            # dir meteorológico = de dónde viene → la flecha apunta hacia donde va (+180)
+            rot = (w["dir"] + 180) % 360
+            col = "#EF4444" if (vel or 0) >= 12 else ("#F59E0B" if (vel or 0) >= 7 else "#4DC8DC")
+            vtxt = f"{vel:.1f} m/s" if vel is not None else "s/d"
+            html = (f"<div style='transform:rotate({rot}deg);font-size:22px;line-height:22px;"
+                    f"color:{col};text-shadow:0 0 3px #000'>&#8593;</div>")
+            folium.Marker(
+                location=[r["lat"], r["lon"]],
+                icon=folium.DivIcon(html=html, icon_size=(24, 24), icon_anchor=(12, 12)),
+                tooltip=f"{r['nombre']} — viento {vtxt} desde {w['dir']:.0f}°",
+            ).add_to(fgv)
+        fgv.add_to(m)
 
     # Ciudades de referencia
     for c in _CIUDADES:
@@ -230,11 +297,11 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
     # America/Santiago maneja el cambio horario (UTC-4 invierno / UTC-3 verano),
     # a diferencia del offset fijo -3 que adelantaba 1 h en invierno.
     ahora = datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m %H:%M")
-    nubes_txt = ("nubosidad OWM en vivo (~cada 10 min)" if owm
-                 else "capa de nubes inactiva (sin OPENWEATHER_KEY válida)")
     st.caption(
-        f"Hora actual (Santiago): {ahora} hrs · Sombra día/noche calculada en tiempo real · "
-        f"{nubes_txt} · Imagen satelital: composición estática Esri World Imagery (sin fecha por tile)."
+        f"Hora actual (Santiago): {ahora} hrs · Sombra día/noche en tiempo real · "
+        "Nubosidad: área interpolada de % de cobertura (Open-Meteo, actual) — azul=despejado, "
+        "gris=cubierto · Flechas = dirección a la que sopla el viento (color por velocidad) · "
+        "Imagen satelital: composición estática Esri World Imagery (sin fecha por tile)."
     )
 
 
@@ -245,6 +312,15 @@ def render_mapa(
 ) -> None:
     df = _df(gen_por_parque)
     es_satelite = estilo == "Satelite"
+
+    # Auto-refresco del mapa cada 5 min: refresca nubosidad/viento/día-noche sin que
+    # el usuario tenga que recargar la página ni cambiar de sección. Combinado con el
+    # TTL de 5 min de _cloud_grid/_meteo_viento_por_parque, trae datos nuevos.
+    try:
+        from streamlit_autorefresh import st_autorefresh
+        st_autorefresh(interval=300_000, key="mapa_autorefresh")
+    except Exception:
+        pass
 
     # Satélite → folium (ESRI token-free + nubes OWM en vivo + día/noche; pydeck no puede).
     if es_satelite:

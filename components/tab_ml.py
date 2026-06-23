@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 from config import (
     NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS,
-    TECNOLOGIA, CMG_NODOS_TODOS, BESS, CMG_NODO,
+    TECNOLOGIA, CMG_NODOS_TODOS, BESS, BESS_HORAS, CMG_NODO,
 )
 
 AES_AZUL    = "#3B4CE8"
@@ -142,6 +142,26 @@ def _cmg_historico(nodo: str, dias: int = 20) -> pd.DataFrame:
     df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
     df = df.drop_duplicates("fecha_hora").sort_values("fecha_hora")
     return df
+
+
+@st.cache_data(ttl=900)
+def _cmg_programado_hist(nodo: str, dias_atras: int = 20) -> pd.DataFrame:
+    """CMG programado PCP del nodo: cobertura horaria densa (pasado reciente + futuro).
+    Sirve de fuente de CMG para el arbitraje BESS (el online S3 es muy escaso)."""
+    from utils.db import get_client
+    sb = get_client()
+    desde = (datetime.now(SANTIAGO) - timedelta(days=dias_atras)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        r = (sb.table("cmg_programado_ernc").select("fecha_hora,cmg_usd_mwh")
+             .eq("nodo", nodo).gte("fecha_hora", desde)
+             .order("fecha_hora").execute())
+    except Exception:
+        return pd.DataFrame()
+    if not r.data:
+        return pd.DataFrame()
+    df = pd.DataFrame(r.data)
+    df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    return df.drop_duplicates("fecha_hora").sort_values("fecha_hora")
 
 
 def _feats_disponibles(df: pd.DataFrame, tec: str) -> list[str]:
@@ -555,9 +575,18 @@ def _dataset_bess(cod: str, dias: int = 20) -> pd.DataFrame:
     db["hora_dia"] = db["fecha_hora"].dt.hour
     nodo = CMG_NODO.get(BESS[cod]["parque"])
     if nodo:
-        dc = _cmg_historico(nodo, dias)
+        # CMG del nodo: el online S3 (cmg_ernc) es muy escaso → se combina con el
+        # CMG programado PCP (denso, horario). Se prefiere el online real cuando existe
+        # y se completa con el programado, de modo que el merge siempre tenga cobertura.
+        dc = _cmg_historico(nodo, dias).rename(columns={"cmg_usd_mwh": "cmg_online"})
+        dp = _cmg_programado_hist(nodo, dias).rename(columns={"cmg_usd_mwh": "cmg_prog"})
         if not dc.empty:
             db = db.merge(dc, on="fecha_hora", how="left")
+        if not dp.empty:
+            db = db.merge(dp, on="fecha_hora", how="left")
+        col_on = db["cmg_online"] if "cmg_online" in db.columns else pd.Series(index=db.index, dtype=float)
+        col_pr = db["cmg_prog"] if "cmg_prog" in db.columns else pd.Series(index=db.index, dtype=float)
+        db["cmg_usd_mwh"] = col_on.combine_first(col_pr)
     return db
 
 
@@ -640,6 +669,77 @@ def _render_bess_ml(cod: str) -> None:
         st.plotly_chart(figi, use_container_width=True, key=f"ml_bess_imp_{cod}")
         st.caption("Si domina 'Hora del día', el BESS opera por horario fijo; si domina 'CMG nodo', "
                    "responde al precio (arbitraje activo).")
+
+    # 4. Recomendación de arbitraje a futuro (CMG programado próximas horas)
+    _recomendacion_arbitraje(cod)
+
+
+def _recomendacion_arbitraje(cod: str) -> None:
+    """Usa el CMG programado del nodo para recomendar ventanas de carga/descarga
+    en las próximas horas y estimar el margen de arbitraje del BESS."""
+    nodo = CMG_NODO.get(BESS[cod]["parque"])
+    if not nodo:
+        return
+    dp = _cmg_programado_hist(nodo, dias_atras=0)  # solo desde ahora hacia adelante
+    ahora = datetime.now(SANTIAGO).replace(tzinfo=None)
+    if not dp.empty:
+        dp = dp[dp["fecha_hora"] >= ahora].sort_values("fecha_hora")
+    if dp.empty or len(dp) < 6:
+        st.info("Sin CMG programado futuro suficiente para recomendar arbitraje "
+                "(se puebla al correr la adquisición / cron).")
+        return
+
+    fut = dp.head(36).copy()   # próximas ~36 h
+    pmax = BESS[cod]["pmax_mw"]
+    horas = BESS_HORAS.get(cod) or 4.0
+    energia_mwh = pmax * horas
+
+    # Ventanas: n horas más baratas (carga) y más caras (descarga), n ≈ duración del BESS
+    n = max(1, int(round(horas)))
+    baratas = fut.nsmallest(n, "cmg_usd_mwh")
+    caras = fut.nlargest(n, "cmg_usd_mwh")
+    p_carga = baratas["cmg_usd_mwh"].mean()
+    p_desc = caras["cmg_usd_mwh"].mean()
+    spread = p_desc - p_carga
+    # Margen de un ciclo: descarga (energía·precio alto) − costo de carga (energía·precio bajo)
+    margen = energia_mwh * spread
+
+    _titulo("Recomendación de arbitraje — próximas horas (CMG programado)", "16px 0 6px")
+    figr = go.Figure()
+    figr.add_trace(go.Scatter(
+        x=fut["fecha_hora"], y=fut["cmg_usd_mwh"], mode="lines",
+        line=dict(color=AES_VIOLETA, width=2), name="CMG programado",
+        hovertemplate="%{y:.1f} USD/MWh<extra></extra>",
+    ))
+    figr.add_trace(go.Scatter(
+        x=baratas["fecha_hora"], y=baratas["cmg_usd_mwh"], mode="markers",
+        marker=dict(color=AES_AZUL, size=11, symbol="triangle-down"),
+        name="Cargar (barato)", hovertemplate="Cargar @ %{y:.1f}<extra></extra>",
+    ))
+    figr.add_trace(go.Scatter(
+        x=caras["fecha_hora"], y=caras["cmg_usd_mwh"], mode="markers",
+        marker=dict(color=AES_VERDE, size=11, symbol="triangle-up"),
+        name="Descargar (caro)", hovertemplate="Descargar @ %{y:.1f}<extra></extra>",
+    ))
+    figr.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+                       height=300, margin=dict(l=0, r=0, t=10, b=0),
+                       xaxis_title=None, yaxis_title="USD/MWh",
+                       legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)))
+    figr.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+    figr.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    st.plotly_chart(figr, use_container_width=True, key=f"ml_bess_arb_{cod}")
+
+    h_carga = ", ".join(sorted(baratas["fecha_hora"].dt.strftime("%H:%M")))
+    h_desc = ", ".join(sorted(caras["fecha_hora"].dt.strftime("%H:%M")))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Cargar a", f"{p_carga:.0f} USD/MWh", h_carga)
+    c2.metric("Descargar a", f"{p_desc:.0f} USD/MWh", h_desc)
+    c3.metric("Margen ciclo est.", f"{margen:,.0f} USD", f"spread {spread:.0f} USD/MWh")
+    st.caption(
+        f"Ventanas óptimas para {energia_mwh:.0f} MWh ({pmax:.0f} MW × {horas:.1f} h) según el "
+        "CMG programado PCP del nodo. Margen = energía × (precio descarga − precio carga); es una "
+        "cota teórica (no descuenta pérdidas de round-trip ni límites de red)."
+    )
 
 
 # ── Entrada principal ──────────────────────────────────────────────────────────
