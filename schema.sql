@@ -189,3 +189,19 @@ CREATE TABLE IF NOT EXISTS generacion_bess_ernc (
 ALTER TABLE generacion_bess_ernc ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "anon_select" ON generacion_bess_ernc FOR SELECT USING (true);
 CREATE INDEX IF NOT EXISTS idx_bess_fecha ON generacion_bess_ernc (fecha_hora DESC);
+
+-- ── CMG programado PCP (CMG futuro proyectado por barra) ───────────────────────
+-- Fuente: /cmg-programado-pcp/v4 (SIP). Mismos nodos que cmg_ernc (online).
+-- fecha_programa = fecha del programa PCP que generó el valor (para auditoría).
+CREATE TABLE IF NOT EXISTS cmg_programado_ernc (
+    id             SERIAL PRIMARY KEY,
+    nodo           TEXT NOT NULL,
+    cmg_usd_mwh    NUMERIC,
+    fecha_hora     TEXT NOT NULL,
+    fecha_programa TEXT,
+    UNIQUE (nodo, fecha_hora)
+);
+ALTER TABLE cmg_programado_ernc ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_select" ON cmg_programado_ernc FOR SELECT USING (true);
+CREATE INDEX IF NOT EXISTS idx_cmg_prog_nodo_fecha
+    ON cmg_programado_ernc (nodo, fecha_hora DESC);

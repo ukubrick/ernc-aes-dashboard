@@ -191,6 +191,34 @@ CMG_NODOS_TODOS = [
     "P.MONTT_______220",   # sur extremo
 ]
 
+# CMG programado PCP — llave_cmg de la API /cmg-programado-pcp/v4 → nodo del proyecto.
+# Se mapea a los MISMOS nombres de nodo del feed S3 (CMG_NODOS_TODOS) para que el
+# CMG futuro slotee con el histórico online sin tocar el resto del dashboard.
+# Llaves confirmadas contra la API (2026-06-23) — solo barras 220 kV relevantes.
+CMG_PROG_LLAVE_A_NODO = {
+    "Crucero220":     "CRUCERO_______220",
+    "Atacama220_BP1": "ATACAMA_______220",
+    "Tarapaca220":    "TARAPACA______220",
+    "Cardones220":    "CARDONES______220",
+    "PAzucar220":     "P.AZUCAR______220",
+    "Quillota220":    "QUILLOTA______220",
+    "Charrua220":     "CHARRUA_______220",
+    "PMontt220":      "P.MONTT_______220",
+}
+
+# CMG online 8 barras — nombre de barra de /costos-marginales-online-8b/v4 → nodo.
+# Fuente API alternativa/respaldo del feed S3 (mismos 8 nodos).
+CMG_8B_NOMBRE_A_NODO = {
+    "Crucero 220 KV":   "CRUCERO_______220",
+    "Atacama 220 KV":   "ATACAMA_______220",
+    "Tarapaca 220 KV":  "TARAPACA______220",
+    "Cardones 220 KV":  "CARDONES______220",
+    "P.Azucar 220 KV":  "P.AZUCAR______220",
+    "Quillota 220 KV":  "QUILLOTA______220",
+    "Charrua 220 KV":   "CHARRUA_______220",
+    "P.Montt 220 KV":   "P.MONTT_______220",
+}
+
 # ── SSCC: centralUnidad API → código interno ───────────────────────────────────
 LLAVES_SSCC = {
     "PE-SANMATIAS": "STM",
@@ -230,11 +258,6 @@ BESS = {
         "iny": ["SAE PFV Bolero (Inyección)"],
         "ret": ["SAE PFV Bolero (Retiro de central)",
                 "SAE PFV Bolero (Retiro del sistema)"],
-    },
-    "ET1_B": {
-        "nombre": "BESS Andes ET1", "parque": "AS1", "pmax_mw": 14.08,
-        "iny": ["BESS ANDES ET1 (Inyección)"],
-        "ret": ["BESS ANDES ET1 (retiro)"],
     },
 }
 
@@ -329,7 +352,6 @@ BESS_HORAS = {
     "AS3_B":  3.0,      # 171.3 MW × 3 h ≈ 514 MWh (Fluence + CATL)
     "AS4_B":  5.0,
     "BOL_B":  None,
-    "ET1_B":  None,
 }
 
 # ── INFOTÉCNICA: ficha consolidada por parque (para la pestaña de referencia) ─────
