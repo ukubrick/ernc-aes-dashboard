@@ -1389,5 +1389,78 @@ en Supabase. `BESS_LLAVE_MAP` se regenera solo → ya no mapea las llaves ET1.
 
 ---
 
-*Actualizado 2026-06-23 — Sesiones 1–22.*
-*Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*
+## SESIÓN 23 — NASA POWER, FIXES MAPA, ARBITRAJE BESS Y UX (2026-06-23)
+
+Continuación de la Sesión 22 (CMG programado + 8b). Se cerró el ciclo de valor de los
+endpoints nuevos y se pulió UX en mapa, ML, forecast y estadísticas.
+
+### NASA POWER — 2ª fuente solar (validación de GHI)
+- `utils/nasapower_api.py`: GHI/temp/viento horario satelital (gratis, sin key). Rezago
+  ~3-7 días → **validación, no forecast**. Se guarda en `meteo_ernc` con `fuente='nasa-power'`.
+  **OJO entorno:** el reloj simulado (2026) está en el futuro de la data real de NASA → devuelve
+  `-999`; el parseo se validó con fechas 2024 reales. En producción real poblará con su rezago.
+- `Adquisicion_nasa_ernc.py`: backfill 10 días. En el workflow corre **1 vez/día (12 UTC)**
+  vía guard `if [ "$(date -u +%H)" = "12" ]` (NASA actualiza a diario, no cada hora).
+- `tab_ml.py::"Validación recurso (NASA)"`: compara GHI Open-Meteo vs NASA (sesgo/RMSE/
+  correlación + serie + dispersión) por parque solar.
+- **Sidebar:** fila "NASA POWER" en Fuentes de datos (umbral 192h por el rezago). NO cuenta
+  para el semáforo global de conexión (es validación, no tiempo real). `query_ultimas_
+  actualizaciones` devuelve `nasa`.
+- Descartado **AccuWeather** (free tier 50/día insuficiente) y **OpenWeather Solar** (de pago).
+  `pronostico-erv` también descartado (Sesión 22): 200 pero `data:[]`.
+
+### Mapa satelital (`components/mapa_ernc.py`)
+- **Nubosidad**: probamos imagen interpolada Open-Meteo (se veía tenue) y rectángulos (feos).
+  **Final: tile OWM `clouds_new` (textura real) + selector de COLOR** (Natural/Azul/Roja/Violeta)
+  vía filtros CSS (`sepia+saturate+hue-rotate` por className). `_build_cloud_layers` +
+  `_css_filtros_nubes` restaurados. Eliminadas `_cloud_grid`/`_cloud_image`/`_cloud_color`.
+- **Viento**: nuevo `_viento_actual_parques()` trae viento ACTUAL (vel+dir) de **los 11 parques**
+  en 1 llamada Open-Meteo (antes leía `wind_dir_80m` de meteo_ernc → solo salía en eólicas, porque
+  los solares no guardan dirección). Flecha grande (glifo ➜, rotación = rumbo−90) con **velocidad
+  m/s rotulada encima**, color por intensidad.
+- **Auto-refresh del mapa cada 5 min** (`st_autorefresh` en `render_mapa`, TTL caché 300s).
+
+### CMG (tab CMG, `app_ernc.py`)
+- Serie de tiempo: TODOS los nodos con **misma línea punteada** (antes CRUCERO/CHARRUA eran
+  sólidas/gruesas).
+- Nueva sección **"CMG programado PCP"** (futuro) con marca de "ahora" (pasado vs proyectado).
+
+### Arbitraje BESS (ML, `tab_ml.py`)
+- **Fix "Sin CMG suficiente":** el online S3 (`cmg_ernc`) es muy escaso (≈41 filas/20d, 0 solape
+  con horas BESS) → ahora se combina con el **CMG programado** (denso, horario) como fuente del
+  nodo. `_dataset_bess` usa `cmg_online.combine_first(cmg_prog)`. Validado 64/64 filas con CMG.
+- Nueva **recomendación de arbitraje a futuro** (`_recomendacion_arbitraje`): ventanas óptimas de
+  carga/descarga según CMG programado próximas horas + margen de ciclo estimado.
+- Los 2 gráficos BESS (scatter neta–CMG, importancia hora vs CMG) ahora con **explicación clara**.
+
+### Meteo & Sistema — heatmap nubosidad
+- Fix "todo celeste": escala **fija 0–100%** (`zmin/zmax`). El norte solar es 0% real (desierto)
+  → antes Plotly auto-escalaba a −0.4..0.4. Viento fijo 0–15 m/s.
+
+### Solar / Eólica (`tab_solar.py`, `tab_eolica.py`)
+- **Modelo FV/eólico**: línea **sólida** (no punteada) en la serie + swatch acorde.
+- **Leyendas reescritas** en lenguaje simple ("lo que el parque inyectó de verdad", "lo que
+  debería generar según el sol/viento", etc.).
+
+### Forecast 7d (`tab_forecast.py`)
+- Checkbox **"Comparar con modelo ML"**: RandomForest meteo→gen real del parque (45d) superpuesto
+  al modelo físico (`_ml_forecast_parque`, features según tecnología). NASA no aplica (histórico).
+
+### Estadísticas (`tab_estadisticas.py`)
+- Nueva sección **"Almacenamiento BESS"**: descarga/carga total, energía neta, round-trip
+  aparente, ciclos eq., barras carga/descarga por BESS, tabla + CSV. `render_tab_estadisticas`
+  recibe `bess_rows`.
+
+### Limpieza
+- BESS **ET1_B eliminado** (Sesión 22): no existe → fuera de config, textos "6→5 BESS",
+  68 filas borradas en DB.
+
+### Pendiente Sesión 23
+- [ ] Esperar a que el cron pueble `nasa-power` en producción (fecha real) para que la sección
+      de validación NASA muestre datos.
+- [ ] TZ global (`ZoneInfo` vs offset −3) sigue pendiente desde Sesión 17.
+
+---
+
+*Actualizado 2026-06-23 — Sesiones 1–23.*
+*Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER*
