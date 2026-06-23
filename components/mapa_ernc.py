@@ -50,47 +50,75 @@ def _cloud_grid(lat0: float, lon0: float, delta: float, n: int = 9) -> list[tupl
         data = r.json()
     except Exception:
         return []
-    # Con múltiples coords Open-Meteo devuelve una lista de objetos
+    # Open-Meteo devuelve los objetos EN EL MISMO ORDEN que las coords de entrada
+    # (pares = lats×lons, row-major). Se conserva el índice → no depende de que las
+    # coordenadas devueltas (redondeadas por Open-Meteo) coincidan exactamente.
     objs = data if isinstance(data, list) else [data]
     out = []
-    for o in objs:
-        cur = o.get("current", {})
-        cc = cur.get("cloud_cover")
-        if cc is not None:
-            out.append((o.get("latitude"), o.get("longitude"), float(cc)))
+    for idx, (la, lo) in enumerate(pares):
+        cc = None
+        if idx < len(objs):
+            cc = objs[idx].get("current", {}).get("cloud_cover")
+        out.append((la, lo, float(cc) if cc is not None else None))
     return out
 
 
-def _cloud_color(pct: float) -> str:
-    """Color HEX para un % de nubosidad: azul translúcido (despejado) → blanco/gris (cubierto)."""
-    p = max(0.0, min(100.0, pct)) / 100.0
-    # interpola de azul claro (#7FB2FF) a gris-blanco (#E8ECF2)
-    r = int(127 + (232 - 127) * p)
-    g = int(178 + (236 - 178) * p)
-    b = int(255 + (242 - 255) * p)
-    return f"#{r:02x}{g:02x}{b:02x}"
+def _cloud_image(grid: list[tuple], lat0: float, lon0: float, delta: float, n: int):
+    """Convierte la grilla n×n de nubosidad en una imagen RGBA suavizada (PNG base64)
+    para overlay continuo (sin cuadrados). Retorna (data_uri, bounds) o (None, None)."""
+    if not grid or len(grid) < n * n:
+        return None, None
+    import numpy as np, io, base64
+    from PIL import Image
+    # grid viene row-major sobre lats×lons (lat ascendente i, lon ascendente j)
+    vals = np.array([cc if cc is not None else np.nan for _, _, cc in grid], dtype=float)
+    z = vals.reshape((n, n))
+    media = np.nanmean(z) if np.isfinite(z).any() else 0.0
+    z = np.nan_to_num(z, nan=media)
+    p = np.clip(z, 0, 100) / 100.0
+    # color despejado (azul claro) → cubierto (gris-blanco)
+    r = (127 + (232 - 127) * p).astype(np.uint8)
+    g = (178 + (236 - 178) * p).astype(np.uint8)
+    b = (255 + (242 - 255) * p).astype(np.uint8)
+    a = (np.clip(0.12 + 0.62 * p, 0, 1) * 255).astype(np.uint8)
+    rgba = np.dstack([r, g, b, a])
+    rgba = np.flipud(rgba)  # fila 0 = norte (lat máx) para ImageOverlay
+    img = Image.fromarray(rgba, "RGBA").resize((360, 360), Image.BILINEAR)
+    buf = io.BytesIO(); img.save(buf, format="PNG")
+    uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    bounds = [[lat0 - delta, lon0 - delta], [lat0 + delta, lon0 + delta]]
+    return uri, bounds
 
 
 @st.cache_data(ttl=300)
-def _meteo_viento_por_parque() -> dict:
-    """Última dirección/velocidad de viento (hub) por parque desde meteo_ernc.
-    Retorna {parque: {"dir": grados_meteo, "vel": m/s}}."""
-    from utils.db import query_meteo_parque
+def _viento_actual_parques() -> dict:
+    """Viento ACTUAL (velocidad 10m + dirección) de los 11 parques desde Open-Meteo,
+    en una sola llamada. Funciona para solares y eólicos por igual (no depende de lo
+    que se guarde en meteo_ernc). Retorna {parque: {"dir": grados, "vel": m/s}}."""
+    import requests
+    orden = list(PARQUES_TODOS)
+    lats = ",".join(f"{COORDENADAS[p]['lat']:.4f}" for p in orden)
+    lons = ",".join(f"{COORDENADAS[p]['lon']:.4f}" for p in orden)
+    try:
+        r = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={"latitude": lats, "longitude": lons,
+                    "current": "wind_speed_10m,wind_direction_10m",
+                    "wind_speed_unit": "ms", "timezone": "America/Santiago"},
+            timeout=20,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return {}
+    objs = data if isinstance(data, list) else [data]
     out = {}
-    for p in PARQUES_TODOS:
-        try:
-            filas = query_meteo_parque(p, horas=6)
-        except Exception:
-            filas = []
-        if not filas:
-            continue
-        # más reciente con dirección válida
-        for f in reversed(filas):
-            d = f.get("wind_dir_80m")
-            v = f.get("wind_speed_100m") or f.get("wind_speed_10m")
-            if d is not None:
-                out[p] = {"dir": float(d), "vel": float(v) if v is not None else None}
-                break
+    for p, o in zip(orden, objs):
+        cur = o.get("current", {})
+        d = cur.get("wind_direction_10m")
+        v = cur.get("wind_speed_10m")
+        if d is not None:
+            out[p] = {"dir": float(d), "vel": float(v) if v is not None else None}
     return out
 
 MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
@@ -219,47 +247,49 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
     ver_viento = cc2.checkbox("Dirección del viento", value=True,
                               key=f"chk_viento_{parque_activo or 'all'}")
 
-    # ── Nubosidad como ÁREA de colores (Open-Meteo, grilla interpolada) ──
+    # ── Nubosidad como ÁREA suave (imagen interpolada, sin cuadrados) ──
     if ver_nubes:
         delta = 0.35 if (parque_activo and parque_activo in COORDENADAS) else 1.8
-        n = 9
+        n = 12
         grid = _cloud_grid(center[0], center[1], delta, n)
-        if grid:
-            fg = folium.FeatureGroup(name="Nubosidad", show=True)
-            paso = (2 * delta) / (n - 1)
-            for la, lo, cc in grid:
-                # opacidad sube con la nubosidad (cielo despejado casi transparente)
-                op = 0.10 + 0.55 * (max(0.0, min(100.0, cc)) / 100.0)
-                folium.Rectangle(
-                    bounds=[[la - paso / 2, lo - paso / 2], [la + paso / 2, lo + paso / 2]],
-                    color=None, weight=0, fill=True,
-                    fill_color=_cloud_color(cc), fill_opacity=op,
-                    tooltip=f"Nubosidad {cc:.0f}%",
-                ).add_to(fg)
-            fg.add_to(m)
+        uri, bounds = _cloud_image(grid, center[0], center[1], delta, n)
+        if uri:
+            folium.raster_layers.ImageOverlay(
+                image=uri, bounds=bounds, opacity=0.85, name="Nubosidad", interactive=False,
+            ).add_to(m)
 
     # Sombra día/noche en tiempo real
     Terminator().add_to(m)
 
-    # ── Dirección del viento: flecha por parque (apunta a donde sopla) ──
+    # ── Viento ACTUAL (todos los parques): flecha grande + velocidad encima ──
     if ver_viento:
-        viento = _meteo_viento_por_parque()
+        viento = _viento_actual_parques()
         fgv = folium.FeatureGroup(name="Viento", show=True)
         for _, r in df.iterrows():
             w = viento.get(r["parque"])
             if not w or w.get("dir") is None:
                 continue
             vel = w.get("vel")
-            # dir meteorológico = de dónde viene → la flecha apunta hacia donde va (+180)
-            rot = (w["dir"] + 180) % 360
-            col = "#EF4444" if (vel or 0) >= 12 else ("#F59E0B" if (vel or 0) >= 7 else "#4DC8DC")
-            vtxt = f"{vel:.1f} m/s" if vel is not None else "s/d"
-            html = (f"<div style='transform:rotate({rot}deg);font-size:22px;line-height:22px;"
-                    f"color:{col};text-shadow:0 0 3px #000'>&#8593;</div>")
+            # dir meteorológico = de dónde viene → la flecha apunta hacia donde va (+180).
+            # El glifo ➜ apunta al este (0° CSS), y el rumbo es 0=N/90=E → rotar (rumbo-90).
+            rumbo = (w["dir"] + 180) % 360
+            rot = (rumbo - 90) % 360
+            col = "#EF4444" if (vel or 0) >= 12 else ("#F59E0B" if (vel or 0) >= 7 else "#22D3EE")
+            vtxt = f"{vel:.1f}" if vel is not None else "s/d"
+            # Flecha grande rotada + etiqueta de velocidad fija (no rota) debajo
+            html = (
+                "<div style='position:relative;width:54px;height:54px'>"
+                f"<div style='position:absolute;top:0;left:15px;transform:rotate({rot}deg);"
+                f"font-size:30px;line-height:30px;color:{col};"
+                f"text-shadow:0 0 4px #000,0 0 4px #000'>&#10148;</div>"
+                f"<div style='position:absolute;bottom:0;left:0;width:54px;text-align:center;"
+                f"font-size:11px;font-weight:700;color:#fff;text-shadow:0 0 3px #000,0 0 3px #000'>"
+                f"{vtxt} m/s</div></div>"
+            )
             folium.Marker(
                 location=[r["lat"], r["lon"]],
-                icon=folium.DivIcon(html=html, icon_size=(24, 24), icon_anchor=(12, 12)),
-                tooltip=f"{r['nombre']} — viento {vtxt} desde {w['dir']:.0f}°",
+                icon=folium.DivIcon(html=html, icon_size=(54, 54), icon_anchor=(27, 27)),
+                tooltip=f"{r['nombre']} — viento {vtxt} m/s desde {w['dir']:.0f}°",
             ).add_to(fgv)
         fgv.add_to(m)
 
@@ -315,7 +345,7 @@ def render_mapa(
 
     # Auto-refresco del mapa cada 5 min: refresca nubosidad/viento/día-noche sin que
     # el usuario tenga que recargar la página ni cambiar de sección. Combinado con el
-    # TTL de 5 min de _cloud_grid/_meteo_viento_por_parque, trae datos nuevos.
+    # TTL de 5 min de _cloud_grid/_viento_actual_parques, trae datos nuevos.
     try:
         from streamlit_autorefresh import st_autorefresh
         st_autorefresh(interval=300_000, key="mapa_autorefresh")
