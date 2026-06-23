@@ -1150,7 +1150,7 @@ Los BESS de AES aparecen en gen-real/v3 como **centrales separadas** (`id_centra
 `tipo='BESS'`) con llaves `(Inyección)`=descarga y `(Retiro)`=carga, ambas positivas.
 **No** se filtran por idCentral → hay que escanear el feed completo.
 
-- **6 BESS confirmados** (`config.py::BESS`, llaves validadas contra la API 21-jun):
+- **5 BESS confirmados** (`config.py::BESS`, llaves validadas contra la API 21-jun):
   | Código | BESS | Parque | Pmax desc. (MW) |
   |--------|------|--------|-----------------|
   | AS2A_B | Andes Solar IIA | AS2A | 84.0 |
@@ -1158,7 +1158,7 @@ Los BESS de AES aparecen en gen-real/v3 como **centrales separadas** (`id_centra
   | AS3_B  | Andes Solar III | AS3 | 177.0 |
   | AS4_B  | Andes Solar IV | AS4 | 140.0 |
   | BOL_B  | Bolero | BOL | 160.0 |
-  | ET1_B  | Andes ET1 | AS1 | 14.08 |
+  | ~~ET1_B~~ | ~~Andes ET1~~ | — | eliminado Sesión 22 (no existe) |
 - Convención: `potencia_neta_mw = inyeccion - retiro` (>0 descarga, <0 carga).
   AS3 y BOL tienen 2 llaves de retiro ("de central" + "del sistema") → se suman.
 - `utils/cen_api.py::fetch_gen_bess()` (ventana 2 días, scan completo, agrega por
@@ -1341,5 +1341,53 @@ patrón sincronizado con el CTM si se rediseña la navegación en cualquiera de 
 
 ---
 
-*Actualizado 2026-06-22 — Sesiones 1–21.*
+## SESIÓN 22 — NUEVOS ENDPOINTS CEN (CMG FUTURO + RESPALDO 8B) + LIMPIEZA BESS (2026-06-23)
+
+Tras revisar el catálogo completo de la API CEN (`resumen_endpoints_adquisicion_coordinador.md`,
+95 SIP + 44 Operaciones) y tomar como referencia las adquisiciones recién hechas en el
+dashboard CTM (`../dashboard_api/Adquisicion.py`), se integraron 2 endpoints nuevos.
+
+### CMG programado PCP (CMG futuro) — NUEVO
+- Endpoint: `/cmg-programado-pcp/v4/findByDate` (SIP). **1-indexado** (page=0 da 502),
+  NO filtra por barra → se pagina todo con **limit=4000** (las 8 barras 220 kV caben en
+  page 1) y se filtra local por `llave_cmg`. Se conserva el programa más reciente
+  (mayor `fecha_programa`) por `(nodo, fecha_hora)`.
+- `config.py::CMG_PROG_LLAVE_A_NODO`: mapea `llave_cmg` (Crucero220, Charrua220, …) a los
+  MISMOS nombres de nodo del feed S3 (`CRUCERO_______220`, …) → el CMG futuro slotea con
+  el online sin tocar el resto del dashboard.
+- `utils/cen_api.py::fetch_cmg_programado()`, `utils/db.py::upsert_cmg_programado()` +
+  `query_cmg_programado(horas)` (try/except → `[]` si la tabla no existe).
+- `schema.sql`: tabla `cmg_programado_ernc` (nodo, cmg_usd_mwh, fecha_hora, fecha_programa)
+  + RLS `anon_select` + índice. **PENDIENTE: ejecutar este bloque en Supabase SQL Editor.**
+- `Adquisicion_ernc.py`: paso `adquirir_cmg_programado()` integrado al cron.
+- Validado contra API: **968 registros, los 8 nodos × 121 h**.
+
+### CMG online 8 barras — RESPALDO del feed S3
+- Endpoint: `/costos-marginales-online-8b/v4/findAll` (SIP). Devuelve `{fecha, barras:[{nombre,
+  valores:[{fecha(epoch ms), valor}]}]}` — últimas ~24 h horarias de las 8 barras.
+- `config.py::CMG_8B_NOMBRE_A_NODO` mapea "Crucero 220 KV" → `CRUCERO_______220`.
+- `fetch_cmg_online_8b()` convierte epoch ms a hora Santiago y escribe en **cmg_ernc**
+  (mismos nodos). Se usa como **fallback en `adquirir_cmg()`** cuando el feed S3 falla o
+  está en mantenimiento. Validado: 138 registros.
+
+### `pronostico-erv` — DESCARTADO (sin datos)
+`/pronostico-erv/v4/findByDate` responde **200 pero `data:[]` / `totalPages:0`** en todas
+las ventanas probadas (hoy, ±2d, ±5d) → no hay datos publicados en nuestro plan SIP. Igual
+que demanda real (Sesión 15). No se implementó.
+
+### Limpieza BESS — ET1_B eliminado
+El BESS **Andes ET1 (`ET1_B`, AS1, 14.08 MW) no existe** → eliminado de `config.py::BESS` y
+`BESS_HORAS` (quedan **5 BESS**), de los textos "6 BESS" en `kpis_generales.py` y
+`tab_bess.py`, y de la tabla en CLAUDE.md. **Borradas 68 filas** de `generacion_bess_ernc`
+en Supabase. `BESS_LLAVE_MAP` se regenera solo → ya no mapea las llaves ET1.
+
+### Pendiente Sesión 22
+- [ ] Ejecutar el bloque `cmg_programado_ernc` de `schema.sql` en Supabase (antes de que el
+      cron escriba). Sin la tabla, `adquirir_cmg_programado` fallará en el upsert.
+- [ ] (Opcional) Consumir `query_cmg_programado()` en el tab CMG / arbitraje BESS para
+      mostrar el CMG futuro junto al online.
+
+---
+
+*Actualizado 2026-06-23 — Sesiones 1–22.*
 *Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN*

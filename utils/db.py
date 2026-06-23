@@ -106,6 +106,16 @@ def upsert_cmg(registros: list[dict]) -> int:
     return len(registros)
 
 
+def upsert_cmg_programado(registros: list[dict]) -> int:
+    if not registros:
+        return 0
+    sb = get_client()
+    sb.table("cmg_programado_ernc").upsert(
+        registros, on_conflict="nodo,fecha_hora"
+    ).execute()
+    return len(registros)
+
+
 # ── Limitaciones ───────────────────────────────────────────────────────────────
 
 def upsert_limitaciones(registros: list[dict]) -> int:
@@ -299,3 +309,21 @@ def query_cmg_ultimo() -> list[dict]:
             vistos.add(r["nodo"])
             resultado.append(r)
     return resultado
+
+
+def query_cmg_programado(horas: int = 48) -> list[dict]:
+    """CMG programado PCP (futuro + reciente) por nodo, ventana en horas.
+    try/except → [] si la tabla aún no existe en Supabase."""
+    from datetime import timedelta
+    desde = (_ahora_santiago() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        sb = get_client()
+        res = (sb.table("cmg_programado_ernc")
+                 .select("nodo,cmg_usd_mwh,fecha_hora,fecha_programa")
+                 .gte("fecha_hora", desde)
+                 .order("fecha_hora", desc=False)
+                 .limit(5000)
+                 .execute())
+        return res.data or []
+    except Exception:
+        return []

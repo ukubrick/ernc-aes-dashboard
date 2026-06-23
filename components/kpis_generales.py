@@ -134,10 +134,10 @@ def render_kpis(
         AES_CYAN, "BESS — Almacenamiento",
         f"{bess_neta:+.0f} MW" if bess_neta is not None else "—",
         f"{bess_estado}" if bess_estado else None, bess_col,
-        (f"6 BESS AES · uso {bess_util:.0f}% de Pmax descarga · "
+        (f"5 BESS AES · uso {bess_util:.0f}% de Pmax descarga · "
          f"neta=inyección−retiro (>0 descarga) · {bess_hora} hrs")
         if bess_neta is not None else
-        "6 BESS AES · sin telemetría reciente · neta=inyección−retiro",
+        "5 BESS AES · sin telemetría reciente · neta=inyección−retiro",
     ))
 
     lim_color = AES_ROJO if n_limitaciones_activas > 0 else AES_VERDE

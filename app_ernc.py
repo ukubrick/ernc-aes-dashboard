@@ -311,6 +311,7 @@ from utils.db import (
     query_gen_prog_ultimas_horas,
     query_bess_ultimas_horas,
     query_cmg_ultimo,
+    query_cmg_programado,
     query_limitaciones_activas,
     query_ultima_hora_gen,
     query_ultimas_actualizaciones,
@@ -953,13 +954,10 @@ def _render_tab_cmg(cmg_rows):
         fig = go.Figure()
         for i, nodo in enumerate(nodos_presentes):
             df_n = df_hist[df_hist["nodo"] == nodo].sort_values("fecha_hora")
-            es_principal = nodo in ("CRUCERO_______220", "CHARRUA_______220")
             fig.add_trace(go.Scatter(
                 x=df_n["fecha_hora"], y=df_n["cmg_usd_mwh"],
                 name=nodo.replace("_", " ").strip(),
-                line=dict(color=paleta[i % len(paleta)],
-                          width=2.5 if es_principal else 1.2,
-                          dash="solid" if es_principal else "dot"),
+                line=dict(color=paleta[i % len(paleta)], width=1.6, dash="dot"),
                 hovertemplate="%{y:.1f} USD/MWh<extra>" + nodo + "</extra>",
             ))
         fig.add_hline(y=0, line_dash="dot", line_color=AES_ROJO, line_width=1,
@@ -1007,6 +1005,54 @@ def _render_tab_cmg(cmg_rows):
         "(<0.5, vertimiento), CMG alto (>200, oportunidad de ingreso) y desacople "
         "(spread >50 entre nodos). Fuente: JSON S3 del Coordinador, actualiza cada ~15 min."
     )
+
+    # ── CMG programado (futuro proyectado por el Coordinador) ──
+    prog_rows = query_cmg_programado(72)
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:18px 0 6px'>"
+        f"CMG programado PCP — proyeccion del Coordinador por nodo</div>",
+        unsafe_allow_html=True,
+    )
+    if prog_rows:
+        df_prog = pd.DataFrame(prog_rows)
+        df_prog["fecha_hora"] = pd.to_datetime(df_prog["fecha_hora"])
+        paleta_p = [AES_AZUL, AES_CYAN, AES_VIOLETA, AES_VERDE,
+                    "#F59E0B", "#EF4444", "#6366F1", "#EC4899"]
+        nodos_p = df_prog["nodo"].unique().tolist()
+        figp = go.Figure()
+        for i, nodo in enumerate(nodos_p):
+            df_n = df_prog[df_prog["nodo"] == nodo].sort_values("fecha_hora")
+            figp.add_trace(go.Scatter(
+                x=df_n["fecha_hora"], y=df_n["cmg_usd_mwh"],
+                name=nodo.replace("_", " ").strip(),
+                line=dict(color=paleta_p[i % len(paleta_p)], width=1.6, dash="dot"),
+                hovertemplate="%{y:.1f} USD/MWh<extra>" + nodo + "</extra>",
+            ))
+        # Marca el "ahora" para separar visualmente pasado vs futuro proyectado
+        _ahora = datetime.now(santiago).replace(tzinfo=None)
+        figp.add_vline(x=_ahora, line_dash="dash", line_color=AES_MUTED, line_width=1,
+                       annotation_text="ahora", annotation_position="top",
+                       annotation_font_size=9, annotation_font_color=AES_MUTED)
+        figp.update_layout(
+            template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+            xaxis_title=None, yaxis_title="USD/MWh", height=360,
+            margin=dict(l=0, r=0, t=40, b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
+            hovermode="x unified",
+        )
+        figp.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+        figp.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+        st.plotly_chart(figp, use_container_width=True, key="cmg_grafico_programado")
+        st.caption(
+            "CMG programado PCP: proyeccion horaria del costo marginal que publica el "
+            "Coordinador (programa del dia). Util para anticipar ingresos y arbitraje BESS. "
+            "Fuente: /cmg-programado-pcp/v4 (API CEN SIP)."
+        )
+    else:
+        st.info(
+            "Sin CMG programado todavia. Se poblara al correr Adquisicion_ernc.py "
+            "(o el cron horario) con el endpoint cmg-programado-pcp."
+        )
 
 
 # ── Tab Limitaciones ──────────────────────────────────────────────────────────

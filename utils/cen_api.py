@@ -10,6 +10,7 @@ from config import (
     TZ_CHILE, ID_CENTRAL, LLAVES_OPREAL, LLAVES_GEN_PROG,
     NOMBRE_DISPLAY, LLAVES_SSCC, PMAX,
     DIAS_VENTANA, DIAS_VENTANA_LIM,
+    CMG_PROG_LLAVE_A_NODO, CMG_8B_NOMBRE_A_NODO,
 )
 
 _KEY_SIP: str | None = None
@@ -351,6 +352,100 @@ def cmg_a_registros(cmg_data: dict, nodos: list[str]) -> list[dict]:
                 "nodo":        nodo,
                 "cmg_usd_mwh": item["cmg_usd_mwh"],
                 "fecha_hora":  fh,
+            })
+    return registros
+
+
+# ── CMG Programado PCP (CMG futuro) ──────────────────────────────────────────────
+
+def fetch_cmg_programado(start_date: str = None, end_date: str = None) -> list[dict]:
+    """
+    Descarga el CMG programado PCP (proyección día+1 por barra) desde la API SIP.
+
+    Endpoint: /cmg-programado-pcp/v4/findByDate
+    - 1-indexado (page=1). NO filtra por barra en el servidor → se pagina todo y se
+      filtra local por `llave_cmg` ∈ CMG_PROG_LLAVE_A_NODO. Con limit alto (4000)
+      las 8 barras relevantes caben en la página 1.
+    - Se conserva el programa más reciente (mayor `fecha_programa`) por (nodo, fecha_hora).
+    Retorna registros para upsert_cmg_programado().
+    """
+    key_sip, _ = _get_keys()
+    if start_date is None or end_date is None:
+        start_date, end_date = _ventana_fechas()
+
+    url = f"{API_BASE_SIP}/cmg-programado-pcp/v4/findByDate"
+    mejor: dict[tuple[str, str], dict] = {}   # (nodo, fecha_hora) → registro
+    page = 1
+    _LIMIT = 4000
+
+    while True:
+        params = {
+            "startDate": start_date, "endDate": end_date,
+            "limit": _LIMIT, "page": page, "user_key": key_sip,
+        }
+        data = _get_with_retry(url, params, timeout=90)
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items:
+            break
+
+        for item in items:
+            nodo = CMG_PROG_LLAVE_A_NODO.get(item.get("llave_cmg"))
+            if nodo is None:
+                continue
+            fh = (item.get("fecha_hora") or "").replace("T", " ")[:19]
+            if not fh:
+                continue
+            fprog = item.get("fecha_programa") or ""
+            clave = (nodo, fh)
+            anterior = mejor.get(clave)
+            if anterior is None or fprog >= anterior["fecha_programa"]:
+                mejor[clave] = {
+                    "nodo":           nodo,
+                    "fecha_hora":     fh,
+                    "cmg_usd_mwh":    round(float(item.get("cmg_usd_mwh") or 0.0), 4),
+                    "fecha_programa": fprog,
+                }
+
+        total_pages = data.get("totalPages") if isinstance(data, dict) else None
+        if total_pages is None or page >= int(total_pages):
+            break
+        page += 1
+
+    return list(mejor.values())
+
+
+# ── CMG Online 8 barras (respaldo API del feed S3) ───────────────────────────────
+
+def fetch_cmg_online_8b() -> list[dict]:
+    """
+    Descarga el CMG online de las 8 barras desde la API SIP (vía user_key), como
+    respaldo del feed S3 cuando éste falla o está en mantenimiento.
+
+    Endpoint: /costos-marginales-online-8b/v4/findAll
+    Estructura: {fecha, barras:[{nombre, valores:[{fecha(epoch ms), valor}]}]}.
+    Se mapea cada barra a su nodo (CMG_8B_NOMBRE_A_NODO) y se devuelven todos los
+    puntos horarios para upsert en cmg_ernc (mismos nodos que el S3).
+    """
+    key_sip, _ = _get_keys()
+    url = f"{API_BASE_SIP}/costos-marginales-online-8b/v4/findAll"
+    data = _get_with_retry(url, {"user_key": key_sip}, timeout=40)
+    barras = data.get("barras", []) if isinstance(data, dict) else []
+
+    registros = []
+    for barra in barras:
+        nodo = CMG_8B_NOMBRE_A_NODO.get(barra.get("nombre"))
+        if nodo is None:
+            continue
+        for v in barra.get("valores", []):
+            epoch_ms = v.get("fecha")
+            valor = v.get("valor")
+            if epoch_ms is None or valor is None:
+                continue
+            dt = datetime.fromtimestamp(epoch_ms / 1000, TZ_CHILE)
+            registros.append({
+                "nodo":        nodo,
+                "cmg_usd_mwh": round(float(valor), 4),
+                "fecha_hora":  dt.strftime("%Y-%m-%d %H:%M:%S"),
             })
     return registros
 
