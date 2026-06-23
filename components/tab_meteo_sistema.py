@@ -247,6 +247,18 @@ def render_tab_meteo_sistema(cmg_rows: list | None = None) -> None:
             [[0, "#FEF9C3"], [0.5, AES_CYAN], [1, "#1E3A8A"]],
             "meteo_hm_nubes", ".0f", zmin=0, zmax=100,
         )
+        # Un heatmap plano de nubosidad es ambiguo: puede parecer un fallo de datos
+        # cuando en realidad el pronostico es de cielos despejados (habitual en Atacama).
+        # Si toda la ventana esta ~0%, se muestra un aviso explicito.
+        nub_solar = pd.to_numeric(
+            df[df["parque"].isin(PARQUES_SOLAR)]["cloud_cover_pct"], errors="coerce"
+        )
+        if not nub_solar.empty and nub_solar.max() <= 5:
+            st.caption(
+                "☀️ Cielos despejados pronosticados (≤5% de nubosidad en las próximas 48 h) "
+                "— recurso solar óptimo, sin caídas de GHI por nubes. El heatmap plano es "
+                "correcto, no un fallo de datos."
+            )
         _heatmap(
             df, PARQUES_EOLICA, "wind_speed_100m",
             "Viento hub 100m pronosticado (m/s) — recurso eolico proximas 48h",
