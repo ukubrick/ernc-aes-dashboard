@@ -634,7 +634,13 @@ def _render_bess_ml(cod: str) -> None:
     dd = db.dropna(subset=["cmg_usd_mwh", "potencia_neta_mw"]).copy()
     corr = dd["cmg_usd_mwh"].corr(dd["potencia_neta_mw"])
 
-    _titulo("Potencia neta vs CMG del nodo", "14px 0 6px")
+    _titulo("¿El BESS arbitra con el precio? (potencia neta vs CMG)", "14px 0 6px")
+    st.caption(
+        "Cada punto es una hora. Eje X = precio del nodo (CMG); eje Y = qué hizo el BESS "
+        "(arriba de 0 = descargó, abajo = cargó). El color indica la hora del día. "
+        "Lo ideal: puntos **abajo a la izquierda** (carga cuando está barato) y "
+        "**arriba a la derecha** (descarga cuando está caro)."
+    )
     figs = go.Figure(go.Scatter(
         x=dd["cmg_usd_mwh"], y=dd["potencia_neta_mw"], mode="markers",
         marker=dict(color=dd["hora_dia"], colorscale="Viridis", size=6, opacity=0.6,
@@ -654,6 +660,11 @@ def _render_bess_ml(cod: str) -> None:
     arb = "racional (descarga con CMG alto)" if corr > 0.15 else (
           "inverso (revisar operación)" if corr < -0.15 else "sin patrón claro")
     c2.metric("Lectura del arbitraje", arb)
+    st.caption(
+        "La **correlación** resume el gráfico de arriba en un número de −1 a +1: cercano a "
+        "**+1** = arbitra bien (sube precio → descarga); cercano a **0** = opera por horario, "
+        "no por precio; **negativo** = opera al revés (revisar)."
+    )
 
     # Modelo: importancia de hora vs CMG
     feats_b = ["hora_dia", "cmg_usd_mwh"]
@@ -662,13 +673,16 @@ def _render_bess_ml(cod: str) -> None:
         m.fit(dd[feats_b].values, dd["potencia_neta_mw"].values)
         imp = pd.DataFrame({"var": ["Hora del día", "CMG nodo"],
                             "imp": m.feature_importances_}).sort_values("imp")
-        _titulo("¿Qué guía la operación del BESS?", "14px 0 6px")
+        _titulo("¿Qué decide cuándo carga o descarga el BESS?", "14px 0 6px")
+        st.caption(
+            "Un modelo aprende a predecir la operación del BESS a partir de dos pistas: la "
+            "**hora del día** y el **precio (CMG)**. La barra más larga es la que más pesa: si "
+            "manda 'Hora del día' opera con horario fijo; si manda 'CMG nodo' reacciona al precio."
+        )
         figi = go.Figure(go.Bar(x=imp["imp"], y=imp["var"], orientation="h", marker_color=AES_VIOLETA))
         figi.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
-                           height=200, margin=dict(l=0, r=0, t=10, b=0), xaxis_title="Importancia relativa")
+                           height=200, margin=dict(l=0, r=0, t=10, b=0), xaxis_title="Importancia relativa (qué pesa más)")
         st.plotly_chart(figi, use_container_width=True, key=f"ml_bess_imp_{cod}")
-        st.caption("Si domina 'Hora del día', el BESS opera por horario fijo; si domina 'CMG nodo', "
-                   "responde al precio (arbitraje activo).")
 
     # 4. Recomendación de arbitraje a futuro (CMG programado próximas horas)
     _recomendacion_arbitraje(cod)
