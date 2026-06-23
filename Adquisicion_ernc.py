@@ -19,7 +19,7 @@ if _missing:
 
 from config import (
     NOMBRE_DISPLAY, ID_CENTRAL, CMG_NODO, CMG_NODOS_TODOS,
-    DIAS_VENTANA, DIAS_VENTANA_LIM,
+    DIAS_VENTANA, DIAS_VENTANA_PCP, DIAS_VENTANA_LIM,
 )
 from utils.cen_api import (
     fetch_gen_real_todos,
@@ -76,8 +76,8 @@ def adquirir_gen_bess() -> int:
 
 def adquirir_gen_programada() -> int:
     log("=== GENERACIÓN PROGRAMADA PCP ===")
-    start, end = _ventana_fechas(DIAS_VENTANA)
-    log(f"Ventana: {start} → {end} (solo últimas {DIAS_VENTANA} horas para no tardar 12 min)")
+    start, end = _ventana_fechas(DIAS_VENTANA_PCP)
+    log(f"Ventana: {start} → {end} ({DIAS_VENTANA_PCP} día(s) — pagina todo el sistema)")
     registros = fetch_gen_programada(start, end)
     if not registros:
         log("Sin registros PCP para nuestros parques.")
@@ -118,7 +118,7 @@ def adquirir_cmg() -> int:
 
 def adquirir_cmg_programado() -> int:
     log("=== CMG PROGRAMADO PCP (CMG futuro) ===")
-    start, end = _ventana_fechas(DIAS_VENTANA)
+    start, end = _ventana_fechas(DIAS_VENTANA_PCP)
     log(f"Ventana: {start} → {end}")
     registros = fetch_cmg_programado(start, end)
     if not registros:
