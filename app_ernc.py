@@ -413,13 +413,20 @@ def _bloque_fuentes(act: dict) -> str:
         ("PCP programada",  act.get("gen_prog"), 24.0),
         ("Meteo Open-Meteo", act.get("meteo"),   12.0),
         ("CMG CEN S3",      act.get("cmg"),       6.0),
+        ("NASA POWER",      act.get("nasa"),     192.0),   # rezago ~días (validación solar)
     ]
+    # NASA POWER tiene rezago de días (validación, no tiempo real) → no cuenta para
+    # el semáforo global de conexión, pero sí se muestra su fila/estado.
+    _sin_health = {"NASA POWER"}
     filas = ""
     n_ok = 0
+    n_health = 0
     for label, ts, hmax in fuentes:
         estado = _estado_fuente(ts, hmax)
-        if estado == "ok":
-            n_ok += 1
+        if label not in _sin_health:
+            n_health += 1
+            if estado == "ok":
+                n_ok += 1
         filas += (
             f"<div style='display:flex;align-items:center;margin-bottom:7px'>"
             f"<span class='status-dot {estado}'></span>"
@@ -427,9 +434,9 @@ def _bloque_fuentes(act: dict) -> str:
             f"<span style='margin-left:auto;font-size:10px;color:rgba(255,255,255,0.50)'>"
             f"{_fmt_hora(ts)}</span></div>"
         )
-    estado_global = "Conectado" if n_ok == len(fuentes) else (
+    estado_global = "Conectado" if n_ok == n_health else (
         "Parcial" if n_ok > 0 else "Sin conexion")
-    color_global = "#5AB848" if n_ok == len(fuentes) else ("#F59E0B" if n_ok else "#EF4444")
+    color_global = "#5AB848" if n_ok == n_health else ("#F59E0B" if n_ok else "#EF4444")
     return (
         f"<div style='padding:12px 14px;background:rgba(255,255,255,0.07);"
         f"border-radius:8px;border:1px solid rgba(255,255,255,0.12);margin-bottom:6px'>"
