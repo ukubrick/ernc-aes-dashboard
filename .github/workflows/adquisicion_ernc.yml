@@ -35,6 +35,17 @@ jobs:
           SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
 
+      - name: Adquisición NASA POWER (validación solar — 1 vez/día, 12 UTC)
+        run: |
+          if [ "$(date -u +%H)" = "12" ]; then
+            python Adquisicion_nasa_ernc.py
+          else
+            echo "NASA POWER se corre solo a las 12 UTC (rezago diario). Saltando."
+          fi
+        env:
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+
       - name: Ping Streamlit Cloud (evitar hibernación)
         run: |
           curl -s -o /dev/null -w "%{http_code}" \
