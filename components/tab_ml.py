@@ -742,6 +742,92 @@ def _recomendacion_arbitraje(cod: str) -> None:
     )
 
 
+# ── 6. Validación de recurso solar — NASA POWER vs Open-Meteo ───────────────────
+
+@st.cache_data(ttl=1800)
+def _meteo_por_fuente(parque: str, fuente: str, dias: int = 30) -> pd.DataFrame:
+    """GHI horario de meteo_ernc para un parque y una fuente (open-meteo / nasa-power)."""
+    from utils.db import get_client
+    sb = get_client()
+    desde = (datetime.now(SANTIAGO) - timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        r = (sb.table("meteo_ernc").select("fecha_hora,ghi_wm2")
+             .eq("parque", parque).eq("fuente", fuente).eq("es_forecast", False)
+             .gte("fecha_hora", desde).order("fecha_hora").execute())
+    except Exception:
+        return pd.DataFrame()
+    if not r.data:
+        return pd.DataFrame()
+    df = pd.DataFrame(r.data)
+    df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    return df.dropna(subset=["ghi_wm2"]).drop_duplicates("fecha_hora")
+
+
+def _render_validacion_nasa(parque: str) -> None:
+    with st.expander("¿Qué valida esta sección? (metodología)"):
+        st.markdown(
+            "Compara el **GHI de Open-Meteo** (el que alimenta el modelo y el forecast) "
+            "contra el **GHI de NASA POWER** (satelital/reanálisis, fuente independiente) "
+            "en las horas que ambas cubren.\n\n"
+            "- **Sesgo (bias):** promedio Open-Meteo − NASA. Positivo = Open-Meteo sobreestima.\n"
+            "- **RMSE / correlación:** cuánto coinciden hora a hora.\n\n"
+            "NASA POWER publica con rezago (~3-7 días), por eso es validación histórica, no "
+            "tiempo real. Se puebla con `Adquisicion_nasa_ernc.py` (corrida diaria)."
+        )
+    om = _meteo_por_fuente(parque, "open-meteo")
+    na = _meteo_por_fuente(parque, "nasa-power")
+    if na.empty:
+        st.info("Aún no hay datos de NASA POWER. Corre `Adquisicion_nasa_ernc.py` "
+                "(o espera el job diario). NASA publica con rezago de varios días.")
+        return
+    if om.empty:
+        st.info("Sin GHI de Open-Meteo histórico para cruzar.")
+        return
+
+    m = om.merge(na, on="fecha_hora", suffixes=("_om", "_nasa"))
+    m = m[(m["ghi_wm2_om"] > 0) | (m["ghi_wm2_nasa"] > 0)]   # ignora la noche (ambos 0)
+    if len(m) < 12:
+        st.info(f"Solo {len(m)} horas solapadas entre fuentes — insuficiente para validar. "
+                "Aumenta la ventana de NASA o espera más histórico.")
+        return
+
+    bias = (m["ghi_wm2_om"] - m["ghi_wm2_nasa"]).mean()
+    rmse = float(np.sqrt(((m["ghi_wm2_om"] - m["ghi_wm2_nasa"]) ** 2).mean()))
+    corr = m["ghi_wm2_om"].corr(m["ghi_wm2_nasa"])
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Sesgo Open-Meteo − NASA", f"{bias:+.0f} W/m²")
+    c2.metric("RMSE", f"{rmse:.0f} W/m²")
+    c3.metric("Correlación", f"{corr:.2f}")
+
+    _titulo(f"GHI Open-Meteo vs NASA POWER — {NOMBRE_DISPLAY[parque]}", "12px 0 6px")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=m["fecha_hora"], y=m["ghi_wm2_om"], name="Open-Meteo",
+                             line=dict(color=AES_AZUL, width=1.8)))
+    fig.add_trace(go.Scatter(x=m["fecha_hora"], y=m["ghi_wm2_nasa"], name="NASA POWER",
+                             line=dict(color=AES_AMBAR, width=1.8, dash="dot")))
+    st.plotly_chart(_layout_base(fig), use_container_width=True, key=f"ml_nasa_serie_{parque}")
+
+    _titulo("Dispersión hora a hora (línea = acuerdo perfecto)", "12px 0 6px")
+    mx = max(m["ghi_wm2_om"].max(), m["ghi_wm2_nasa"].max())
+    figs = go.Figure()
+    figs.add_trace(go.Scatter(x=m["ghi_wm2_nasa"], y=m["ghi_wm2_om"], mode="markers",
+                              marker=dict(color=AES_AZUL, size=6, opacity=0.5),
+                              hovertemplate="NASA %{x:.0f} · OM %{y:.0f}<extra></extra>", name="horas"))
+    figs.add_trace(go.Scatter(x=[0, mx], y=[0, mx], mode="lines",
+                              line=dict(color=AES_MUTED, dash="dash"), name="y=x"))
+    figs.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+                       height=340, margin=dict(l=0, r=0, t=10, b=0),
+                       xaxis_title="NASA POWER GHI (W/m²)", yaxis_title="Open-Meteo GHI (W/m²)")
+    figs.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+    figs.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    st.plotly_chart(figs, use_container_width=True, key=f"ml_nasa_scatter_{parque}")
+    st.caption(
+        f"{len(m)} horas comparadas. Un sesgo alto o correlación baja indica que Open-Meteo "
+        "se desvía del recurso satelital → afecta el forecast y el modelo físico de ese parque."
+    )
+
+
 # ── Entrada principal ──────────────────────────────────────────────────────────
 
 def render_tab_ml() -> None:
@@ -762,7 +848,7 @@ def render_tab_ml() -> None:
     analisis = st.radio(
         "Análisis",
         ["Forecast de generación", "Detección de anomalías", "Predicción de CMG",
-         "Análisis de eficiencia", "BESS — operación"],
+         "Análisis de eficiencia", "BESS — operación", "Validación recurso (NASA)"],
         horizontal=True, key="ml_analisis",
     )
 
@@ -793,3 +879,9 @@ def render_tab_ml() -> None:
                            format_func=lambda c: BESS[c]["nombre"], key="ml_bess_cod")
         with st.spinner("Analizando operación del BESS..."):
             _render_bess_ml(cod)
+
+    elif analisis == "Validación recurso (NASA)":
+        parque = st.selectbox("Parque solar", PARQUES_SOLAR, format_func=lambda p: NOMBRE_DISPLAY[p],
+                              key="ml_nasa_parque")
+        with st.spinner("Comparando fuentes de irradiancia..."):
+            _render_validacion_nasa(parque)
