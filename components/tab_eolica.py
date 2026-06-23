@@ -101,7 +101,7 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
             fig.add_trace(go.Scatter(
                 x=df_mod["fecha_hora"], y=df_mod["p_eolica_estimada_mw"],
                 name="Modelo eolico",
-                line=dict(color=AES_VIOLETA, width=1.2, dash="dot"),
+                line=dict(color=AES_VIOLETA, width=2, dash="solid"),
                 fill="tozeroy", fillcolor="rgba(155,111,212,0.04)",
                 hovertemplate="%{y:.1f} MW<extra>Modelo eolico</extra>",
             ))
@@ -392,28 +392,25 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
 <div style='display:grid;grid-template-columns:1fr 1fr;gap:6px 24px'>
   <div><span style='display:inline-block;width:28px;height:3px;background:{AES_CYAN};
   vertical-align:middle;margin-right:7px;border-radius:2px'></span>
-  <b>Generacion real</b> — medicion CEN hora a hora (gen-real/v3). Negativos filtrados.</div>
+  <b>Generacion real</b> — lo que el parque inyectó de verdad (medición CEN).</div>
   <div><span style='display:inline-block;width:28px;height:2px;background:#D97706;
   vertical-align:middle;margin-right:7px;border-bottom:2px dashed #D97706'></span>
-  <b>PCP programada</b> — potencia declarada D-1 ante el Coordinador (SIPUB pcp/v4).</div>
-  <div><span style='display:inline-block;width:28px;height:1px;background:{AES_VIOLETA};
-  vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_VIOLETA}'></span>
-  <b>Modelo eolico</b> — curva de potencia con cut-in/rated/cut-out
-  (fórmulas en el panel inferior). v = viento a 100m (hub).</div>
+  <b>PCP programada</b> — lo que se comprometió a generar el día anterior.</div>
+  <div><span style='display:inline-block;width:28px;height:3px;background:{AES_VIOLETA};
+  vertical-align:middle;margin-right:7px;border-radius:2px'></span>
+  <b>Modelo eolico</b> — lo que debería generar según el viento en el hub.</div>
   <div><span style='display:inline-block;width:28px;height:3px;background:{AES_MUTED};
   vertical-align:middle;margin-right:7px;border-radius:2px'></span>
-  <b>Viento 10m</b> — velocidad a 10m (Open-Meteo windspeed_10m) [m/s].</div>
+  <b>Viento 10m</b> — velocidad del viento a 10 m del suelo [m/s].</div>
   <div><span style='display:inline-block;width:28px;height:3px;background:{AES_CYAN};
   vertical-align:middle;margin-right:7px;border-radius:2px'></span>
-  <b>Viento 100m (hub)</b> — interpolado de v80m+v120m con ley de potencia:
-  v(h)=v_ref×(h/h_ref)^α [m/s].</div>
+  <b>Viento 100m (hub)</b> — viento a la altura de las turbinas [m/s].</div>
   <div><span style='display:inline-block;width:28px;height:2px;background:{AES_ROJO};
   vertical-align:middle;margin-right:7px;border-bottom:2px dashed {AES_ROJO}'></span>
-  <b>Rafagas 10m</b> — maximas en [m/s]. Cut-out tipico ~20 m/s.</div>
+  <b>Rafagas 10m</b> — viento máximo puntual [m/s]; sobre ~20 la turbina se frena.</div>
   <div><span style='display:inline-block;width:28px;height:2px;background:{AES_VIOLETA};
   vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_VIOLETA}'></span>
-  <b>Wind shear α</b> — exponente ley de potencia perfil vertical.
-  α&gt;0.30 → atm. estable, estelas mas persistentes.</div>
+  <b>Wind shear α</b> — cuánto sube el viento con la altura; alto = aire estable.</div>
 </div>
 </div>""",
         unsafe_allow_html=True,

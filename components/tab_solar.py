@@ -95,7 +95,7 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
             fig.add_trace(go.Scatter(
                 x=df_mod["fecha_hora"], y=df_mod["p_fv_estimada_mw"],
                 name="Modelo FV",
-                line=dict(color=AES_VIOLETA, width=1.2, dash="dot"),
+                line=dict(color=AES_VIOLETA, width=2, dash="solid"),
                 connectgaps=False,
                 fill="tozeroy", fillcolor="rgba(155,111,212,0.04)",
                 hovertemplate="%{y:.1f} MW<extra>Modelo FV</extra>",
@@ -350,24 +350,22 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
 <div style='display:grid;grid-template-columns:1fr 1fr;gap:6px 24px'>
   <div><span style='display:inline-block;width:28px;height:3px;background:{AES_AZUL};
   vertical-align:middle;margin-right:7px;border-radius:2px'></span>
-  <b>Generacion real</b> — medicion CEN hora a hora (gen-real/v3). BESS y valores negativos excluidos.</div>
+  <b>Generacion real</b> — lo que el parque inyectó de verdad (medición CEN).</div>
   <div><span style='display:inline-block;width:28px;height:2px;background:#D97706;
   vertical-align:middle;margin-right:7px;border-radius:2px;border-bottom:2px dashed #D97706'></span>
-  <b>PCP programada</b> — potencia declarada D-1 ante el Coordinador (SIPUB pcp/v4).</div>
-  <div><span style='display:inline-block;width:28px;height:1px;background:{AES_VIOLETA};
-  vertical-align:middle;margin-right:7px;border-radius:2px;border-bottom:2px dotted {AES_VIOLETA}'></span>
-  <b>Modelo FV</b> — potencia estimada por irradiancia y temperatura de celda
-  (fórmulas en el panel inferior). Solo horas diurnas.</div>
+  <b>PCP programada</b> — lo que se comprometió a generar el día anterior.</div>
+  <div><span style='display:inline-block;width:28px;height:3px;background:{AES_VIOLETA};
+  vertical-align:middle;margin-right:7px;border-radius:2px'></span>
+  <b>Modelo FV</b> — lo que debería generar según el sol y la temperatura.</div>
   <div><span style='display:inline-block;width:28px;height:3px;background:{AES_AMBAR};
   vertical-align:middle;margin-right:7px;border-radius:2px'></span>
-  <b>GHI historico</b> — irradiancia global horizontal [W/m²] (Open-Meteo).</div>
+  <b>GHI historico</b> — sol que llegó al suelo [W/m²] (Open-Meteo).</div>
   <div><span style='display:inline-block;width:28px;height:1px;background:{AES_AMBAR};
   vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_AMBAR}'></span>
-  <b>GHI forecast</b> — pronostico Open-Meteo proximos 7 dias.</div>
+  <b>GHI forecast</b> — sol pronosticado para los próximos 7 días.</div>
   <div><span style='display:inline-block;width:28px;height:1px;background:{AES_MUTED};
   vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_MUTED}'></span>
-  <b>Nubosidad baja %</b> — fraccion cubierta por nubes bajas.
-  Camanchaca si &gt;60% con total &lt;35%.</div>
+  <b>Nubosidad baja %</b> — nubes bajas; muchas con cielo despejado arriba = camanchaca.</div>
 </div>
 </div>""",
         unsafe_allow_html=True,
