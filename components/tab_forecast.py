@@ -95,7 +95,58 @@ def _grafico_portfolio(df: pd.DataFrame) -> None:
     st.plotly_chart(fig, use_container_width=True, key="forecast_grafico_portfolio")
 
 
-def _grafico_parque(df: pd.DataFrame, parque: str) -> None:
+@st.cache_data(ttl=1800)
+def _ml_forecast_parque(parque: str) -> pd.DataFrame:
+    """Pronóstico ML (RandomForest) para un parque: entrena meteo→gen_real histórico
+    y predice sobre el forecast Open-Meteo. Devuelve [fecha_hora, ml_mw] o vacío.
+    Usa solo las features disponibles en el forecast para que el modelo sea aplicable."""
+    try:
+        from sklearn.ensemble import RandomForestRegressor
+        from utils.db import get_client
+    except Exception:
+        return pd.DataFrame()
+    tec = TECNOLOGIA[parque]
+    feats = ["ghi_wm2", "cloud_cover_pct"] if tec == "Solar" else ["wind_speed_100m", "wind_gusts_10m"]
+    sb = get_client()
+    santiago = timezone(timedelta(hours=-3))
+    desde = (datetime.now(santiago) - timedelta(days=45)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        sel = "fecha_hora," + ",".join(feats)
+        mh = (sb.table("meteo_ernc").select(sel)
+              .eq("parque", parque).eq("es_forecast", False)
+              .gte("fecha_hora", desde).order("fecha_hora").execute())
+        gh = (sb.table("generacion_real_ernc").select("fecha_hora,gen_real_mw")
+              .eq("parque", parque).gte("fecha_hora", desde).order("fecha_hora").execute())
+    except Exception:
+        return pd.DataFrame()
+    if not mh.data or not gh.data:
+        return pd.DataFrame()
+    dm = pd.DataFrame(mh.data); dg = pd.DataFrame(gh.data)
+    dm["fecha_hora"] = pd.to_datetime(dm["fecha_hora"])
+    dg["fecha_hora"] = pd.to_datetime(dg["fecha_hora"])
+    d = dm.merge(dg, on="fecha_hora", how="inner").dropna(subset=feats + ["gen_real_mw"])
+    d = d[d["gen_real_mw"] >= 0]
+    if len(d) < 48:
+        return pd.DataFrame()
+    d["hora_dia"] = d["fecha_hora"].dt.hour
+    cols = feats + ["hora_dia"]
+    m = RandomForestRegressor(n_estimators=160, max_depth=12, random_state=42, n_jobs=-1)
+    m.fit(d[cols].values, d["gen_real_mw"].values)
+
+    fc = _cargar_forecast()
+    fc = fc[fc["parque"] == parque].copy()
+    if fc.empty or any(c not in fc.columns for c in feats):
+        return pd.DataFrame()
+    fc = fc.dropna(subset=feats)
+    if fc.empty:
+        return pd.DataFrame()
+    fc["hora_dia"] = fc["fecha_hora"].dt.hour
+    import numpy as np
+    pred = np.clip(m.predict(fc[cols].values), 0, PMAX[parque])
+    return pd.DataFrame({"fecha_hora": fc["fecha_hora"].values, "ml_mw": pred})
+
+
+def _grafico_parque(df: pd.DataFrame, parque: str, con_ml: bool = False) -> None:
     tec  = TECNOLOGIA[parque]
     df_p = df[df["parque"] == parque].sort_values("fecha_hora")
     if df_p.empty:
@@ -111,11 +162,20 @@ def _grafico_parque(df: pd.DataFrame, parque: str) -> None:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=df_p["fecha_hora"], y=df_p[y_col],
-        name="Potencia estimada",
+        name="Modelo físico",
         fill="tozeroy", fillcolor=fill_c,
         line=dict(color=color, width=2),
-        hovertemplate="%{y:.1f} MW<extra>Estimado modelo</extra>",
+        hovertemplate="%{y:.1f} MW<extra>Modelo físico</extra>",
     ))
+    if con_ml:
+        ml = _ml_forecast_parque(parque)
+        if not ml.empty:
+            fig.add_trace(go.Scatter(
+                x=ml["fecha_hora"], y=ml["ml_mw"],
+                name="Modelo ML",
+                line=dict(color=AES_VIOLETA, width=2, dash="dash"),
+                hovertemplate="%{y:.1f} MW<extra>Modelo ML</extra>",
+            ))
     if y2_col in df_p.columns:
         fig.add_trace(go.Scatter(
             x=df_p["fecha_hora"], y=df_p[y2_col],
@@ -224,4 +284,12 @@ def render_tab_forecast() -> None:
             format_func=lambda p: NOMBRE_DISPLAY[p],
             key="fcst_parque",
         )
-    _grafico_parque(df, parque_sel)
+    con_ml = st.checkbox("Comparar con modelo ML (entrena con histórico real del parque)",
+                         value=False, key="fcst_con_ml")
+    _grafico_parque(df, parque_sel, con_ml=con_ml)
+    if con_ml:
+        st.caption(
+            "Modelo físico = estimación por irradiancia/viento. Modelo ML = RandomForest "
+            "entrenado con la generación real reciente del parque vs su meteo. Si difieren "
+            "mucho, el modelo físico puede estar sesgado para este parque."
+        )

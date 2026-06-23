@@ -721,7 +721,8 @@ def main():
     elif vista == "Forecast 7d":
         render_tab_forecast()
     elif vista == "Estadisticas":
-        render_tab_estadisticas(gen_rows=gen_rows, prog_rows=prog_rows, cmg_rows=cmg_rows)
+        render_tab_estadisticas(gen_rows=gen_rows, prog_rows=prog_rows, cmg_rows=cmg_rows,
+                                 bess_rows=bess_rows)
     elif vista == "ML Analysis":
         render_tab_ml()
     elif vista == "Alarmas":
