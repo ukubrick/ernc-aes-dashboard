@@ -1462,5 +1462,51 @@ endpoints nuevos y se pulió UX en mapa, ML, forecast y estadísticas.
 
 ---
 
-*Actualizado 2026-06-23 — Sesiones 1–23.*
+## SESIÓN 24 — POBLADO NASA POWER + FIX DESFASE HORARIO LST (2026-06-24)
+
+La sección **ML → Validación recurso (NASA)** salía vacía. Se pobló con datos reales y se
+corrigió un bug de timezone en la fuente NASA.
+
+### Por qué salía vacía (reloj del entorno adelantado)
+El reloj del entorno está en **2026-06-24**, pero NASA POWER tiene rezago real de **~85 días**
+(no los 3-7 que asumía la doc) → su data real más reciente llega solo a **2026-03-30**. Dos
+bloqueos para el cruce Open-Meteo vs NASA:
+1. La sección miraba **30 días** hacia atrás desde junio → nunca alcanzaba marzo.
+2. El Open-Meteo en DB es de junio-julio (ventana móvil 5 días) → **cero solape** con NASA. Y el
+   endpoint *forecast* de Open-Meteo devuelve **GHI `None`** para fechas tan atrás.
+
+### Solución de poblado (backfill puntual, marzo 2026)
+- **NASA:** `fetch_nasa_meteo(dias=120)` → trae su data real (filtra `-999`). ~864 reg/parque solar.
+- **Open-Meteo histórico:** se usó el **Archive API (ERA5)** `archive-api.open-meteo.com/v1/archive`
+  (`shortwave_radiation,temperature_2m,wind_speed_10m`, `timezone=America/Santiago`, `wind_speed_unit=ms`).
+  El *forecast* NO sirve radiación histórica; el *archive* sí (límite: desde ~2026-03-23).
+- Ambos en `meteo_ernc` con `fuente` correspondiente → la validación cruza por `fecha_hora`.
+- **Dedup** `(parque,fecha_hora,fuente)` obligatorio antes del upsert (Open-Meteo trae duplicados
+  por DST, si no → error `ON CONFLICT DO UPDATE cannot affect row a second time`).
+
+### Cambio de código — ventana de la sección
+`components/tab_ml.py::_meteo_por_fuente` default **`dias=30 → 120`** para que el comparador
+alcance la data de NASA en este entorno (en prod real es inocuo: solo trae más historia).
+
+### BUG CORREGIDO — desfase horario LST (≈2 h) en NASA POWER
+`utils/nasapower_api.py` pedía `time-standard: LST` (**hora solar local**, basada en longitud) y
+guardaba la hora cruda como si fuera civil. Open-Meteo usa hora civil `America/Santiago` → la serie
+NASA quedaba **~2 h corrida** (pico NASA 11h vs Open-Meteo 13h). Esto inflaba el RMSE y partía la
+nube de dispersión en dos bandas.
+- **Fix:** pedir `time-standard: **UTC**` y convertir con
+  `datetime.strptime(k,"%Y%m%d%H").replace(tzinfo=timezone.utc).astimezone(TZ_CHILE)`.
+- Aplica también al cron diario futuro, no solo al backfill.
+- **Impacto (AS1):** RMSE **339 → 32 W/m²**, correlación **0.64 → 0.997**, sesgo −9 W/m² (real,
+  diferencia genuina modelo vs satélite). BOL: RMSE 18, corr 0.999.
+- **Regla:** NASA POWER siempre en UTC + `astimezone(TZ_CHILE)`. NUNCA `time-standard: LST` para
+  cruzar con fuentes en hora civil.
+
+### Pendiente Sesión 24
+- [ ] En producción con reloj real, el cron diario `Adquisicion_nasa_ernc.py` poblará solo (rezago
+      de días) — el backfill de marzo fue puntual para este entorno simulado.
+- [ ] (Opcional) Anclar la ventana del comparador a la última fecha de NASA en vez del fijo 120 d.
+
+---
+
+*Actualizado 2026-06-24 — Sesiones 1–24.*
 *Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER*

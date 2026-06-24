@@ -8,7 +8,7 @@ Se guarda en la tabla meteo_ernc con fuente='nasa-power' (mismas columnas ghi_wm
 wind_speed_10m), de modo que el dashboard puede cruzarlo con el Open-Meteo existente.
 """
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from config import COORDENADAS, NOMBRE_DISPLAY, TZ_CHILE, PARQUES_SOLAR
 
@@ -36,7 +36,7 @@ def fetch_nasa_meteo(parque: str, dias: int = 10) -> list[dict]:
             "parameters": _PARAMS, "community": "RE",
             "latitude": coord["lat"], "longitude": coord["lon"],
             "start": start, "end": end, "format": "JSON",
-            "time-standard": "LST",
+            "time-standard": "UTC",
         }, timeout=60)
         r.raise_for_status()
         param = r.json().get("properties", {}).get("parameter", {})
@@ -50,11 +50,12 @@ def fetch_nasa_meteo(parque: str, dias: int = 10) -> list[dict]:
 
     registros = []
     for k, v in ghi.items():
-        # k = "YYYYMMDDHH" (hora 0-23, LST = hora local del punto)
+        # k = "YYYYMMDDHH" en UTC → convertir a hora civil de Chile (America/Santiago)
+        # para alinear con Open-Meteo. Pedir en LST desfasa ~2 h (hora solar ≠ hora civil).
         if v == _FILL:
             continue
         try:
-            dt = datetime.strptime(k, "%Y%m%d%H")
+            dt = datetime.strptime(k, "%Y%m%d%H").replace(tzinfo=timezone.utc).astimezone(TZ_CHILE)
         except ValueError:
             continue
         fecha_hora = dt.strftime("%Y-%m-%d %H:%M:%S")
