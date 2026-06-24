@@ -1,0 +1,35 @@
+name: Potencia real ERNC (30 min)
+
+on:
+  schedule:
+    # Minutos :25 y :55 — espaciado respecto a la corrida horaria completa (:10).
+    - cron: "25,55 * * * *"
+  workflow_dispatch:
+
+# Evita solaparse consigo mismo si una corrida se atrasa.
+concurrency:
+  group: potencia-ernc
+  cancel-in-progress: true
+
+jobs:
+  potencia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Adquisición potencia real (gen-real + BESS)
+        run: python Adquisicion_potencia_ernc.py
+        env:
+          CEN_USER_KEY:  ${{ secrets.CEN_USER_KEY }}
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}

@@ -331,7 +331,7 @@ def _check_limitaciones(lim_rows: list[dict], insights: list[Insight]) -> None:
             detalle=f"{instalacion} — {potencia} {lim.get('unidad_medida_potencia', 'MW')} restringidos.",
             valor=potencia,
             unidad=lim.get("unidad_medida_potencia", "MW"),
-            categoria="operacional",
+            categoria="limitacion",
         ))
 
 

@@ -378,6 +378,13 @@ def cmg_crucero(cmg_rows: list[dict]) -> float | None:
     return None
 
 
+def cmg_promedio_sen(cmg_rows: list[dict]) -> float | None:
+    """Promedio de CMG de los nodos del SEN, excluyendo P.MONTT (otro sistema)."""
+    vals = [r.get("cmg_usd_mwh") for r in cmg_rows
+            if r.get("nodo") != "P.MONTT_______220" and r.get("cmg_usd_mwh") is not None]
+    return round(sum(vals) / len(vals), 1) if vals else None
+
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 
 def _fmt_hora(ts: str | None) -> str:
@@ -449,7 +456,8 @@ def _bloque_fuentes(act: dict) -> str:
     )
 
 
-def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dict | None = None) -> str:
+def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dict | None = None,
+                   bess_rows: list | None = None) -> str:
     # None = ningún parque seleccionado explícitamente → el mapa muestra Chile completo
     parque_activo = st.session_state.get("parque_activo", None)
 
@@ -561,6 +569,38 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
                 st.session_state["_sync_parque"] = p   # one-shot: fuerza el selectbox una vez
                 st.rerun()
 
+        # ── BESS (almacenamiento) ──
+        from config import BESS as _BESS_CFG
+        _bess_net = {}
+        if bess_rows:
+            import pandas as _pd
+            _bdf = _pd.DataFrame(bess_rows)
+            if not _bdf.empty and "bess" in _bdf.columns:
+                _bdf["fecha_hora"] = _pd.to_datetime(_bdf["fecha_hora"])
+                _ult = _bdf.sort_values("fecha_hora").drop_duplicates("bess", keep="last")
+                _bess_net = dict(zip(_ult["bess"], _ult["potencia_neta_mw"]))
+
+        st.markdown(
+            f"<div style='font-size:10px;font-weight:700;color:{AES_CYAN};text-transform:uppercase;"
+            f"letter-spacing:1.2px;margin:12px 0 8px;padding-left:2px'>BESS · Almacenamiento</div>",
+            unsafe_allow_html=True,
+        )
+        for cod, b in _BESS_CFG.items():
+            neta = _bess_net.get(cod)
+            if neta is None:
+                estado_str = "— MW"
+            elif neta > 1:
+                estado_str = f"▲ {neta:.0f} MW desc."
+            elif neta < -1:
+                estado_str = f"▼ {abs(neta):.0f} MW carga"
+            else:
+                estado_str = "reposo"
+            if st.button(f"{b['nombre'].replace('BESS ', '')}  ·  {estado_str}",
+                         key=f"btn_bess_{cod}", use_container_width=True):
+                st.session_state["vista"] = "BESS"
+                st.session_state["_force_cat"] = "Operación"
+                st.rerun()
+
         st.divider()
 
         # Acciones
@@ -568,17 +608,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
             st.cache_data.clear()
             st.rerun()
 
-        if "pdf_bytes" in st.session_state and st.session_state["pdf_bytes"]:
-            import datetime as _dt
-            st.download_button(
-                label="Descargar reporte PDF",
-                data=st.session_state["pdf_bytes"],
-                file_name=f"reporte_ernc_{_dt.datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
-        if st.button("Generar reporte PDF", use_container_width=True, key="btn_pdf"):
-            st.session_state["generar_pdf"] = True
+        st.caption("El reporte PDF está en Referencia → Reportes.")
 
 
     return st.session_state.get("parque_activo", None)
@@ -593,7 +623,7 @@ CATEGORIAS = {
     "Operación":         ["Mapa & Resumen", "Solar FV", "Eolica", "BESS"],
     "Análisis":          ["Forecast 7d", "Estadisticas", "ML Analysis"],
     "Alarmas & Mercado": ["Alarmas", "Meteo & Sistema", "CMG", "Limitaciones"],
-    "Referencia":        ["Infotecnica"],
+    "Referencia":        ["Recomendaciones", "Reportes", "Infotecnica"],
 }
 VISTAS = [v for grupo in CATEGORIAS.values() for v in grupo]
 
@@ -645,7 +675,75 @@ def _navegacion() -> str:
 
 # ── Layout principal ──────────────────────────────────────────────────────────
 
+def _logo_keyed_html(color: tuple[int, int, int] = (255, 255, 255), width_px: int = 150) -> str | None:
+    """Devuelve un <img> base64 del logo Pulsar con el fondo (checkerboard horneado)
+    eliminado por key de luminancia y recoloreado al `color` indicado. El PNG entregado
+    viene flatten en RGB: fondo 242–249, logo blanco 251–255 (ver CLAUDE.md Sesión 16)."""
+    path = "assets/logo_pulsar.png"
+    if not os.path.exists(path):
+        return None
+    try:
+        import base64 as _b64, io as _io
+        from PIL import Image as _PILImage
+        import numpy as _np
+        img = _PILImage.open(path).convert("RGB")
+        arr = _np.asarray(img).astype(_np.float32)
+        bright = arr.mean(axis=2)
+        alpha = _np.clip((bright - 251.0) * 80.0, 0, 255).astype(_np.uint8)
+        r, g, b = color
+        rgba = _np.zeros((*alpha.shape, 4), dtype=_np.uint8)
+        rgba[..., 0] = r; rgba[..., 1] = g; rgba[..., 2] = b; rgba[..., 3] = alpha
+        out = _PILImage.fromarray(rgba, "RGBA")
+        w, h = out.size
+        out = out.resize((width_px, int(h * width_px / w)), _PILImage.LANCZOS)
+        buf = _io.BytesIO()
+        out.save(buf, format="PNG")
+        b64 = _b64.b64encode(buf.getvalue()).decode()
+        return f"<img src='data:image/png;base64,{b64}' width='{width_px}' style='display:inline-block'/>"
+    except Exception:
+        return None
+
+
+def _password_correcto() -> bool:
+    """Gate de acceso con contraseña compartida (pass en st.secrets o fallback 'carbon')."""
+    if st.session_state.get("_auth_ok"):
+        return True
+
+    try:
+        esperado = st.secrets.get("APP_PASSWORD") or os.environ.get("APP_PASSWORD") or "carbon"
+    except Exception:
+        esperado = os.environ.get("APP_PASSWORD") or "carbon"
+
+    # Pantalla de login centrada con el logo (keyed a negro sobre fondo transparente)
+    _, col, _ = st.columns([1, 1.2, 1])
+    with col:
+        st.markdown("<div style='height:8vh'></div>", unsafe_allow_html=True)
+        logo_html = _logo_keyed_html(color=(26, 31, 54), width_px=150)  # AES_TEXTO ~ negro azulado
+        if logo_html:
+            st.markdown(
+                f"<div style='text-align:center;margin-bottom:6px'>{logo_html}</div>",
+                unsafe_allow_html=True,
+            )
+        st.markdown(
+            f"<h2 style='color:{AES_TEXTO};font-weight:800;margin:4px 0 2px 0;text-align:center'>Pulsar — AES Andes</h2>"
+            f"<p style='color:{AES_MUTED};font-size:13px;margin:0 0 16px 0;text-align:center'>Ingresa la contraseña para acceder al dashboard.</p>",
+            unsafe_allow_html=True,
+        )
+        pwd = st.text_input("Contraseña", type="password", key="_pwd_input",
+                            label_visibility="collapsed", placeholder="Contraseña")
+        if st.button("Ingresar", type="primary", use_container_width=True):
+            if pwd == esperado:
+                st.session_state["_auth_ok"] = True
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta.")
+    return False
+
+
 def main():
+
+    if not _password_correcto():
+        st.stop()
 
     with st.spinner("Cargando datos..."):
         try:
@@ -661,12 +759,18 @@ def main():
     cmg_idx         = {r["nodo"]: r.get("cmg_usd_mwh") for r in cmg_rows}
     cmg_por_parque  = {p: cmg_idx.get(CMG_NODO.get(p)) for p in PARQUES_TODOS}
 
+    cmg_prom = cmg_promedio_sen(cmg_rows)
+
     # Generación PDF
     if st.session_state.pop("generar_pdf", False):
         from utils.insights import evaluar_insights
         from utils.pdf_report import generar_pdf
+        from utils.recomendaciones import generar_recomendaciones
         with st.spinner("Generando PDF..."):
             insights = evaluar_insights(gen_por_parque, prog_por_parque, cmg_val, lim_rows)
+            insights = [i for i in insights if i.categoria != "limitacion"]
+            recs = generar_recomendaciones(gen_por_parque, prog_por_parque, cmg_por_parque,
+                                           cmg_prom, bess_rows, lim_rows)
             pdf_bytes = generar_pdf(
                 gen_por_parque=gen_por_parque,
                 prog_por_parque=prog_por_parque,
@@ -675,11 +779,14 @@ def main():
                 n_limitaciones=n_lim,
                 insights=insights,
                 ultima_hora=ultima_hora,
+                bess_rows=bess_rows,
+                recomendaciones=recs,
+                cmg_promedio=cmg_prom,
             )
             st.session_state["pdf_bytes"] = pdf_bytes
         st.rerun()
 
-    parque_activo = render_sidebar(gen_por_parque, actualizaciones)
+    parque_activo = render_sidebar(gen_por_parque, actualizaciones, bess_rows=bess_rows)
 
     # Header
     st.markdown(
@@ -739,8 +846,86 @@ def main():
         _render_tab_cmg(cmg_rows)
     elif vista == "Limitaciones":
         _render_tab_limitaciones(lim_rows)
+    elif vista == "Recomendaciones":
+        _render_tab_recomendaciones(gen_por_parque, prog_por_parque, cmg_por_parque,
+                                    cmg_prom, bess_rows, lim_rows)
+    elif vista == "Reportes":
+        _render_tab_reportes()
     elif vista == "Infotecnica":
         render_tab_infotecnica()
+
+
+# ── Referencia: Recomendaciones ─────────────────────────────────────────────────
+
+_REC_COLOR = {"alta": AES_ROJO, "media": AES_AMBAR, "baja": AES_VERDE}
+_REC_BG    = {"alta": "#FEF2F2", "media": "#FFFBEB", "baja": "#F0FDF4"}
+_REC_LABEL = {"alta": "Prioridad alta", "media": "Prioridad media", "baja": "Informativo"}
+_REC_HORIZ = {"ahora": "Ahora", "corto": "Corto plazo", "futuro": "A futuro"}
+
+
+def _render_tab_recomendaciones(gen_por_parque, prog_por_parque, cmg_por_parque,
+                                cmg_prom, bess_rows, lim_rows):
+    from utils.recomendaciones import generar_recomendaciones
+
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:4px'>"
+        f"Recomendaciones operacionales</div>"
+        f"<div style='font-size:11.5px;color:{AES_MUTED};margin-bottom:14px'>"
+        f"Acciones sugeridas a partir del estado actual del portfolio (generación, desvíos, "
+        f"CMG, BESS y limitaciones). Orientan decisiones de ahora y a futuro.</div>",
+        unsafe_allow_html=True,
+    )
+
+    recs = generar_recomendaciones(gen_por_parque, prog_por_parque, cmg_por_parque,
+                                   cmg_prom, bess_rows, lim_rows)
+
+    n_alta = sum(1 for r in recs if r.prioridad == "alta")
+    n_media = sum(1 for r in recs if r.prioridad == "media")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Prioridad alta", n_alta)
+    c2.metric("Prioridad media", n_media)
+    c3.metric("Total recomendaciones", len(recs))
+
+    for r in recs:
+        col = _REC_COLOR.get(r.prioridad, AES_MUTED)
+        bg  = _REC_BG.get(r.prioridad, AES_GRIS)
+        st.markdown(
+            f"<div style='background:{bg};border-left:4px solid {col};border-radius:0 10px 10px 0;"
+            f"border:1px solid {col}33;border-left-color:{col};padding:14px 18px;margin-bottom:10px'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'>"
+            f"<span style='font-size:13px;font-weight:700;color:{AES_TEXTO}'>{r.titulo}</span>"
+            f"<span style='font-size:10px;font-weight:700;color:{col};text-transform:uppercase;"
+            f"letter-spacing:0.6px'>{_REC_LABEL.get(r.prioridad,'')} · {_REC_HORIZ.get(r.horizonte,'')}</span>"
+            f"</div>"
+            f"<div style='font-size:12px;color:{AES_MUTED};line-height:1.6'>{r.detalle}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def _render_tab_reportes():
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:4px'>"
+        f"Reporte PDF del portfolio</div>"
+        f"<div style='font-size:11.5px;color:{AES_MUTED};margin-bottom:14px'>"
+        f"Documento operacional con resumen ejecutivo, estado por parque, BESS, "
+        f"recomendaciones y alarmas automáticas. Se genera en el momento con los datos actuales.</div>",
+        unsafe_allow_html=True,
+    )
+
+    if st.button("Generar reporte PDF", type="primary", key="btn_pdf_ref"):
+        st.session_state["generar_pdf"] = True
+        st.rerun()
+
+    if st.session_state.get("pdf_bytes"):
+        import datetime as _dt
+        st.success("Reporte generado. Descárgalo a continuación.")
+        st.download_button(
+            label="Descargar reporte PDF",
+            data=st.session_state["pdf_bytes"],
+            file_name=f"reporte_pulsar_{_dt.datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            mime="application/pdf",
+        )
 
 
 # ── Tab Resumen ───────────────────────────────────────────────────────────────
