@@ -759,7 +759,7 @@ def _recomendacion_arbitraje(cod: str) -> None:
 # ── 6. Validación de recurso solar — NASA POWER vs Open-Meteo ───────────────────
 
 @st.cache_data(ttl=1800)
-def _meteo_por_fuente(parque: str, fuente: str, dias: int = 30) -> pd.DataFrame:
+def _meteo_por_fuente(parque: str, fuente: str, dias: int = 120) -> pd.DataFrame:
     """GHI horario de meteo_ernc para un parque y una fuente (open-meteo / nasa-power)."""
     from utils.db import get_client
     sb = get_client()
