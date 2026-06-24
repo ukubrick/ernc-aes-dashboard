@@ -4,6 +4,7 @@ from config import (
     PANEL_NOCT, PANEL_GAMMA, AIRE_R, PMAX,
     TURBINA_CP, TURBINA_V_CUTIN, TURBINA_V_RATED, TURBINA_V_CUTOUT,
     SHEAR_ALPHA_MIN, SHEAR_ALPHA_MAX,
+    TRACKER_GAIN, TRACKER_AVAIL, TRACKER_STOW_WIND_MS, TRACKER_POA_MAX,
 )
 
 
@@ -22,15 +23,38 @@ def calcular_temp_celda(t_amb: float, ghi: float, wind_ms: float = 1.0) -> float
     return round(tc, 2)
 
 
-def calcular_potencia_fv_estimada(gti: float, tc: float, pmax_mw: float) -> float:
+def poa_tracker(gti_fijo: float, ghi: float, wind_ms: float = 0.0,
+                gusts_ms: float | None = None) -> float:
     """
-    P = Ppico × (GTI/1000) × [1 + γ(Tc - 25)]
-    Retorna MW estimados. Cap a pmax_mw.
+    Irradiancia en el plano (POA) para seguidores de 1 eje, a partir del GTI de tilt
+    fijo de Open-Meteo. Modelo pragmático:
+      - Stow por viento alto: si viento/ráfaga ≥ TRACKER_STOW_WIND_MS, los paneles se
+        ponen horizontales por protección → POA ≈ GHI (no se aprovecha el tracking).
+      - Operación normal: POA = GTI_fijo × TRACKER_GAIN, nunca menor que GHI (un tracker
+        no rinde peor que horizontal) y acotado a TRACKER_POA_MAX.
+    """
+    if gti_fijo is None or gti_fijo <= 0:
+        return 0.0
+    ghi = ghi or 0.0
+    viento = max(wind_ms or 0.0, gusts_ms or 0.0)
+    if viento >= TRACKER_STOW_WIND_MS:
+        return round(min(max(ghi, 0.0), TRACKER_POA_MAX), 2)
+    poa = gti_fijo * TRACKER_GAIN
+    poa = max(poa, ghi)
+    return round(min(poa, TRACKER_POA_MAX), 2)
+
+
+def calcular_potencia_fv_estimada(gti: float, tc: float, pmax_mw: float,
+                                  availability: float = TRACKER_AVAIL) -> float:
+    """
+    P = Ppico × (POA/1000) × [1 + γ(Tc - 25)] × disponibilidad
+    `gti` aquí ya debe ser el POA del tracker (ver poa_tracker). El factor
+    `availability` (0.80) refleja la confiabilidad de los seguidores. Cap a pmax_mw.
     """
     if gti is None or gti <= 0:
         return 0.0
     eficiencia_temp = 1.0 + PANEL_GAMMA * (tc - 25.0)
-    p = pmax_mw * (gti / 1000.0) * eficiencia_temp
+    p = pmax_mw * (gti / 1000.0) * eficiencia_temp * availability
     return round(max(0.0, min(p, pmax_mw)), 4)
 
 

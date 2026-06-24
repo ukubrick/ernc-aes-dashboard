@@ -62,7 +62,7 @@ def _tabla_diaria(df: pd.DataFrame) -> pd.DataFrame:
     return agg
 
 
-def _grafico_portfolio(df: pd.DataFrame) -> None:
+def _grafico_portfolio(df: pd.DataFrame, ml_total: pd.DataFrame | None = None) -> None:
     df_solar  = df[df["tecnologia"] == "Solar"].groupby("fecha_hora")["p_fv_estimada_mw"].sum().reset_index()
     df_eolica = df[df["tecnologia"] == "Eólica"].groupby("fecha_hora")["p_eolica_estimada_mw"].sum().reset_index()
     df_solar.columns  = ["fecha_hora", "mw"]
@@ -83,6 +83,13 @@ def _grafico_portfolio(df: pd.DataFrame) -> None:
         fillcolor="rgba(59,76,232,0.18)",
         hovertemplate="%{y:.0f} MW<extra>Solar FV estimada</extra>",
     ))
+    if ml_total is not None and not ml_total.empty:
+        fig.add_trace(go.Scatter(
+            x=ml_total["fecha_hora"], y=ml_total["ml_mw"],
+            name="Total ML (data-driven)",
+            line=dict(color=AES_VIOLETA, width=2, dash="dash"),
+            hovertemplate="%{y:.0f} MW<extra>Total ML</extra>",
+        ))
     fig.update_layout(
         template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
         height=380, margin=dict(l=0, r=0, t=10, b=0),
@@ -96,15 +103,20 @@ def _grafico_portfolio(df: pd.DataFrame) -> None:
 
 
 @st.cache_data(ttl=1800)
-def _ml_forecast_parque(parque: str) -> pd.DataFrame:
+def _ml_forecast_parque(parque: str) -> tuple[pd.DataFrame, dict]:
     """Pronóstico ML (RandomForest) para un parque: entrena meteo→gen_real histórico
-    y predice sobre el forecast Open-Meteo. Devuelve [fecha_hora, ml_mw] o vacío.
-    Usa solo las features disponibles en el forecast para que el modelo sea aplicable."""
+    y predice sobre el forecast Open-Meteo. Devuelve ([fecha_hora, ml_mw], métricas).
+    Las métricas (R², MAE, n) salen de un holdout aleatorio 80/20 para indicar la
+    confiabilidad del modelo. Usa solo features disponibles en el forecast."""
+    import numpy as np
+    vacio = (pd.DataFrame(), {})
     try:
         from sklearn.ensemble import RandomForestRegressor
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import r2_score, mean_absolute_error
         from utils.db import get_client
     except Exception:
-        return pd.DataFrame()
+        return vacio
     tec = TECNOLOGIA[parque]
     feats = ["ghi_wm2", "cloud_cover_pct"] if tec == "Solar" else ["wind_speed_100m", "wind_gusts_10m"]
     sb = get_client()
@@ -118,32 +130,64 @@ def _ml_forecast_parque(parque: str) -> pd.DataFrame:
         gh = (sb.table("generacion_real_ernc").select("fecha_hora,gen_real_mw")
               .eq("parque", parque).gte("fecha_hora", desde).order("fecha_hora").execute())
     except Exception:
-        return pd.DataFrame()
+        return vacio
     if not mh.data or not gh.data:
-        return pd.DataFrame()
+        return vacio
     dm = pd.DataFrame(mh.data); dg = pd.DataFrame(gh.data)
     dm["fecha_hora"] = pd.to_datetime(dm["fecha_hora"])
     dg["fecha_hora"] = pd.to_datetime(dg["fecha_hora"])
     d = dm.merge(dg, on="fecha_hora", how="inner").dropna(subset=feats + ["gen_real_mw"])
     d = d[d["gen_real_mw"] >= 0]
     if len(d) < 48:
-        return pd.DataFrame()
+        return vacio
     d["hora_dia"] = d["fecha_hora"].dt.hour
     cols = feats + ["hora_dia"]
+    X, y = d[cols].values, d["gen_real_mw"].values
+
+    # Métricas de confiabilidad con holdout aleatorio
+    metrics = {}
+    try:
+        Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
+        mt = RandomForestRegressor(n_estimators=160, max_depth=12, random_state=42, n_jobs=-1)
+        mt.fit(Xtr, ytr)
+        pte = np.clip(mt.predict(Xte), 0, PMAX[parque])
+        metrics = {"r2": float(r2_score(yte, pte)), "mae": float(mean_absolute_error(yte, pte)),
+                   "n": int(len(d))}
+    except Exception:
+        metrics = {"n": int(len(d))}
+
+    # Modelo final con todo el histórico para predecir el forecast
     m = RandomForestRegressor(n_estimators=160, max_depth=12, random_state=42, n_jobs=-1)
-    m.fit(d[cols].values, d["gen_real_mw"].values)
+    m.fit(X, y)
 
     fc = _cargar_forecast()
     fc = fc[fc["parque"] == parque].copy()
     if fc.empty or any(c not in fc.columns for c in feats):
-        return pd.DataFrame()
+        return (pd.DataFrame(), metrics)
     fc = fc.dropna(subset=feats)
     if fc.empty:
-        return pd.DataFrame()
+        return (pd.DataFrame(), metrics)
     fc["hora_dia"] = fc["fecha_hora"].dt.hour
-    import numpy as np
     pred = np.clip(m.predict(fc[cols].values), 0, PMAX[parque])
-    return pd.DataFrame({"fecha_hora": fc["fecha_hora"].values, "ml_mw": pred})
+    return (pd.DataFrame({"fecha_hora": fc["fecha_hora"].values, "ml_mw": pred}), metrics)
+
+
+@st.cache_data(ttl=1800)
+def _ml_portfolio_total() -> pd.DataFrame:
+    """Suma el pronóstico ML de todos los parques por hora → banda data-driven del
+    portfolio para comparar contra el modelo físico en el horizonte de 7 días."""
+    acc = None
+    for p in PARQUES_TODOS:
+        ml, _ = _ml_forecast_parque(p)
+        if ml.empty:
+            continue
+        ml = ml.rename(columns={"ml_mw": p}).set_index("fecha_hora")
+        acc = ml if acc is None else acc.join(ml, how="outer")
+    if acc is None or acc.empty:
+        return pd.DataFrame()
+    total = acc.sum(axis=1, min_count=1).reset_index()
+    total.columns = ["fecha_hora", "ml_mw"]
+    return total.dropna()
 
 
 def _grafico_parque(df: pd.DataFrame, parque: str, con_ml: bool = False) -> None:
@@ -167,8 +211,9 @@ def _grafico_parque(df: pd.DataFrame, parque: str, con_ml: bool = False) -> None
         line=dict(color=color, width=2),
         hovertemplate="%{y:.1f} MW<extra>Modelo físico</extra>",
     ))
+    metrics = {}
     if con_ml:
-        ml = _ml_forecast_parque(parque)
+        ml, metrics = _ml_forecast_parque(parque)
         if not ml.empty:
             fig.add_trace(go.Scatter(
                 x=ml["fecha_hora"], y=ml["ml_mw"],
@@ -194,6 +239,7 @@ def _grafico_parque(df: pd.DataFrame, parque: str, con_ml: bool = False) -> None
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
     st.plotly_chart(fig, use_container_width=True, key=f"forecast_grafico_parque_{parque}")
+    return metrics
 
 
 def render_tab_forecast() -> None:
@@ -255,7 +301,29 @@ def render_tab_forecast() -> None:
         "(7 dias). Reemplaza a la PCP del Coordinador, que solo se publica hasta el dia "
         "siguiente y no cubre el horizonte de 7 dias."
     )
-    _grafico_portfolio(df)
+    con_ml_portf = st.checkbox(
+        "Superponer pronóstico ML del portfolio (RandomForest entrenado con la generación real reciente)",
+        value=False, key="fcst_portfolio_ml",
+    )
+    ml_total = None
+    if con_ml_portf:
+        with st.spinner("Entrenando modelos ML por parque..."):
+            ml_total = _ml_portfolio_total()
+        if ml_total is not None and not ml_total.empty:
+            ml_mwh = float(ml_total["ml_mw"].sum())
+            delta = ml_mwh - total_mwh
+            st.metric(
+                "Total ML — 7 dias",
+                f"{ml_mwh:,.0f} MWh",
+                delta=f"{delta:+,.0f} MWh vs modelo físico",
+            )
+            st.caption(
+                "Si el ML proyecta menos que el modelo físico, este último puede estar "
+                "sobreestimando (p. ej. limitaciones o disponibilidad real no capturadas)."
+            )
+        else:
+            st.info("Sin suficiente histórico para el modelo ML del portfolio (se necesitan ≥48 h por parque).")
+    _grafico_portfolio(df, ml_total=ml_total)
 
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:16px 0 8px'>"
@@ -286,10 +354,26 @@ def render_tab_forecast() -> None:
         )
     con_ml = st.checkbox("Comparar con modelo ML (entrena con histórico real del parque)",
                          value=False, key="fcst_con_ml")
-    _grafico_parque(df, parque_sel, con_ml=con_ml)
+    metrics = _grafico_parque(df, parque_sel, con_ml=con_ml)
     if con_ml:
-        st.caption(
-            "Modelo físico = estimación por irradiancia/viento. Modelo ML = RandomForest "
-            "entrenado con la generación real reciente del parque vs su meteo. Si difieren "
-            "mucho, el modelo físico puede estar sesgado para este parque."
-        )
+        if metrics and "r2" in metrics:
+            mc1, mc2, mc3 = st.columns(3)
+            with mc1:
+                st.metric("R² del modelo ML", f"{metrics['r2']:.2f}")
+            with mc2:
+                st.metric("MAE (error medio)", f"{metrics['mae']:.1f} MW")
+            with mc3:
+                st.metric("Horas de entrenamiento", f"{metrics['n']:,}")
+            calidad = ("alta" if metrics["r2"] >= 0.85 else
+                       "media" if metrics["r2"] >= 0.6 else "baja")
+            st.caption(
+                f"Confiabilidad **{calidad}** (R²={metrics['r2']:.2f}, holdout 80/20). "
+                "Modelo físico = estimación por irradiancia/viento. Modelo ML = RandomForest "
+                "entrenado con la generación real reciente del parque vs su meteo. Si difieren "
+                "mucho, el modelo físico puede estar sesgado para este parque."
+            )
+        else:
+            st.caption(
+                "Sin histórico suficiente para entrenar el modelo ML de este parque "
+                "(se necesitan ≥48 h de generación real con meteo)."
+            )

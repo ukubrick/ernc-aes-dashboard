@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 
-from config import NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR
+from config import NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, TRACKER_STOW_WIND_MS
 from utils.calculos import calcular_factor_planta, calcular_desvio
 
 AES_AZUL    = "#3B4CE8"
@@ -29,7 +29,7 @@ def _df_meteo(parque: str) -> pd.DataFrame:
         desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=168)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("meteo_ernc")
-            .select("fecha_hora,ghi_wm2,gti_wm2,temp_2m,temp_celda_c,p_fv_estimada_mw,cloudcover_low_pct,cloud_cover_pct,is_day,es_forecast")
+            .select("fecha_hora,ghi_wm2,gti_wm2,temp_2m,temp_celda_c,p_fv_estimada_mw,cloudcover_low_pct,cloud_cover_pct,wind_speed_10m,wind_gusts_10m,is_day,es_forecast")
             .eq("parque", parque)
             .gte("fecha_hora", desde)
             .order("fecha_hora")
@@ -224,15 +224,17 @@ def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
     fp   = calcular_factor_planta(gen, PMAX_FP[parque_sel])
     dev  = calcular_desvio(gen, prog)
 
-    ghi = tc = None
+    ghi = tc = viento = rafaga = None
     if not df_meteo.empty:
         hist_m = df_meteo[df_meteo["es_forecast"] == False]
         if len(hist_m) > 0:
-            u   = hist_m.iloc[-1]
-            ghi = u.get("ghi_wm2")
-            tc  = u.get("temp_celda_c")
+            u      = hist_m.iloc[-1]
+            ghi    = u.get("ghi_wm2")
+            tc     = u.get("temp_celda_c")
+            viento = u.get("wind_speed_10m")
+            rafaga = u.get("wind_gusts_10m")
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     with c1:
         st.metric("Generacion actual", f"{gen:.1f} MW" if gen is not None else "—")
     with c2:
@@ -250,12 +252,30 @@ def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
         st.metric("GHI", f"{ghi:.0f} W/m²" if ghi is not None else "—")
     with c6:
         st.metric("Temp. celda", f"{tc:.1f} °C" if tc is not None else "—")
+    with c7:
+        v_ref = max(viento or 0.0, rafaga or 0.0)
+        delta_stow = "Stow (horizontal)" if v_ref >= TRACKER_STOW_WIND_MS else None
+        st.metric(
+            "Viento 10m",
+            f"{viento:.1f} m/s" if viento is not None else "—",
+            delta=delta_stow,
+            delta_color="inverse",
+        )
+
+    v_ref = max(viento or 0.0, rafaga or 0.0)
+    if v_ref >= TRACKER_STOW_WIND_MS:
+        st.warning(
+            f"Protección de viento alto activa: viento/ráfaga {v_ref:.1f} m/s ≥ "
+            f"{TRACKER_STOW_WIND_MS:.0f} m/s → trackers en posición horizontal (stow). "
+            "La generación cae porque los paneles dejan de seguir al sol."
+        )
 
     st.caption(
         "Generacion: ultimo gen_real CEN · Cap. instalada: Pmax declarada · "
         "FP = Gen/Cap × 100 · Desvio = (Gen − PCP)/PCP × 100 a la misma hora "
         "(verde ≤15% · ambar ≤25% · rojo >25%) · GHI: irradiancia global horizontal "
-        "Open-Meteo · Temp. celda: modelo NOCT (Tc = Tamb + (NOCT−20)/800 · GHI · f_viento)."
+        "Open-Meteo · Temp. celda: modelo NOCT · Viento 10m: protección de trackers "
+        f"(stow horizontal sobre {TRACKER_STOW_WIND_MS:.0f} m/s)."
     )
 
 

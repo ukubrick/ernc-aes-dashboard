@@ -277,7 +277,8 @@ OPENMETEO_VARS_SOLAR = [
     "diffuse_radiation",            # DHI (W/m²)
     "global_tilted_irradiance",     # GTI con tilt configurado (W/m²)
     "temperature_2m",               # °C
-    "windspeed_10m",                # m/s — para cálculo Tc
+    "windspeed_10m",                # m/s — para cálculo Tc y protección de trackers
+    "windgusts_10m",                # m/s — ráfagas; gatillan stow de trackers
     "cloudcover",                   # % nubosidad total
     "cloudcover_low",               # % nubosidad baja (camanchaca)
     "is_day",                       # 1=día, 0=noche
@@ -302,8 +303,17 @@ OPENMETEO_VARS_EOLICA = [
 # ── Parámetros FV ──────────────────────────────────────────────────────────────
 PANEL_NOCT     = 45.0    # °C — Normal Operating Cell Temperature típico
 PANEL_GAMMA    = -0.004  # /°C — coef. temperatura silicio cristalino
-PANEL_TILT_DEG = 20.0    # ° — inclinación promedio de paneles
+PANEL_TILT_DEG = 20.0    # ° — inclinación de referencia (GTI fijo de Open-Meteo)
 PANEL_AZIMUTH  = 0.0     # ° — 0=norte verdadero (hemisferio sur)
+
+# ── Trackers solares (todos los parques FV de AES) ─────────────────────────────
+# Los parques FV usan seguidores de 1 eje (N-S, rotación E-O). El POA con tracking
+# es mayor que el de tilt fijo. Modelo pragmático: POA_track = GTI_fijo × TRACKER_GAIN,
+# acotado a [GHI, ~1100]. Un derate de disponibilidad cubre la confiabilidad del 80%.
+TRACKER_GAIN          = 1.18   # ganancia media POA tracking 1-eje vs tilt fijo (~+18%)
+TRACKER_AVAIL         = 0.80   # confiabilidad/disponibilidad de los trackers (80%)
+TRACKER_STOW_WIND_MS  = 16.0   # [m/s] sobre esto los trackers se ponen horizontales (stow)
+TRACKER_POA_MAX       = 1100.0 # [W/m²] tope físico plausible del POA con tracking
 
 # ── Parámetros eólicos ─────────────────────────────────────────────────────────
 # Curva de potencia simplificada de turbina típica onshore (clase IEC II/III):

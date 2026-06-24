@@ -84,6 +84,7 @@ def _response_to_registros(response, parque: str, variables: list[str]) -> list[
     from utils.calculos import (
         calcular_temp_celda,
         calcular_potencia_fv_estimada,
+        poa_tracker,
         interpolar_viento_100m,
         calcular_densidad_aire,
         calcular_potencia_eolica_estimada,
@@ -132,13 +133,16 @@ def _response_to_registros(response, parque: str, variables: list[str]) -> list[
 
         # Calcular derivados según tecnología
         if tecnologia == "Solar":
-            ghi  = row.get("ghi_wm2")
-            gti  = row.get("gti_wm2")
-            wind = row.get("wind_speed_10m")
-            temp = row.get("temp_2m")
+            ghi   = row.get("ghi_wm2")
+            gti   = row.get("gti_wm2")
+            wind  = row.get("wind_speed_10m")
+            gusts = row.get("wind_gusts_10m")
+            temp  = row.get("temp_2m")
             tc = calcular_temp_celda(temp or 25.0, ghi or 0.0, wind or 1.0)
             row["temp_celda_c"] = tc
-            row["p_fv_estimada_mw"] = calcular_potencia_fv_estimada(gti or 0.0, tc, pmax)
+            # POA con seguidores de 1 eje (stow horizontal si viento alto) + derate disponibilidad
+            poa = poa_tracker(gti or 0.0, ghi or 0.0, wind or 0.0, gusts)
+            row["p_fv_estimada_mw"] = calcular_potencia_fv_estimada(poa, tc, pmax)
         else:
             v80  = row.get("wind_speed_80m")
             v120 = vals["windspeed_120m"][j] if "windspeed_120m" in vals else None

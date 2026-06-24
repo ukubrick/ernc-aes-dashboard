@@ -148,6 +148,10 @@ def _render_subtab_alertas(gen_por_parque, prog_por_parque, cmg_crucero, lim_row
     with st.spinner("Evaluando condiciones..."):
         insights = evaluar_insights(gen_por_parque, prog_por_parque, cmg_crucero, lim_rows, ultima_hora)
 
+    # Las limitaciones de transmisión están casi siempre activas → tienen su propia
+    # sección para no saturar las alarmas operacionales reales.
+    insights = [i for i in insights if i.categoria != "limitacion"]
+
     if not insights:
         st.markdown(
             f"<div style='background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;"
