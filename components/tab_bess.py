@@ -9,7 +9,7 @@ from plotly.subplots import make_subplots
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 
-from config import BESS, CMG_NODO
+from config import BESS, BESS_HORAS, CMG_NODO
 
 AES_AZUL    = "#3B4CE8"
 AES_CYAN    = "#4DC8DC"
@@ -25,6 +25,8 @@ AES_MUTED   = "#6B7280"
 
 # Duración asumida del BESS (h) para estimar capacidad de energía a partir de Pmax.
 # La API CEN no publica MWh; 4h es el estándar de los BESS solares de Chile.
+# Duración por defecto (h) cuando la energía declarada (BESS_HORAS) no existe.
+# La API CEN no publica los MWh reales del BESS → se asume 4 h donde falte.
 _HORAS_BESS = 4.0
 
 
@@ -74,7 +76,8 @@ def render_tab_bess(bess_rows: list | None = None) -> None:
     )
     meta = BESS[bess_sel]
     pmax = meta["pmax_mw"]
-    cap_mwh = pmax * _HORAS_BESS
+    horas_bess = BESS_HORAS.get(bess_sel) or _HORAS_BESS
+    cap_mwh = pmax * horas_bess
 
     d = df[df["bess"] == bess_sel].sort_values("fecha_hora").copy()
     if d.empty:
@@ -116,7 +119,8 @@ def render_tab_bess(bess_rows: list | None = None) -> None:
         st.metric("Ciclos eq. 24h", f"{ciclos:.2f}" if ciclos is not None else "—")
     st.caption(
         f"Potencia neta = inyección − retiro (>0 descarga, <0 carga). Capacidad de "
-        f"energía estimada en {cap_mwh:.0f} MWh ({pmax:.0f} MW × {_HORAS_BESS:.0f} h). "
+        f"energía estimada en {cap_mwh:.0f} MWh ({pmax:.0f} MW × {horas_bess:.1f} h "
+        f"{'declaradas' if BESS_HORAS.get(bess_sel) else 'asumidas'}). "
         f"Ciclos eq. = MWh descargados / capacidad. Eficiencia ida-vuelta 24h: "
         + (f"{rt_efic:.0f}%." if rt_efic is not None else "sin carga suficiente para estimarla.")
     )
@@ -254,7 +258,7 @@ def _resumen_todos_bess(df: pd.DataFrame) -> None:
         estado = "Descargando" if neta > 1 else ("Cargando" if neta < -1 else "Reposo")
         desc = float(d24["inyeccion_mw"].sum())
         carga = float(d24["retiro_mw"].sum())
-        cap = meta["pmax_mw"] * _HORAS_BESS
+        cap = meta["pmax_mw"] * (BESS_HORAS.get(cod) or _HORAS_BESS)
         filas.append({
             "BESS": meta["nombre"], "Parque": meta["parque"], "Estado": estado,
             "Neta MW": round(neta, 1), "Descarga MWh": round(desc, 0),

@@ -4,7 +4,10 @@ import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 
-from config import NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, TRACKER_STOW_WIND_MS
+from config import (
+    NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, TRACKER_STOW_WIND_MS,
+    TRACKER_GAIN, TRACKER_AVAIL, TRACKER_POA_MAX, PANEL_NOCT, PANEL_GAMMA,
+)
 from utils.calculos import calcular_factor_planta, calcular_desvio
 
 AES_AZUL    = "#3B4CE8"
@@ -20,6 +23,19 @@ AES_TEXTO   = "#1A1F36"
 AES_MUTED   = "#6B7280"
 
 _SEM = {"verde": AES_VERDE, "amarillo": AES_AMBAR, "rojo": AES_ROJO}
+
+
+def _paso(n: int, titulo: str, desc: str) -> None:
+    """Encabezado de un paso de fórmula: badge numerado + título + descripción breve."""
+    st.markdown(
+        f"<div style='display:flex;align-items:baseline;gap:8px;margin:10px 0 2px'>"
+        f"<span style='background:{AES_AZUL};color:#fff;font-size:11px;font-weight:700;"
+        f"border-radius:6px;padding:1px 8px;flex:none'>{n}</span>"
+        f"<span style='font-size:12.5px;font-weight:700;color:{AES_TEXTO}'>{titulo}</span>"
+        f"</div>"
+        f"<div style='font-size:11.5px;color:{AES_MUTED};line-height:1.55;margin-bottom:2px'>{desc}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _df_meteo(parque: str) -> pd.DataFrame:
@@ -271,8 +287,8 @@ def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
         )
 
     st.caption(
-        "Generacion: ultimo gen_real CEN · Cap. instalada: Pmax declarada · "
-        "FP = Gen/Cap × 100 · Desvio = (Gen − PCP)/PCP × 100 a la misma hora "
+        "Generacion: ultimo gen_real CEN · Pmax neta CEN (potencia aceptada) · "
+        "FP = Gen/Pmax neta × 100 · Desvio = (Gen − PCP)/PCP × 100 a la misma hora "
         "(verde ≤15% · ambar ≤25% · rojo >25%) · GHI: irradiancia global horizontal "
         "Open-Meteo · Temp. celda: modelo NOCT · Viento 10m: protección de trackers "
         f"(stow horizontal sobre {TRACKER_STOW_WIND_MS:.0f} m/s)."
@@ -391,15 +407,63 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
         unsafe_allow_html=True,
     )
 
-    with st.expander("Fórmulas del modelo FV"):
-        st.latex(r"T_c \;=\; T_{amb} \;+\; \frac{NOCT - 20}{800}\;\cdot\;GHI\;\cdot\;f_{viento}")
-        st.latex(r"P_{FV} \;=\; P_{pico}\;\cdot\;\frac{GTI}{1000}\;\cdot\;\bigl[\,1 + \gamma\,(T_c - 25)\,\bigr]")
+    with st.expander("Fórmulas y modelo físico FV (seguidores de 1 eje)"):
+        _gamma_pct = abs(PANEL_GAMMA) * 100.0
         st.markdown(
-            f"<div style='font-size:11.5px;color:{AES_MUTED};line-height:1.7'>"
-            r"$NOCT = 45\,^{\circ}\mathrm{C}$ (Normal Operating Cell Temperature) &nbsp;·&nbsp; "
-            r"$\gamma = -0.4\,\%/^{\circ}\mathrm{C}$ (coef. de temperatura, silicio cristalino) &nbsp;·&nbsp; "
-            r"$GTI$ = irradiancia sobre el plano inclinado $[\mathrm{W/m^2}]$ &nbsp;·&nbsp; "
-            r"$f_{viento}$ corrige la convección. Potencia acotada a $P_{pico}$ y a horas diurnas."
+            f"<div style='font-size:12px;color:{AES_TEXTO};line-height:1.6;margin-bottom:6px'>"
+            "El modelo encadena <b>4 pasos</b> desde la meteorología de Open-Meteo hasta la "
+            "potencia estimada. Los parques solares de AES usan <b>seguidores de un eje</b>, "
+            "por eso se corrige la irradiancia del plano fijo a plano de seguidor (POA).</div>",
+            unsafe_allow_html=True,
+        )
+
+        _paso(1, "Irradiancia en el plano del seguidor (POA)",
+              "Se parte del GTI de tilt fijo de Open-Meteo y se escala por la ganancia de "
+              f"seguimiento ({TRACKER_GAIN:.2f}). Nunca rinde menos que la horizontal (GHI) "
+              f"ni más que {TRACKER_POA_MAX:.0f} W/m². Con viento o ráfaga ≥ "
+              f"{TRACKER_STOW_WIND_MS:.0f} m/s los paneles se aplanan por protección (stow) "
+              "y el POA cae a GHI.")
+        st.latex(
+            r"POA = \begin{cases}"
+            r"\min\!\big(GHI,\; POA_{max}\big) & v \ge v_{stow}\ \text{(stow horizontal)}\\[6pt]"
+            r"\min\!\Big(\max\big(GTI\cdot g_{track},\, GHI\big),\, POA_{max}\Big) & v < v_{stow}"
+            r"\end{cases}"
+        )
+
+        _paso(2, "Temperatura de celda (modelo NOCT, IEC 61215)",
+              "La celda se calienta sobre la temperatura ambiente en proporción a la "
+              "irradiancia; el viento la enfría por convección.")
+        st.latex(
+            r"T_c = T_{amb} + \frac{NOCT - 20}{800}\;\cdot\;GHI\;\cdot\;f_{viento}"
+        )
+
+        _paso(3, "Potencia eléctrica estimada",
+              "Potencia pico escalada por la irradiancia del plano y corregida por la "
+              "pérdida térmica de la celda y la disponibilidad de los seguidores.")
+        st.latex(
+            r"P_{FV} = P_{pico}\;\cdot\;\frac{POA}{1000}\;\cdot\;"
+            r"\underbrace{\big[\,1 + \gamma\,(T_c - 25)\,\big]}_{\text{corrección térmica}}"
+            r"\;\cdot\;\eta_{disp}"
+        )
+
+        _paso(4, "Acotamiento físico",
+              "La potencia se limita al rango operativo y se anula de noche.")
+        st.latex(r"0 \;\le\; P_{FV} \;\le\; P_{pico}")
+
+        st.markdown(
+            "<div style='font-size:11.5px;line-height:1.85;margin-top:8px;"
+            f"border-top:1px solid {AES_BORDE};padding-top:8px;color:{AES_TEXTO}'>"
+            "<b>Variables y constantes</b><br>"
+            r"$GTI$ — irradiancia plano fijo $[\mathrm{W/m^2}]$ · "
+            r"$GHI$ — irradiancia global horizontal $[\mathrm{W/m^2}]$ · "
+            rf"$POA$ — irradiancia plano del seguidor · $POA_{{max}}={TRACKER_POA_MAX:.0f}$ W/m²<br>"
+            rf"$g_{{track}}={TRACKER_GAIN:.2f}$ — ganancia de seguimiento 1 eje · "
+            rf"$v_{{stow}}={TRACKER_STOW_WIND_MS:.0f}$ m/s — umbral de protección por viento<br>"
+            rf"$NOCT={PANEL_NOCT:.0f}\,^{{\circ}}\mathrm{{C}}$ — temp. de operación nominal · "
+            rf"$\gamma=-{_gamma_pct:.1f}\,\%/^{{\circ}}\mathrm{{C}}$ — coef. térmico (silicio cristalino)<br>"
+            rf"$\eta_{{disp}}={TRACKER_AVAIL:.2f}$ — disponibilidad de seguidores · "
+            r"$P_{pico}$ — potencia instalada del parque $[\mathrm{MW}]$ · "
+            r"$f_{viento}$ — factor de enfriamiento por convección"
             "</div>",
             unsafe_allow_html=True,
         )

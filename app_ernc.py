@@ -126,7 +126,9 @@ st.markdown(
         box-shadow: 0 4px 12px rgba(77,200,220,0.40) !important;
     }}
 
-    /* ── KPI cards ────────────────────────────────────────────────────────── */
+    /* ── st.metric (paneles Solar/Eólica/BESS) ───────────────────────────────
+       Los KPIs del portfolio son cards HTML (kpis_generales.py); este bloque
+       estiliza los st.metric de los paneles internos de cada vista. */
     [data-testid="metric-container"] {{
         background: {AES_BLANCO};
         border-radius: 12px;
@@ -148,7 +150,7 @@ st.markdown(
     [data-testid="stMetricValue"] {{ font-size: 22px; color: {AES_TEXTO}; font-weight: 800; }}
     [data-testid="stMetricDelta"] {{ font-size: 12px; font-weight: 600; }}
 
-    /* Delay escalonado para los 7 KPIs */
+    /* Delay escalonado + borde-top de color por posición del st.metric */
     [data-testid="metric-container"]:nth-child(1) {{ animation-delay: 0.05s; border-top-color: {AES_AZUL}; }}
     [data-testid="metric-container"]:nth-child(2) {{ animation-delay: 0.10s; border-top-color: {AES_AZUL}; }}
     [data-testid="metric-container"]:nth-child(3) {{ animation-delay: 0.15s; border-top-color: {AES_CYAN}; }}
@@ -420,9 +422,9 @@ def _bloque_fuentes(act: dict) -> str:
         ("PCP programada",  act.get("gen_prog"), 24.0),
         ("Meteo Open-Meteo", act.get("meteo"),   12.0),
         ("CMG CEN S3",      act.get("cmg"),       6.0),
-        ("NASA POWER",      act.get("nasa"),     192.0),   # rezago ~días (validación solar)
+        ("NASA POWER",      act.get("nasa"),    2400.0),   # rezago ~85 días (validación solar)
     ]
-    # NASA POWER tiene rezago de días (validación, no tiempo real) → no cuenta para
+    # NASA POWER tiene rezago de ~2-3 meses (validación, no tiempo real) → no cuenta para
     # el semáforo global de conexión, pero sí se muestra su fila/estado.
     _sin_health = {"NASA POWER"}
     filas = ""
@@ -934,21 +936,13 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
     import plotly.graph_objects as go
     import pandas as pd
 
-    # ── Mapa a ancho completo ────────────────────────────────────────────────
-    cab_l, cab_r = st.columns([3, 1])
-    with cab_l:
-        st.markdown(
-            f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:8px'>"
-            f"Generacion actual por parque</div>",
-            unsafe_allow_html=True,
-        )
-    with cab_r:
-        # Satélite (folium + ESRI, token-free) por defecto; nubes/día-noche si hay key OWM
-        estilo = st.selectbox(
-            "Estilo de mapa", ["Satelite", "Claro", "Detallado"],
-            key="mapa_estilo", label_visibility="collapsed",
-        )
-    render_mapa(gen_por_parque, parque_activo=parque_activo, estilo=estilo)
+    # ── Mapa satelital a ancho completo ──────────────────────────────────────
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:8px'>"
+        f"Generacion actual por parque</div>",
+        unsafe_allow_html=True,
+    )
+    render_mapa(gen_por_parque, parque_activo=parque_activo)
 
     # ── Tabla de estado del portfolio, debajo del mapa y con más valor ───────
     st.markdown(
@@ -1002,7 +996,9 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
 
     df_gen = pd.DataFrame(gen_rows)
     df_gen["fecha_hora"] = pd.to_datetime(df_gen["fecha_hora"])
-    df_gen = df_gen[df_gen["fecha_hora"] >= df_gen["fecha_hora"].max() - pd.Timedelta(hours=24)].copy()
+    win_max = df_gen["fecha_hora"].max()
+    win_min = win_max - pd.Timedelta(hours=24)
+    df_gen = df_gen[df_gen["fecha_hora"] >= win_min].copy()
     df_gen["tec"] = df_gen["parque"].map(TECNOLOGIA)
     piv = df_gen.pivot_table(index="fecha_hora", columns="tec", values="gen_real_mw",
                              aggfunc="sum").reset_index()
@@ -1012,12 +1008,14 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
     piv["Total"] = piv["Solar"].fillna(0) + piv["Eólica"].fillna(0)
 
     if prog_rows:
+        # La PCP se publica hacia el futuro; se alinea a la MISMA ventana del gráfico
+        # de generación (no a su propio máximo) para que la serie aparezca completa.
         df_prog = pd.DataFrame(prog_rows)
         df_prog["fecha_hora"] = pd.to_datetime(df_prog["fecha_hora"])
-        df_prog = df_prog[df_prog["fecha_hora"] >= df_prog["fecha_hora"].max() - pd.Timedelta(hours=24)]
+        df_prog = df_prog[(df_prog["fecha_hora"] >= win_min) & (df_prog["fecha_hora"] <= win_max)]
         df_prog_t = df_prog.groupby("fecha_hora")["gen_programada_mw"].sum().reset_index()
         df_prog_t.rename(columns={"gen_programada_mw": "Programada"}, inplace=True)
-        piv = piv.merge(df_prog_t, on="fecha_hora", how="left")
+        piv = piv.merge(df_prog_t, on="fecha_hora", how="left").sort_values("fecha_hora")
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(

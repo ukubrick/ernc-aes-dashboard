@@ -22,6 +22,19 @@ AES_MUTED   = "#6B7280"
 _SEM = {"verde": AES_VERDE, "amarillo": AES_AMBAR, "rojo": AES_ROJO}
 
 
+def _paso(n: int, titulo: str, desc: str) -> None:
+    """Encabezado de un paso de fórmula: badge numerado + título + descripción breve."""
+    st.markdown(
+        f"<div style='display:flex;align-items:baseline;gap:8px;margin:10px 0 2px'>"
+        f"<span style='background:{AES_CYAN};color:#0d1035;font-size:11px;font-weight:700;"
+        f"border-radius:6px;padding:1px 8px;flex:none'>{n}</span>"
+        f"<span style='font-size:12.5px;font-weight:700;color:{AES_TEXTO}'>{titulo}</span>"
+        f"</div>"
+        f"<div style='font-size:11.5px;color:{AES_MUTED};line-height:1.55;margin-bottom:2px'>{desc}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _df_meteo(parque: str) -> pd.DataFrame:
     try:
         from utils.db import get_client
@@ -311,10 +324,10 @@ def _panel_metricas(gen_rows, prog_rows, df_meteo, parque_sel):
         )
 
     st.caption(
-        "Generacion: ultimo gen_real CEN · Cap. instalada: Pmax declarada · "
-        "FP = Gen/Cap × 100 · Desvio = (Gen − PCP)/PCP × 100 a la misma hora · "
+        "Generacion: ultimo gen_real CEN · Pmax neta CEN (potencia aceptada) · "
+        "FP = Gen/Pmax neta × 100 · Desvio = (Gen − PCP)/PCP × 100 a la misma hora · "
         "Viento 100m: interpolado v80/v120 con ley de potencia v(h)=v_ref·(h/h_ref)^α · "
-        "Rafagas: maximas a 10m (cut-out ~20 m/s) · Shear α>0.30 → atmosfera estable."
+        "Rafagas: maximas a 10m (cut-out ~25 m/s, curva por parque) · Shear α>0.30 → atmosfera estable."
     )
 
 
@@ -416,21 +429,56 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
         unsafe_allow_html=True,
     )
 
-    with st.expander("Fórmulas del modelo eólico"):
-        st.markdown("**Interpolación de viento al hub (100 m) y cizalle vertical**")
-        st.latex(r"\alpha \;=\; \frac{\ln\!\left(v_{120}/v_{80}\right)}{\ln\!\left(120/80\right)}"
-                 r"\qquad v_{100} \;=\; v_{80}\left(\frac{100}{80}\right)^{\!\alpha}")
-        st.markdown("**Densidad del aire**")
-        st.latex(r"\rho \;=\; \frac{P}{R\,T}\quad\left[\mathrm{kg/m^3}\right],\quad R = 287.05\ \mathrm{J/(kg\cdot K)}")
-        st.markdown("**Curva de potencia de la turbina**")
-        st.latex(r"P(v) = \begin{cases} 0 & v < v_{in}\ \text{o}\ v > v_{out} \\[4pt]"
-                 r"P_{max}\,\dfrac{v^3 - v_{in}^3}{v_{rated}^3 - v_{in}^3}\,\dfrac{\rho}{\rho_{ref}} & v_{in} \le v < v_{rated} \\[8pt]"
-                 r"P_{max}\,\dfrac{\rho}{\rho_{ref}} & v_{rated} \le v \le v_{out} \end{cases}")
+    with st.expander("Fórmulas y modelo físico eólico"):
         st.markdown(
-            f"<div style='font-size:11.5px;color:{AES_MUTED};line-height:1.7'>"
-            r"$v_{in}=3$, $v_{rated}=12$, $v_{out}=25\ \mathrm{m/s}$ &nbsp;·&nbsp; "
-            r"$\rho_{ref}=1.225\ \mathrm{kg/m^3}$ &nbsp;·&nbsp; "
-            r"$\alpha$ acotado a $[-0.10,\ 0.60]$; sobre $v_{out}$ la turbina se detiene por seguridad."
+            f"<div style='font-size:12px;color:{AES_TEXTO};line-height:1.6;margin-bottom:6px'>"
+            "El modelo encadena <b>3 pasos</b>: lleva el viento a la altura del buje, corrige "
+            "la densidad del aire y aplica la <b>curva de potencia de la turbina</b> (parámetros "
+            "por parque según el fabricante).</div>",
+            unsafe_allow_html=True,
+        )
+
+        _paso(1, "Viento al buje (100 m) y cizalle vertical α",
+              "Se interpola el viento entre 80 y 120 m con la ley de potencia. El exponente α "
+              "describe cuánto cambia el viento con la altura (atmósfera estable → α alto).")
+        st.latex(
+            r"\alpha = \frac{\ln\!\left(v_{120}/v_{80}\right)}{\ln\!\left(120/80\right)}"
+            r"\qquad v_{100} = v_{80}\left(\frac{100}{80}\right)^{\!\alpha}"
+        )
+
+        _paso(2, "Densidad del aire",
+              "El aire más frío y a mayor presión es más denso → la turbina entrega más "
+              "potencia para el mismo viento (gas ideal).")
+        st.latex(
+            r"\rho = \frac{P}{R\,T}\quad\left[\mathrm{kg/m^3}\right],\qquad "
+            r"R = 287.05\ \mathrm{J/(kg\cdot K)},\ \ T\,[\mathrm{K}]"
+        )
+
+        _paso(3, "Curva de potencia de la turbina",
+              "Por debajo del arranque (cut-in) no genera; entre cut-in y nominal sube de forma "
+              "cúbica con el viento; en la meseta entrega su potencia nominal; sobre el cut-out "
+              "se detiene por seguridad.")
+        st.latex(
+            r"P(v) = \begin{cases}"
+            r"0 & v < v_{in}\ \ \text{o}\ \ v > v_{out} \\[4pt]"
+            r"P_{max}\,\dfrac{v^3 - v_{in}^3}{v_{rated}^3 - v_{in}^3}\,\dfrac{\rho}{\rho_{ref}} & v_{in} \le v < v_{rated} \\[8pt]"
+            r"P_{max}\,\dfrac{\rho}{\rho_{ref}} & v_{rated} \le v \le v_{out}"
+            r"\end{cases}"
+        )
+
+        st.markdown(
+            "<div style='font-size:11.5px;line-height:1.85;margin-top:8px;"
+            f"border-top:1px solid {AES_BORDE};padding-top:8px;color:{AES_TEXTO}'>"
+            "<b>Variables y constantes</b><br>"
+            r"$v_{80},v_{120}$ — viento a 80 y 120 m $[\mathrm{m/s}]$ · "
+            r"$v_{100}$ — viento al buje · "
+            r"$\alpha$ — cizalle vertical, acotado a $[-0.10,\ 0.60]$<br>"
+            r"$v_{in}$ — arranque (típ. 3 m/s) · $v_{rated}$ — viento nominal (típ. 12 m/s) · "
+            r"$v_{out}$ — corte por seguridad (típ. 25 m/s)<br>"
+            r"$\rho_{ref}=1.225\ \mathrm{kg/m^3}$ (ISA) · "
+            r"$P_{max}$ — potencia neta del parque $[\mathrm{MW}]$<br>"
+            "<i>Los valores cut-in / nominal / cut-out son por parque según el modelo de turbina "
+            "(p. ej. Campo Lindo Vestas V150 cut-out 24.5 m/s, Mesamávida Nordex N149).</i>"
             "</div>",
             unsafe_allow_html=True,
         )

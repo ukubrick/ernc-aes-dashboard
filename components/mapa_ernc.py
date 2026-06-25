@@ -1,6 +1,9 @@
-"""Mapa 2D pydeck para los 11 parques ERNC — Carto Light + ScatterplotLayer + TextLayer."""
+"""Mapa satelital de los 11 parques ERNC.
+
+folium + Esri World Imagery (sin token) con nubosidad OpenWeather en vivo, sombra
+día/noche en tiempo real y flechas de viento actual por parque.
+"""
 import os
-import pydeck as pdk
 import streamlit as st
 import pandas as pd
 
@@ -97,21 +100,7 @@ def _viento_actual_parques() -> dict:
             out[p] = {"dir": float(d), "vel": float(v) if v is not None else None}
     return out
 
-MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-
-# Estilos de mapa base SIN token. Claro/Detallado usan estilos GL de Carto (string URL).
-# Satélite se renderiza aparte como TileLayer raster de ESRI (ver render_mapa), porque
-# pydeck exige token de Mapbox si el map_style se pasa como style-JSON dict.
-MAP_STYLES = {
-    "Claro":    "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-    "Detallado": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
-}
-
 # Ciudades de referencia para dar contexto geográfico al mapa
-# Nota: la nubosidad dejó de usar el tile OWM clouds_new (baja resolución, color fijo).
-# Ver _build_cloud_layers (tile OWM clouds_new + filtros de color).
-
-
 _CIUDADES = [
     {"nombre": "Antofagasta", "lat": -23.65, "lon": -70.40},
     {"nombre": "Calama",      "lat": -22.46, "lon": -68.93},
@@ -120,35 +109,6 @@ _CIUDADES = [
     {"nombre": "Concepción",  "lat": -36.83, "lon": -73.05},
     {"nombre": "Los Ángeles", "lat": -37.47, "lon": -72.35},
 ]
-
-# Bounds de Chile continental (lon_min, lat_min, lon_max, lat_max)
-# Excluye Isla de Pascua y territorio antártico
-_CHILE_BOUNDS = {
-    "lat_min": -55.9,
-    "lat_max": -17.5,
-    "lon_min": -75.7,
-    "lon_max": -66.0,
-}
-
-# Vista por defecto: Chile completo — zoom reducido para que los parques del norte
-# no se aglomeren con los del sur (clúster solar Atacama vs eólicos Biobío)
-_VIEW_DEFAULT = pdk.ViewState(
-    latitude=-32.0,
-    longitude=-70.5,
-    zoom=3.9,
-    pitch=0,
-    bearing=0,
-)
-
-# Vista por parque: zoom centrado al seleccionar desde sidebar
-_VIEW_PARQUE = {p: pdk.ViewState(
-    latitude=COORDENADAS[p]["lat"],
-    longitude=COORDENADAS[p]["lon"],
-    zoom=8.5,
-    pitch=0,
-    bearing=0,
-) for p in PARQUES_TODOS}
-
 
 # Los 5 parques del complejo Andes Solar están a < 2 km entre sí: sus etiquetas se
 # apilan. Se les da un offset vertical escalonado para que se lean separadas.
@@ -312,10 +272,9 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
 def render_mapa(
     gen_por_parque: dict[str, float | None],
     parque_activo: str | None = None,
-    estilo: str = "Claro",
 ) -> None:
+    """Mapa satelital (folium + Esri World Imagery) con nubosidad OWM, día/noche y viento."""
     df = _df(gen_por_parque)
-    es_satelite = estilo == "Satelite"
 
     # Auto-refresco del mapa cada 5 min: refresca nubosidad/viento/día-noche sin que
     # el usuario tenga que recargar la página ni cambiar de sección. Combinado con el
@@ -326,135 +285,7 @@ def render_mapa(
     except Exception:
         pass
 
-    # Satélite → folium (ESRI token-free + nubes OWM en vivo + día/noche; pydeck no puede).
-    if es_satelite:
-        try:
-            _render_satelite_folium(df, parque_activo)
-            return
-        except Exception as e:
-            st.info(f"No se pudo cargar el mapa satelital ({e}). Mostrando mapa Detallado.")
-            estilo = "Detallado"
-            es_satelite = False
-    # Llegados aquí el estilo es Claro/Detallado (el satélite se fue por folium arriba).
-    map_style = MAP_STYLES.get(estilo, MAP_STYLES["Claro"])
-    map_provider = "carto"
-    txt_color = [26, 31, 54, 230]
-    ciudad_color = [107, 114, 128, 200]
-    df_ciudades = pd.DataFrame(_CIUDADES)
-
-    # Vista: zoom al parque activo si viene del sidebar, sino Chile completo
-    if parque_activo and parque_activo in _VIEW_PARQUE:
-        view = _VIEW_PARQUE[parque_activo]
-    else:
-        view = _VIEW_DEFAULT
-
-    halo = pdk.Layer(
-        "ScatterplotLayer",
-        data=df,
-        get_position=["lon", "lat"],
-        get_radius="halo_px",
-        radius_units="pixels",
-        get_fill_color=["r", "g", "b", 40],
-        stroked=False,
-        pickable=False,
-    )
-
-    circles = pdk.Layer(
-        "ScatterplotLayer",
-        data=df,
-        get_position=["lon", "lat"],
-        get_radius="radio_px",
-        radius_units="pixels",
-        radius_min_pixels=5,
-        radius_max_pixels=14,
-        get_fill_color=["r", "g", "b", "alpha"],
-        get_line_color=[255, 255, 255] if es_satelite else ["r", "g", "b"],
-        stroked=True,
-        line_width_min_pixels=1.5,
-        pickable=True,
-        auto_highlight=True,
-        highlight_color=[255, 255, 255, 120],
-    )
-
-    labels = pdk.Layer(
-        "TextLayer",
-        data=df,
-        get_position=["lon", "lat"],
-        get_text="nombre",
-        get_size=10,
-        size_units="pixels",
-        get_color=txt_color,
-        get_alignment_baseline="'bottom'",
-        get_text_anchor="'start'",
-        get_pixel_offset=["off_x", "off_y"],
-        background=True,
-        get_background_color=[0, 0, 0, 140] if es_satelite else [255, 255, 255, 180],
-        background_padding=[3, 1, 3, 1],
-        pickable=False,
-    )
-
-    # Ciudades de referencia — contexto geográfico
-    ciudades = pdk.Layer(
-        "TextLayer",
-        data=df_ciudades,
-        get_position=["lon", "lat"],
-        get_text="nombre",
-        get_size=10,
-        get_color=ciudad_color,
-        get_alignment_baseline="'top'",
-        get_pixel_offset=[0, 6],
-        pickable=False,
-    )
-    ciudades_dot = pdk.Layer(
-        "ScatterplotLayer",
-        data=df_ciudades,
-        get_position=["lon", "lat"],
-        get_radius=2200,
-        get_fill_color=ciudad_color,
-        pickable=False,
-    )
-
-    tooltip = {
-        "html": (
-            "<div style='"
-            "background:white;"
-            "border:1px solid #E5E7EB;"
-            "border-radius:8px;"
-            "padding:12px 16px;"
-            "font-family:Inter,sans-serif;"
-            "box-shadow:0 4px 12px rgba(0,0,0,0.1);"
-            "min-width:200px"
-            "'>"
-            "<div style='font-size:13px;font-weight:700;color:#1A1F36;margin-bottom:4px'>{nombre}</div>"
-            "<div style='font-size:11px;color:#6B7280;margin-bottom:10px'>{tecnologia}</div>"
-            "<div style='display:flex;justify-content:space-between;margin-bottom:4px'>"
-            "  <span style='font-size:11px;color:#6B7280'>Generacion actual</span>"
-            "  <span style='font-size:12px;font-weight:600;color:#1A1F36'>{gen_mw} MW</span>"
-            "</div>"
-            "<div style='display:flex;justify-content:space-between;margin-bottom:4px'>"
-            "  <span style='font-size:11px;color:#6B7280'>Cap. instalada</span>"
-            "  <span style='font-size:11px;color:#1A1F36'>{pmax_mw} MW</span>"
-            "</div>"
-            "<div style='display:flex;justify-content:space-between;"
-            "border-top:1px solid #E5E7EB;padding-top:8px;margin-top:4px'>"
-            "  <span style='font-size:11px;color:#6B7280'>Factor de planta</span>"
-            "  <span style='font-size:13px;font-weight:700;color:#3B4CE8'>{factor_pct}%</span>"
-            "</div>"
-            "</div>"
-        ),
-        "style": {"padding": "0", "background": "transparent", "border": "none"},
-    }
-
-    deck = pdk.Deck(
-        layers=[ciudades_dot, ciudades, halo, circles, labels],
-        initial_view_state=view,
-        tooltip=tooltip,
-        map_style=map_style,
-        map_provider=map_provider,
-        views=[pdk.View(
-            type="MapView",
-            controller={"scrollZoom": True, "dragPan": True},
-        )],
-    )
-
-    st.pydeck_chart(deck, use_container_width=True, key=f"mapa_ernc_{parque_activo or 'all'}_{estilo}")
+    try:
+        _render_satelite_folium(df, parque_activo)
+    except Exception as e:
+        st.error(f"No se pudo cargar el mapa satelital: {e}")
