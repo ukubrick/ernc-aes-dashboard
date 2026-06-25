@@ -109,14 +109,23 @@ def _fetch_paginado(query_fn, page: int = 1000) -> list[dict]:
     return filas
 
 
+# Columnas de meteo realmente usadas por los modelos (evita traer las ~25 de select("*")
+# → payload ~40% menor desde Supabase, clave en Streamlit Cloud). hora_dia se calcula local.
+_COLS_METEO = sorted(set(
+    ["fecha_hora", "is_day", "p_fv_estimada_mw", "p_eolica_estimada_mw"]
+    + [c for c in FEATURES_SOLAR + FEATURES_EOLICA if c != "hora_dia"]
+))
+
+
 @st.cache_data(ttl=900)
 def _dataset_parque(parque: str, dias: int = 25) -> pd.DataFrame:
     """meteo histórico (es_forecast=False) ⋈ gen_real por hora para un parque."""
     from utils.db import get_client
     sb = get_client()
     desde = (datetime.now(SANTIAGO) - timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
+    cols = ",".join(_COLS_METEO)
     try:
-        m_data = _fetch_paginado(lambda: (sb.table("meteo_ernc").select("*")
+        m_data = _fetch_paginado(lambda: (sb.table("meteo_ernc").select(cols)
                                           .eq("parque", parque).eq("es_forecast", False)
                                           .gte("fecha_hora", desde).order("fecha_hora")))
         g_data = _fetch_paginado(lambda: (sb.table("generacion_real_ernc")
@@ -329,8 +338,8 @@ def _train_cuantiles(X, y, pmax: float):
     """Entrena un LGBMRegressor por cuantil. Devuelve dict {alpha: modelo}."""
     modelos = {}
     for a in CUANTILES:
-        m = LGBMRegressor(objective="quantile", alpha=a, n_estimators=200,
-                          num_leaves=31, learning_rate=0.07, min_child_samples=20,
+        m = LGBMRegressor(objective="quantile", alpha=a, n_estimators=120,
+                          num_leaves=24, learning_rate=0.10, min_child_samples=20,
                           subsample=0.9, colsample_bytree=0.9, random_state=42, n_jobs=-1,
                           verbose=-1)
         m.fit(X, y)
@@ -376,7 +385,7 @@ def _entrenar_prob(parque: str) -> dict | None:
     from sklearn.model_selection import train_test_split
     tec = TECNOLOGIA[parque]
     pmax = PMAX[parque] if tec == "Solar" else PMAX_FP[parque]
-    df = _dataset_parque(parque, dias=120)
+    df = _dataset_parque(parque, dias=90)
     if df.empty:
         return None
     feats = _feats_disponibles(df, tec)
