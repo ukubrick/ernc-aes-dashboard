@@ -1,8 +1,9 @@
 """NASA POWER — fuente independiente de irradiancia (validación del recurso solar).
 
 NASA POWER publica datos satelitales/reanálisis horarios de GHI, temperatura y viento,
-gratis y sin API key. Tiene rezago de ~3-7 días (no es forecast), por lo que se usa para
-VALIDAR/benchmarkear el GHI de Open-Meteo y el modelo físico contra una segunda fuente.
+gratis y sin API key. Tiene un rezago real de ~2-3 meses (~85 días observados, no es
+forecast), por lo que se usa para VALIDAR/benchmarkear el GHI de Open-Meteo y el modelo
+físico contra una segunda fuente, cruzando por fecha_hora cuando ambas series solapan.
 
 Se guarda en la tabla meteo_ernc con fuente='nasa-power' (mismas columnas ghi_wm2/temp_2m/
 wind_speed_10m), de modo que el dashboard puede cruzarlo con el Open-Meteo existente.
@@ -18,10 +19,11 @@ _PARAMS = "ALLSKY_SFC_SW_DWN,CLRSKY_SFC_SW_DWN,T2M,WS10M"
 _FILL = -999.0
 
 
-def fetch_nasa_meteo(parque: str, dias: int = 10) -> list[dict]:
+def fetch_nasa_meteo(parque: str, dias: int = 100) -> list[dict]:
     """Descarga GHI/temp/viento horario de NASA POWER para un parque.
 
-    Ventana: desde hace `dias` días hasta hoy (NASA recorta sola las fechas sin dato).
+    Ventana: desde hace `dias` días hasta hoy. NASA recorta sola las fechas sin dato, así
+    que con el rezago real (~85 días) conviene una ventana amplia (~100 d) para alcanzarlo.
     Retorna registros listos para upsert_meteo() con fuente='nasa-power'.
     """
     if parque not in COORDENADAS:
@@ -74,7 +76,7 @@ def fetch_nasa_meteo(parque: str, dias: int = 10) -> list[dict]:
     return registros
 
 
-def fetch_nasa_solar_todos(dias: int = 10) -> list[dict]:
+def fetch_nasa_solar_todos(dias: int = 100) -> list[dict]:
     """NASA POWER para los parques solares (el recurso clave a validar es el FV)."""
     todos = []
     for parque in PARQUES_SOLAR:

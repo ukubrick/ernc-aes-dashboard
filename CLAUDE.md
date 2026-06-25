@@ -1,7 +1,7 @@
 # CLAUDE.md — Dashboard ERNC AES Andes
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-06-22 (Sesión 17 — KPIs, fixes solar/eólica/CMG, mapa satelital MapTiler, sección BESS).
+> Última actualización: 2026-06-25 (Sesión 26 — auditoría comentarios/ayuda, fix PCP 24h, mapa solo satelital, fórmulas LaTeX detalladas).
 
 ---
 
@@ -1586,5 +1586,61 @@ SCADA/anemómetro del parque). Independiente de la adquisición CEN/DB.
 
 ---
 
-*Actualizado 2026-06-24 — Sesiones 1–25.*
-*Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER*
+## SESIÓN 26 — AUDITORÍA DE COMENTARIOS/AYUDA + FIX PCP 24h, MAPA SOLO SATELITAL, FÓRMULAS (2026-06-25)
+
+Erick pidió revisar todo el proyecto y corregir comentarios/textos de ayuda desactualizados,
+y luego 3 mejoras concretas.
+
+### Corrección de comentarios/ayuda a la realidad actual
+- **NASA POWER — rezago real ~2-3 meses (~85 días), NO 3-7 días.** Corregido en
+  `utils/nasapower_api.py` (docstrings), `Adquisicion_nasa_ernc.py` (docstring), `tab_ml.py`
+  (metodología + mensaje "sin datos"), `app_ernc.py` (panel Fuentes de datos).
+  **Fix funcional asociado:** la ventana era `DIAS=10` desde hoy → nunca alcanzaba datos con
+  el rezago real. Ampliada a **`DIAS=100`** (script y defaults `dias` en `nasapower_api.py`).
+  El umbral del semáforo NASA en el sidebar subió de **192h → 2400h** (~100 días) para que un
+  dato fresco se marque OK en vez de quedar siempre en rojo.
+- **tab_solar/tab_eolica caption:** decía "Cap. instalada: Pmax declarada / FP = Gen/Cap" pero
+  la métrica y el FP usan **Pmax neta CEN** (`PMAX_FP`, Sesión 18). Corregido. En eólica además
+  "cut-out ~20 m/s" → **~25 m/s, curva por parque** (Sesión 14/18).
+- **tab_bess.py — capacidad de energía:** usaba un fijo `_HORAS_BESS=4.0` ignorando
+  `config.BESS_HORAS` (duración declarada por BESS: AS2B 4.95h, AS3 3h, AS4 5h). Ahora usa
+  `BESS_HORAS.get(cod) or 4.0` en panel individual, SoC y tabla resumen; el caption distingue
+  horas "declaradas" vs "asumidas". (infotecnica/estadisticas/ml ya lo hacían bien.)
+- **Docstrings de cabecera:** `mapa_ernc.py` (ahora satelital), `tab_ml.py` ("Cuatro" → "Seis"
+  análisis: + BESS operación + Validación NASA). Comentario CSS "7 KPIs" en `app_ernc.py`
+  aclarado (los KPIs son cards HTML; ese bloque estiliza los `st.metric` de los paneles).
+
+### Mejora 1 — PCP nunca aparecía completa en la serie 24h (Mapa & Resumen)
+`app_ernc.py::_render_tab_resumen`: la PCP se filtraba con su **propio** máximo (se publica
+hacia el futuro, hasta D+1) → su ventana "últimas 24h" casi no solapaba con la de generación,
+y solo se veía el tramo final. **Fix:** alinear la PCP a la **misma ventana** del gráfico de
+generación (`win_min`/`win_max` derivados de gen_real) antes del merge. Ahora la línea ámbar
+aparece completa a lo largo de las 24 h.
+
+### Mejora 2 — Mapa solo satelital
+Eliminadas las vistas **Claro / Detallado**. Quitado el `selectbox` "Estilo de mapa" en
+`app_ernc.py` → el mapa siempre es satelital (folium/ESRI) a ancho completo. `render_mapa`
+simplificada a solo folium; borrado todo el bloque pydeck y el código muerto asociado
+(`import pydeck`, `MAP_STYLE/MAP_STYLES`, `_VIEW_DEFAULT`, `_VIEW_PARQUE`, `_CHILE_BOUNDS`).
+Folium sigue usando `_CIUDADES`, `_LABEL_OFFSET`, `COORDENADAS`, `PARQUES_TODOS`.
+
+### Mejora 3 — Fórmulas detalladas y estéticas (LaTeX)
+Helper compartido `_paso(n, titulo, desc)` (badge numerado + título + descripción) en
+`tab_solar.py` y `tab_eolica.py`.
+- **Modelo FV** reescrito como 4 pasos encadenados (POA seguidor 1-eje → temp. de celda NOCT →
+  potencia con disponibilidad → acotamiento), con el caso **stow por viento** que faltaba en la
+  fórmula, y glosario de variables/constantes con valores reales de `config` (g_track=1.18,
+  η_disp=0.80, v_stow=16, NOCT=45, γ=-0.4%/°C, POA_max=1100). Antes no reflejaba el modelo de
+  trackers de la Sesión 25.
+- **Modelo eólico** reescrito en 3 pasos (viento al buje + cizalle α → densidad del aire →
+  curva de potencia), mismo estilo + glosario, aclarando que cut-in/rated/cut-out son por
+  parque (Vestas V150 / Nordex N149).
+
+### Pendiente Sesión 26
+- [ ] TZ global (`ZoneInfo` vs offset −3) sigue pendiente desde Sesión 17.
+- [ ] (Opcional) emoji ☀️ en `tab_meteo_sistema.py` viola la regla "sin emojis" — no tocado.
+
+---
+
+*Actualizado 2026-06-25 — Sesiones 1–26.*
+*Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER*

@@ -1,10 +1,12 @@
 """Tab ML Analysis — modelos predictivos y analítica sobre los datos ERNC.
 
-Cuatro análisis:
+Seis análisis:
   1. Forecast de generación  — RandomForest meteo→gen, comparado con el modelo físico.
   2. Detección de anomalías  — residuos del modelo + IsolationForest sobre el clima.
   3. Predicción de CMG        — RandomForest con rezagos (lags) por nodo.
   4. Análisis de eficiencia   — performance ratio real/teórico + clustering de condiciones.
+  5. BESS — operación         — perfil horario, neta vs CMG y arbitraje del almacenamiento.
+  6. Validación recurso (NASA) — GHI Open-Meteo vs NASA POWER (fuente satelital independiente).
 
 Sub-navegación con radio (no st.tabs) para que cada gráfico Plotly se monte siempre
 en un contenedor visible y a ancho real.
@@ -785,14 +787,15 @@ def _render_validacion_nasa(parque: str) -> None:
             "en las horas que ambas cubren.\n\n"
             "- **Sesgo (bias):** promedio Open-Meteo − NASA. Positivo = Open-Meteo sobreestima.\n"
             "- **RMSE / correlación:** cuánto coinciden hora a hora.\n\n"
-            "NASA POWER publica con rezago (~3-7 días), por eso es validación histórica, no "
-            "tiempo real. Se puebla con `Adquisicion_nasa_ernc.py` (corrida diaria)."
+            "NASA POWER publica con un rezago real de ~2-3 meses (~85 días), por eso es "
+            "validación histórica, no tiempo real. Se puebla con `Adquisicion_nasa_ernc.py` "
+            "(corrida diaria, ventana ~100 d)."
         )
     om = _meteo_por_fuente(parque, "open-meteo")
     na = _meteo_por_fuente(parque, "nasa-power")
     if na.empty:
         st.info("Aún no hay datos de NASA POWER. Corre `Adquisicion_nasa_ernc.py` "
-                "(o espera el job diario). NASA publica con rezago de varios días.")
+                "(o espera el job diario). NASA publica con rezago de ~2-3 meses.")
         return
     if om.empty:
         st.info("Sin GHI de Open-Meteo histórico para cruzar.")
