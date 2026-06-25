@@ -23,11 +23,13 @@ _SESSION.headers.update({"Accept": "application/json"})
 
 
 def _get_keys():
+    # CEN_OPS_KEY es opcional: solo la usa SSCC (plan Operaciones). Scripts que solo
+    # consumen SIP (ej. Adquisicion_potencia_ernc: gen-real + BESS) corren sin ella.
     global _KEY_SIP, _KEY_OPS
     if _KEY_SIP is None:
         _KEY_SIP = os.environ["CEN_USER_KEY"]
     if _KEY_OPS is None:
-        _KEY_OPS = os.environ["CEN_OPS_KEY"]
+        _KEY_OPS = os.environ.get("CEN_OPS_KEY", "")
     return _KEY_SIP, _KEY_OPS
 
 
