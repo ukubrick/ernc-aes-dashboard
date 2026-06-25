@@ -22,6 +22,12 @@ _KEY_OPS: str | None = None
 _SESSION = requests.Session()
 _SESSION.headers.update({"Accept": "application/json"})
 
+# Presupuesto de tiempo (segundos) para los endpoints que paginan TODO el sistema
+# (PCP, PID, demanda, CMG programado). Si la API CEN se degrada y una página tarda,
+# el loop corta y devuelve lo parcial en vez de colgar el cron entero (el upsert de
+# ventana móvil se auto-corrige en la corrida siguiente). Ver workflow timeout-minutes.
+PAGINADO_MAX_SEG = 720  # 12 min por endpoint
+
 
 def _get_keys():
     # CEN_OPS_KEY es opcional: solo la usa SSCC (plan Operaciones). Scripts que solo
@@ -259,8 +265,13 @@ def fetch_gen_programada(start_date: str = None, end_date: str = None) -> list[d
     url = f"{API_BASE_SIP}/generacion-programada-pcp/v4/findByDate"
     registros = []
     page = 1
+    _t0 = time.monotonic()
 
     while True:
+        if time.monotonic() - _t0 > PAGINADO_MAX_SEG:
+            print(f"[PCP] Presupuesto de tiempo agotado en página {page} — "
+                  f"se devuelven {len(registros)} registros parciales.")
+            break
         params = {
             "startDate": start_date,
             "endDate":   end_date,
@@ -332,8 +343,12 @@ def fetch_gen_programada_pid(start_date: str = None, end_date: str = None) -> li
     url = f"{API_BASE_SIP}/generacion-programada-pid/v4/findByDate"
     mejor: dict[tuple[str, str], dict] = {}   # (parque, fecha_hora) → registro
     page = 1
+    _t0 = time.monotonic()
 
     while True:
+        if time.monotonic() - _t0 > PAGINADO_MAX_SEG:
+            print(f"[PID] Presupuesto de tiempo agotado en página {page} — parcial.")
+            break
         params = {
             "startDate": start_date, "endDate": end_date,
             "limit": 5000, "page": page, "user_key": key_sip,
@@ -395,8 +410,12 @@ def fetch_demanda_pid(start_date: str = None, end_date: str = None) -> list[dict
     # (zona, fecha_hora) → {"mw": suma, "fecha_programa": max}
     acum: dict[tuple[str, str], dict] = {}
     page = 1
+    _t0 = time.monotonic()
 
     while True:
+        if time.monotonic() - _t0 > PAGINADO_MAX_SEG:
+            print(f"[DEMANDA] Presupuesto de tiempo agotado en página {page} — parcial.")
+            break
         params = {
             "startDate": start_date, "endDate": end_date,
             "limit": 4000, "page": page, "user_key": key_sip,
@@ -513,8 +532,12 @@ def fetch_cmg_programado(start_date: str = None, end_date: str = None) -> list[d
     mejor: dict[tuple[str, str], dict] = {}   # (nodo, fecha_hora) → registro
     page = 1
     _LIMIT = 4000
+    _t0 = time.monotonic()
 
     while True:
+        if time.monotonic() - _t0 > PAGINADO_MAX_SEG:
+            print(f"[CMG-PROG] Presupuesto de tiempo agotado en página {page} — parcial.")
+            break
         params = {
             "startDate": start_date, "endDate": end_date,
             "limit": _LIMIT, "page": page, "user_key": key_sip,
