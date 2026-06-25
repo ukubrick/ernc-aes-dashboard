@@ -6,7 +6,7 @@ Siete análisis:
   2. Detección de anomalías  — residuos del modelo + IsolationForest sobre el clima.
   3. Predicción de CMG        — RandomForest con rezagos (lags) por nodo.
   4. Análisis de eficiencia   — performance ratio real/teórico + clustering de condiciones.
-  5. BESS — operación         — perfil horario, neta vs CMG y arbitraje del almacenamiento.
+  5. BESS — operación         — perfil horario, neta vs CMG y optimizador de arbitraje (LP/MILP).
   6. Validación recurso (NASA) — GHI Open-Meteo vs NASA POWER (fuente satelital independiente).
 
 Sub-navegación con radio (no st.tabs) para que cada gráfico Plotly se monte siempre
@@ -61,6 +61,12 @@ try:
     _LGBM = True
 except Exception:
     _LGBM = False
+
+try:
+    import pulp
+    _PULP = True
+except Exception:
+    _PULP = False
 
 # Cuantiles de la banda probabilística: P10 (pesimista) — P50 (central) — P90 (optimista)
 CUANTILES = (0.10, 0.50, 0.90)
@@ -317,8 +323,8 @@ def _train_cuantiles(X, y, pmax: float):
     """Entrena un LGBMRegressor por cuantil. Devuelve dict {alpha: modelo}."""
     modelos = {}
     for a in CUANTILES:
-        m = LGBMRegressor(objective="quantile", alpha=a, n_estimators=300,
-                          num_leaves=31, learning_rate=0.05, min_child_samples=20,
+        m = LGBMRegressor(objective="quantile", alpha=a, n_estimators=200,
+                          num_leaves=31, learning_rate=0.07, min_child_samples=20,
                           subsample=0.9, colsample_bytree=0.9, random_state=42, n_jobs=-1,
                           verbose=-1)
         m.fit(X, y)
@@ -355,26 +361,67 @@ def _banda_cal(modelos, X, Q: float, pmax: float):
     return np.clip(p10 - Q, 0, pmax), p50, np.clip(p90 + Q, 0, pmax)
 
 
-def _render_forecast_prob(parque: str) -> None:
-    if not _LGBM:
-        st.warning("LightGBM no está instalado en este entorno. Agrega `lightgbm>=4.0` a "
-                   "requirements.txt y vuelve a desplegar.")
-        return
-
+@st.cache_data(ttl=3600, show_spinner=False)
+def _entrenar_prob(parque: str) -> dict | None:
+    """Entrena y calibra (CQR) la banda probabilística de un parque. Cacheado 1h:
+    el entrenamiento LightGBM es lo caro (~10-15s), así que se hace una sola vez y
+    las re-ejecuciones de la UI son instantáneas. Devuelve modelos+métricas+backtest
+    listos para graficar, o None / {'insuf':True} si faltan datos."""
+    from sklearn.model_selection import train_test_split
     tec = TECNOLOGIA[parque]
     pmax = PMAX[parque] if tec == "Solar" else PMAX_FP[parque]
     df = _dataset_parque(parque, dias=120)
-    if df.empty or len(df) < 300:
-        st.info("Datos insuficientes para una banda confiable (se necesitan ≥300 horas con "
-                "meteo+generación). Corre el backfill / espera a que se acumule histórico.")
-        return
-
+    if df.empty:
+        return None
     feats = _feats_disponibles(df, tec)
     df = _add_ciclicas(df)
     feats_q = feats + ["hora_sin", "hora_cos"]
     d = df.dropna(subset=feats_q + ["gen_real_mw"])
     if len(d) < 300:
-        st.info("Datos insuficientes tras limpiar valores faltantes.")
+        return {"insuf": True, "n": len(d)}
+
+    col_fis = "p_fv_estimada_mw" if tec == "Solar" else "p_eolica_estimada_mw"
+    cols = feats_q + ["gen_real_mw"] + ([col_fis] if col_fis in d.columns else [])
+    tr_full, te = train_test_split(d[cols], test_size=0.2, random_state=42)
+    tr, cal = train_test_split(tr_full, test_size=0.25, random_state=42)  # 60/20/20
+
+    modelos, Q = _train_cal(tr[feats_q].values, tr["gen_real_mw"].values,
+                            cal[feats_q].values, cal["gen_real_mw"].values, pmax)
+    p10, p50, p90 = _banda_cal(modelos, te[feats_q].values, Q, pmax)
+    y_te = te["gen_real_mw"].values
+    cobertura = float(np.mean((y_te >= p10) & (y_te <= p90)) * 100)
+    pinball = float(np.mean([_pinball(y_te, pq, a) for pq, a in zip((p10, p50, p90), CUANTILES)]))
+    mae_p50 = float(mean_absolute_error(y_te, p50))
+    mae_fis = None
+    if col_fis in te.columns:
+        fis = pd.to_numeric(te[col_fis], errors="coerce"); mk = fis.notna().values
+        if mk.any():
+            mae_fis = float(mean_absolute_error(y_te[mk], np.clip(fis.values[mk], 0, pmax)))
+
+    # Se reutiliza el modelo ya entrenado (60% del set, calibrado en 20%) para el
+    # backtest y el pronóstico futuro — evita un segundo entrenamiento (la mitad del
+    # tiempo) sin sesgar las métricas, que se miden sobre el test held-out (20%).
+    modelos_full, Q_full = modelos, Q
+
+    # Backtest visual sobre el tramo reciente (arrays listos para graficar)
+    n_vis = min(len(d), max(72, int(len(d) * 0.25)))
+    dv = d.sort_values("fecha_hora").iloc[-n_vis:]
+    b10, b50, b90 = _banda_cal(modelos_full, dv[feats_q].values, Q_full, pmax)
+
+    return {
+        "tec": tec, "pmax": pmax, "feats_q": feats_q,
+        "modelos_full": modelos_full, "Q_full": Q_full,
+        "cobertura": cobertura, "pinball": pinball, "mae_p50": mae_p50,
+        "mae_fis": mae_fis, "n_tr": len(tr),
+        "bt_fecha": dv["fecha_hora"].values, "bt10": b10, "bt50": b50, "bt90": b90,
+        "bt_real": dv["gen_real_mw"].values,
+    }
+
+
+def _render_forecast_prob(parque: str) -> None:
+    if not _LGBM:
+        st.warning("LightGBM no está instalado en este entorno. Agrega `lightgbm>=4.0` a "
+                   "requirements.txt y vuelve a desplegar.")
         return
 
     with st.expander("¿Qué es un forecast probabilístico? (metodología)"):
@@ -383,75 +430,51 @@ def _render_forecast_prob(parque: str) -> None:
             "pesimista), P50 (central) y P90 (optimista). Con 80% de confianza la generación real "
             "caerá entre P10 y P90. Esto es lo que sirve para declarar al CEN y gestionar desvíos.\n\n"
             "**Modelo:** tres `LightGBM` con `objective=quantile` (gradient boosting), uno por "
-            "cuantil. Entradas: las variables meteo del parque + hora del día codificada en "
-            "seno/coseno.\n\n"
+            "cuantil, con **calibración conformal (CQR)** que ajusta el ancho de banda para que la "
+            "cobertura empírica alcance el 80%. Entradas: variables meteo del parque + hora del día "
+            "codificada en seno/coseno.\n\n"
             "**Métricas:**\n"
-            "- **Cobertura P10–P90:** % de horas reales que caen dentro de la banda. Ideal ≈ 80%. "
-            "Es la métrica clave de un forecast probabilístico.\n"
+            "- **Cobertura P10–P90:** % de horas reales dentro de la banda. Ideal ≈ 80%.\n"
             "- **Pinball loss:** calidad de los cuantiles (menor = mejor).\n"
             "- **MAE del P50** vs **MAE del modelo físico:** cuánto le gana el ML al modelo "
             "determinístico que ya usa el dashboard."
         )
 
-    from sklearn.model_selection import train_test_split
-    col_fis = "p_fv_estimada_mw" if tec == "Solar" else "p_eolica_estimada_mw"
-    cols_split = feats_q + ["gen_real_mw"] + ([col_fis] if col_fis in d.columns else [])
-    tr_full, te = train_test_split(d[cols_split], test_size=0.2, random_state=42)
-    tr, cal = train_test_split(tr_full, test_size=0.25, random_state=42)  # 60/20/20
+    res = _entrenar_prob(parque)
+    if res is None:
+        st.info("Sin datos meteo+generación para este parque todavía.")
+        return
+    if res.get("insuf"):
+        st.info(f"Datos insuficientes para una banda confiable ({res['n']} horas; se necesitan "
+                "≥300). Corre el backfill o espera a que se acumule histórico.")
+        return
 
-    modelos, Q = _train_cal(tr[feats_q].values, tr["gen_real_mw"].values,
-                            cal[feats_q].values, cal["gen_real_mw"].values, pmax)
-    p10, p50, p90 = _banda_cal(modelos, te[feats_q].values, Q, pmax)
-    y_te = te["gen_real_mw"].values
-
-    cobertura = float(np.mean((y_te >= p10) & (y_te <= p90)) * 100)
-    pinball = np.mean([_pinball(y_te, pq, a)
-                       for pq, a in zip((p10, p50, p90), CUANTILES)])
-    mae_p50 = mean_absolute_error(y_te, p50)
-    mae_fis = None
-    if col_fis in te.columns:
-        fis = pd.to_numeric(te[col_fis], errors="coerce")
-        m = fis.notna().values
-        if m.any():
-            mae_fis = mean_absolute_error(y_te[m], np.clip(fis.values[m], 0, pmax))
+    feats_q, pmax, tec = res["feats_q"], res["pmax"], res["tec"]
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Cobertura P10–P90", f"{cobertura:.0f}%", help="Ideal ≈ 80%")
-    c2.metric("Pinball loss", f"{pinball:.2f}")
-    c3.metric("MAE P50", f"{mae_p50:.2f} MW")
-    if mae_fis is not None:
-        mejora = (mae_fis - mae_p50) / mae_fis * 100 if mae_fis else 0
-        c4.metric("MAE modelo físico", f"{mae_fis:.2f} MW", delta=f"{mejora:+.0f}% ML",
-                  delta_color="normal")
+    c1.metric("Cobertura P10–P90", f"{res['cobertura']:.0f}%", help="Ideal ≈ 80%")
+    c2.metric("Pinball loss", f"{res['pinball']:.2f}")
+    c3.metric("MAE P50", f"{res['mae_p50']:.2f} MW")
+    if res["mae_fis"] is not None:
+        mejora = (res["mae_fis"] - res["mae_p50"]) / res["mae_fis"] * 100 if res["mae_fis"] else 0
+        c4.metric("MAE modelo físico", f"{res['mae_fis']:.2f} MW", delta=f"{mejora:+.0f}% ML")
     else:
-        c4.metric("Registros entren.", f"{len(tr)}")
-    if cobertura < 65:
-        st.warning("Cobertura baja: la banda está demasiado angosta para el histórico disponible. "
-                   "Mejora al acumular más datos.")
+        c4.metric("Registros entren.", f"{res['n_tr']}")
 
-    # Modelos finales + calibración sobre todo el set, para el pronóstico futuro
-    trf, calf = train_test_split(d[cols_split], test_size=0.2, random_state=7)
-    modelos_full, Q_full = _train_cal(trf[feats_q].values, trf["gen_real_mw"].values,
-                                      calf[feats_q].values, calf["gen_real_mw"].values, pmax)
-
-    # Backtest visual sobre el tramo reciente
     _titulo(f"Banda P10–P90 vs generación real — {NOMBRE_DISPLAY[parque]}", "12px 0 6px")
-    n_vis = min(len(d), max(72, int(len(d) * 0.25)))
-    dv = d.sort_values("fecha_hora").iloc[-n_vis:]
-    b10, b50, b90 = _banda_cal(modelos_full, dv[feats_q].values, Q_full, pmax)
-    st.plotly_chart(_fan_chart(dv["fecha_hora"], b10, b50, b90,
-                               real=dv["gen_real_mw"].values),
+    st.plotly_chart(_fan_chart(res["bt_fecha"], res["bt10"], res["bt50"], res["bt90"],
+                               real=res["bt_real"]),
                     use_container_width=True, key=f"ml_prob_test_{parque}")
 
-    # Pronóstico futuro sobre el forecast meteo
+    # Pronóstico futuro sobre el forecast meteo (barato; se aplica el modelo ya entrenado)
     dff = _forecast_meteo_parque(parque)
     if not dff.empty:
         dff = _add_ciclicas(dff)
         if set(feats_q).issubset(dff.columns):
             dfx = dff.dropna(subset=feats_q).copy()
             if not dfx.empty:
-                f10, f50, f90 = _banda_cal(modelos_full, dfx[feats_q].values, Q_full, pmax)
-                # Solar: forzar banda a 0 de noche (sin irradiancia no hay generación)
+                f10, f50, f90 = _banda_cal(res["modelos_full"], dfx[feats_q].values,
+                                           res["Q_full"], pmax)
                 if tec == "Solar" and "is_day" in dfx.columns:
                     noche = ~dfx["is_day"].astype(bool).values
                     f10[noche] = f50[noche] = f90[noche] = 0.0
@@ -894,7 +917,114 @@ def _render_bess_ml(cod: str) -> None:
         st.plotly_chart(figi, use_container_width=True, key=f"ml_bess_imp_{cod}")
 
     # 4. Recomendación de arbitraje a futuro (CMG programado próximas horas)
-    _recomendacion_arbitraje(cod)
+    _render_arbitraje_milp(cod)
+
+
+def _optimizar_bess(precios, pmax: float, energia_mwh: float,
+                    eta_rt: float = 0.85, max_ciclos: float = 1.5, soc0: float = 0.0):
+    """Optimiza el cronograma de carga/descarga del BESS para maximizar el ingreso
+    por arbitraje sobre el CMG programado futuro. Programación LINEAL (no requiere
+    binarios: con precios positivos nunca conviene cargar y descargar a la vez, así
+    que el óptimo lo evita solo → rápido).
+
+    Variables por hora t: carga c_t, descarga d_t ∈ [0, pmax]; estado s_t ∈ [0, E].
+    Dinámica: s_t = s_{t-1} + η·c_t − d_t.   Objetivo: max Σ precio_t·(d_t − c_t).
+    Restricción de ciclos: Σ d_t ≤ max_ciclos · E.
+
+    Devuelve (carga[], descarga[], soc[], ingreso_usd) o None si no hay solver.
+    """
+    if not _PULP:
+        return None
+    T = len(precios)
+    prob = pulp.LpProblem("arbitraje_bess", pulp.LpMaximize)
+    c = [pulp.LpVariable(f"c{t}", 0, pmax) for t in range(T)]
+    d = [pulp.LpVariable(f"d{t}", 0, pmax) for t in range(T)]
+    s = [pulp.LpVariable(f"s{t}", 0, energia_mwh) for t in range(T)]
+
+    prob += pulp.lpSum(precios[t] * (d[t] - c[t]) for t in range(T))
+    for t in range(T):
+        prev = soc0 if t == 0 else s[t - 1]
+        prob += s[t] == prev + eta_rt * c[t] - d[t]
+    prob += pulp.lpSum(d) <= max_ciclos * energia_mwh
+    prob.solve(pulp.PULP_CBC_CMD(msg=0))
+    if pulp.LpStatus[prob.status] != "Optimal":
+        return None
+    carga = np.array([c[t].value() or 0.0 for t in range(T)])
+    desc = np.array([d[t].value() or 0.0 for t in range(T)])
+    soc = np.array([s[t].value() or 0.0 for t in range(T)])
+    ingreso = float(sum(precios[t] * (desc[t] - carga[t]) for t in range(T)))
+    return carga, desc, soc, ingreso
+
+
+def _render_arbitraje_milp(cod: str) -> None:
+    """Optimizador de arbitraje: programa el BESS sobre el CMG programado futuro y
+    estima el ingreso esperado. Reemplaza la heurística de 'horas baratas/caras' por
+    un óptimo que respeta el estado de carga, la eficiencia y el límite de ciclos."""
+    if not _PULP:
+        _recomendacion_arbitraje(cod)   # fallback heurístico si no hay solver
+        return
+    nodo = CMG_NODO.get(BESS[cod]["parque"])
+    if not nodo:
+        return
+    dp = _cmg_programado_hist(nodo, dias_atras=0)
+    ahora = datetime.now(SANTIAGO).replace(tzinfo=None)
+    if not dp.empty:
+        dp = dp[dp["fecha_hora"] >= ahora].sort_values("fecha_hora")
+    if dp.empty or len(dp) < 6:
+        st.info("Sin CMG programado futuro suficiente para optimizar el arbitraje "
+                "(se puebla con la adquisición / cron).")
+        return
+
+    fut = dp.head(48).copy()
+    precios = fut["cmg_usd_mwh"].values
+    pmax = BESS[cod]["pmax_mw"]
+    horas = BESS_HORAS.get(cod) or 4.0
+    energia_mwh = pmax * horas
+
+    res = _optimizar_bess(precios, pmax, energia_mwh)
+    if res is None:
+        st.warning("El optimizador no encontró solución. Usando recomendación heurística.")
+        _recomendacion_arbitraje(cod)
+        return
+    carga, desc, soc, ingreso = res
+    horas_dur = "declaradas" if BESS_HORAS.get(cod) else "asumidas (4 h)"
+
+    _titulo("Optimizador de arbitraje BESS (programación lineal sobre CMG futuro)", "16px 0 6px")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Ingreso esperado", f"{ingreso:,.0f} USD", help=f"Horizonte {len(fut)} h")
+    c2.metric("Energía descargada", f"{desc.sum():.0f} MWh")
+    c3.metric("Ciclos equivalentes", f"{desc.sum() / energia_mwh:.2f}")
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=fut["fecha_hora"], y=desc, name="Descargar (vender)",
+                         marker_color=AES_VERDE))
+    fig.add_trace(go.Bar(x=fut["fecha_hora"], y=-carga, name="Cargar (comprar)",
+                         marker_color=AES_AZUL))
+    fig.add_trace(go.Scatter(x=fut["fecha_hora"], y=precios, name="CMG programado",
+                             yaxis="y2", line=dict(color=AES_VIOLETA, width=2)))
+    fig.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+                      height=340, margin=dict(l=0, r=0, t=10, b=0), barmode="relative",
+                      yaxis_title="Potencia (MW)",
+                      yaxis2=dict(title="USD/MWh", overlaying="y", side="right", showgrid=False),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)))
+    fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    st.plotly_chart(fig, use_container_width=True, key=f"ml_bess_milp_{cod}")
+
+    figs = go.Figure()
+    figs.add_trace(go.Scatter(x=fut["fecha_hora"], y=soc, name="Estado de carga",
+                              fill="tozeroy", line=dict(color=AES_CYAN, width=2),
+                              fillcolor="rgba(77,200,220,0.15)"))
+    figs.update_layout(template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+                       height=200, margin=dict(l=0, r=0, t=10, b=0),
+                       yaxis_title="MWh", yaxis=dict(range=[0, energia_mwh * 1.05]))
+    figs.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+    figs.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
+    st.plotly_chart(figs, use_container_width=True, key=f"ml_bess_soc_{cod}")
+    st.caption(f"Capacidad {energia_mwh:.0f} MWh ({horas:.1f} h {horas_dur}), eficiencia "
+               f"round-trip 85%, máx. 1.5 ciclos. Óptimo: comprar barato (azul) y vender caro "
+               "(verde) respetando el estado de carga. El ingreso es estimado sobre el CMG "
+               "programado, no garantizado.")
 
 
 def _recomendacion_arbitraje(cod: str) -> None:
