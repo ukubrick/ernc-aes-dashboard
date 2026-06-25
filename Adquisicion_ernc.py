@@ -22,12 +22,14 @@ def _verificar_entorno():
 
 from config import (
     NOMBRE_DISPLAY, ID_CENTRAL, CMG_NODO, CMG_NODOS_TODOS,
-    DIAS_VENTANA, DIAS_VENTANA_PCP, DIAS_VENTANA_LIM,
+    DIAS_VENTANA, DIAS_VENTANA_PCP, DIAS_VENTANA_PID, DIAS_VENTANA_LIM,
 )
 from utils.cen_api import (
     fetch_gen_real_todos,
     fetch_gen_bess,
     fetch_gen_programada,
+    fetch_gen_programada_pid,
+    fetch_demanda_pid,
     fetch_cmg,
     cmg_a_registros,
     fetch_cmg_online_8b,
@@ -40,6 +42,7 @@ from utils.db import (
     upsert_generacion_real,
     upsert_generacion_bess,
     upsert_generacion_programada,
+    upsert_demanda,
     upsert_cmg,
     upsert_cmg_programado,
     upsert_limitaciones,
@@ -87,6 +90,32 @@ def adquirir_gen_programada() -> int:
         return 0
     n = upsert_generacion_programada(registros)
     log(f"Upsert gen. programada: {len(registros)} registros procesados.")
+    return len(registros)
+
+
+def adquirir_gen_programada_pid() -> int:
+    log("=== GENERACIÓN PROGRAMADA PID (reprograma intra-día) ===")
+    start, end = _ventana_fechas(DIAS_VENTANA_PID)
+    log(f"Ventana: {start} → {end} ({DIAS_VENTANA_PID} día(s) — pagina todo el sistema)")
+    registros = fetch_gen_programada_pid(start, end)
+    if not registros:
+        log("Sin registros PID para nuestros parques.")
+        return 0
+    upsert_generacion_programada(registros)
+    log(f"Upsert gen. programada PID: {len(registros)} registros procesados.")
+    return len(registros)
+
+
+def adquirir_demanda_pid() -> int:
+    log("=== DEMANDA PROGRAMADA PID (por zona del SEN) ===")
+    start, end = _ventana_fechas(DIAS_VENTANA_PID)
+    log(f"Ventana: {start} → {end}")
+    registros = fetch_demanda_pid(start, end)
+    if not registros:
+        log("Sin registros de demanda PID.")
+        return 0
+    upsert_demanda(registros)
+    log(f"Upsert demanda PID: {len(registros)} registros (zona,hora) procesados.")
     return len(registros)
 
 

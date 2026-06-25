@@ -1,0 +1,37 @@
+name: Programación PID ERNC (gen PID + demanda)
+
+on:
+  schedule:
+    # Minuto :40 — espaciado respecto a la corrida horaria completa (:10) y la de
+    # potencia (:25/:55). El PID se reprograma intra-día, basta refrescarlo cada hora.
+    - cron: "40 * * * *"
+  workflow_dispatch:
+
+# Evita solaparse consigo mismo si una corrida se atrasa (ambos endpoints paginan
+# todo el sistema y pueden tardar varios minutos).
+concurrency:
+  group: programacion-pid-ernc
+  cancel-in-progress: true
+
+jobs:
+  pid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Adquisición programación PID (gen PID + demanda PID)
+        run: python Adquisicion_pid_ernc.py
+        env:
+          CEN_USER_KEY:  ${{ secrets.CEN_USER_KEY }}
+          SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}

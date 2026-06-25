@@ -3,6 +3,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from config import NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_EOLICA
 from utils.calculos import calcular_factor_planta, calcular_desvio
@@ -39,7 +40,7 @@ def _df_meteo(parque: str) -> pd.DataFrame:
     try:
         from utils.db import get_client
         sb = get_client()
-        desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=168)).strftime("%Y-%m-%d %H:%M:%S")
+        desde = (datetime.now(ZoneInfo("America/Santiago")) - timedelta(hours=168)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("meteo_ernc")
             .select(
@@ -124,12 +125,23 @@ def _grafico_gen(gen_rows: list, prog_rows: list, df_meteo: pd.DataFrame, parque
         df_p["fecha_hora"] = pd.to_datetime(df_p["fecha_hora"]).dt.tz_localize(None)
         df_p = df_p[(df_p["parque"] == parque) & (df_p["fecha_hora"] >= corte)].sort_values("fecha_hora")
         if not df_p.empty:
-            fig.add_trace(go.Scatter(
-                x=df_p["fecha_hora"], y=df_p["gen_programada_mw"],
-                name="PCP programada",
-                line=dict(color="#D97706", width=2.2, dash="dash"),
-                hovertemplate="%{y:.1f} MW<extra>PCP programada — declarada D-1 ante CEN</extra>",
-            ))
+            _fuente = df_p["fuente"] if "fuente" in df_p.columns else None
+            df_pcp = df_p[_fuente == "CEN_PCP"] if _fuente is not None else df_p
+            df_pid = df_p[_fuente == "CEN_PID"] if _fuente is not None else df_p.iloc[0:0]
+            if not df_pcp.empty:
+                fig.add_trace(go.Scatter(
+                    x=df_pcp["fecha_hora"], y=df_pcp["gen_programada_mw"],
+                    name="PCP programada",
+                    line=dict(color="#D97706", width=2.2, dash="dash"),
+                    hovertemplate="%{y:.1f} MW<extra>PCP — programa diario declarado D-1 ante CEN</extra>",
+                ))
+            if not df_pid.empty:
+                fig.add_trace(go.Scatter(
+                    x=df_pid["fecha_hora"], y=df_pid["gen_programada_mw"],
+                    name="PID intra-día",
+                    line=dict(color=AES_VERDE, width=2, dash="dot"),
+                    hovertemplate="%{y:.1f} MW<extra>PID — reprograma intra-día (ajuste dentro del día)</extra>",
+                ))
 
     if gen_rows:
         df_r = pd.DataFrame(gen_rows)
@@ -280,6 +292,10 @@ def _gen_prog_mismo_hora(gen_rows, prog_rows, parque):
                 dp = pd.DataFrame(prog_rows)
                 dp["fecha_hora"] = pd.to_datetime(dp["fecha_hora"]).dt.tz_localize(None)
                 dp = dp[(dp["parque"] == parque) & (dp["fecha_hora"] == hora)]
+                # Desvío contra el PCP; si falta para esa hora, se usa el PID.
+                if "fuente" in dp.columns:
+                    dp_pcp = dp[dp["fuente"] == "CEN_PCP"]
+                    dp = dp_pcp if not dp_pcp.empty else dp
                 if not dp.empty:
                     prog = dp.iloc[-1]["gen_programada_mw"]
     return gen, prog
@@ -408,7 +424,10 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
   <b>Generacion real</b> — lo que el parque inyectó de verdad (medición CEN).</div>
   <div><span style='display:inline-block;width:28px;height:2px;background:#D97706;
   vertical-align:middle;margin-right:7px;border-bottom:2px dashed #D97706'></span>
-  <b>PCP programada</b> — lo que se comprometió a generar el día anterior.</div>
+  <b>PCP programada</b> — lo que se comprometió a generar el día anterior (programa diario).</div>
+  <div><span style='display:inline-block;width:28px;height:2px;background:{AES_VERDE};
+  vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_VERDE}'></span>
+  <b>PID intra-día</b> — reprograma del CEN dentro del día, ajusta el PCP con la operación real.</div>
   <div><span style='display:inline-block;width:28px;height:3px;background:{AES_VIOLETA};
   vertical-align:middle;margin-right:7px;border-radius:2px'></span>
   <b>Modelo eolico</b> — lo que debería generar según el viento en el hub.</div>

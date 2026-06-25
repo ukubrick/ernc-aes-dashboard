@@ -205,3 +205,18 @@ ALTER TABLE cmg_programado_ernc ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "anon_select" ON cmg_programado_ernc FOR SELECT USING (true);
 CREATE INDEX IF NOT EXISTS idx_cmg_prog_nodo_fecha
     ON cmg_programado_ernc (nodo, fecha_hora DESC);
+
+-- ── Demanda programada PID por zona del SEN (Sesión 27) ──────────────────────────
+-- Fuente: /demanda-programada-pid/v4 (SIP). Demanda proyectada (MW) agregada por
+-- zona del SEN (Norte, Centro, Centro Sur, Sur). fecha_programa = programa PID origen.
+CREATE TABLE IF NOT EXISTS demanda_ernc (
+    zona           TEXT NOT NULL,
+    fecha_hora     TEXT NOT NULL,
+    demanda_mw     NUMERIC,
+    hora           INTEGER,
+    fecha_programa TEXT,
+    PRIMARY KEY (zona, fecha_hora)
+);
+ALTER TABLE demanda_ernc ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_select" ON demanda_ernc FOR SELECT USING (true);
+CREATE INDEX IF NOT EXISTS idx_demanda_fecha ON demanda_ernc (fecha_hora DESC);

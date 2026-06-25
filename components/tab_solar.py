@@ -3,6 +3,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from config import (
     NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, TRACKER_STOW_WIND_MS,
@@ -42,7 +43,7 @@ def _df_meteo(parque: str) -> pd.DataFrame:
     try:
         from utils.db import get_client
         sb = get_client()
-        desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=168)).strftime("%Y-%m-%d %H:%M:%S")
+        desde = (datetime.now(ZoneInfo("America/Santiago")) - timedelta(hours=168)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("meteo_ernc")
             .select("fecha_hora,ghi_wm2,gti_wm2,temp_2m,temp_celda_c,p_fv_estimada_mw,cloudcover_low_pct,cloud_cover_pct,wind_speed_10m,wind_gusts_10m,is_day,es_forecast")
@@ -117,16 +118,28 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
                 hovertemplate="%{y:.1f} MW<extra>Modelo FV</extra>",
             ))
 
-    # PCP encima del modelo — ámbar más grueso y opaco para distinguirse del real
+    # Programación encima del modelo. PCP (declarada D-1, ámbar dash) y PID
+    # (reprograma intra-día, verde punteado) en trazas separadas si hay fuente.
     if not df_prog.empty:
         df_p = df_prog[df_prog["parque"] == parque]
         if not df_p.empty:
-            fig.add_trace(go.Scatter(
-                x=df_p["fecha_hora"], y=df_p["gen_programada_mw"],
-                name="PCP programada",
-                line=dict(color="#D97706", width=2.2, dash="dash"),
-                hovertemplate="%{y:.1f} MW<extra>PCP programada — declarada D-1 ante CEN</extra>",
-            ))
+            _fuente = df_p["fuente"] if "fuente" in df_p.columns else None
+            df_pcp = df_p[_fuente == "CEN_PCP"] if _fuente is not None else df_p
+            df_pid = df_p[_fuente == "CEN_PID"] if _fuente is not None else df_p.iloc[0:0]
+            if not df_pcp.empty:
+                fig.add_trace(go.Scatter(
+                    x=df_pcp["fecha_hora"], y=df_pcp["gen_programada_mw"],
+                    name="PCP programada",
+                    line=dict(color="#D97706", width=2.2, dash="dash"),
+                    hovertemplate="%{y:.1f} MW<extra>PCP — programa diario declarado D-1 ante CEN</extra>",
+                ))
+            if not df_pid.empty:
+                fig.add_trace(go.Scatter(
+                    x=df_pid["fecha_hora"], y=df_pid["gen_programada_mw"],
+                    name="PID intra-día",
+                    line=dict(color=AES_VERDE, width=2, dash="dot"),
+                    hovertemplate="%{y:.1f} MW<extra>PID — reprograma intra-día (ajuste dentro del día)</extra>",
+                ))
 
     # Real al tope — azul sólido pero con fillcolor muy suave para no enterrar la PCP
     if not df_gen.empty:
@@ -229,6 +242,11 @@ def _gen_prog_mismo_hora(df_gen, df_prog, parque):
             hora = last["fecha_hora"]
             if df_prog is not None and not df_prog.empty:
                 dp = df_prog[(df_prog["parque"] == parque) & (df_prog["fecha_hora"] == hora)]
+                # El desvío se mide contra el PCP (compromiso diario); si no hay PCP
+                # para esa hora, se cae al PID disponible.
+                if "fuente" in dp.columns:
+                    dp_pcp = dp[dp["fuente"] == "CEN_PCP"]
+                    dp = dp_pcp if not dp_pcp.empty else dp
                 if not dp.empty:
                     prog = dp.iloc[-1]["gen_programada_mw"]
     return gen, prog, hora
@@ -389,7 +407,10 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
   <b>Generacion real</b> — lo que el parque inyectó de verdad (medición CEN).</div>
   <div><span style='display:inline-block;width:28px;height:2px;background:#D97706;
   vertical-align:middle;margin-right:7px;border-radius:2px;border-bottom:2px dashed #D97706'></span>
-  <b>PCP programada</b> — lo que se comprometió a generar el día anterior.</div>
+  <b>PCP programada</b> — lo que se comprometió a generar el día anterior (programa diario).</div>
+  <div><span style='display:inline-block;width:28px;height:2px;background:{AES_VERDE};
+  vertical-align:middle;margin-right:7px;border-radius:2px;border-bottom:2px dotted {AES_VERDE}'></span>
+  <b>PID intra-día</b> — reprograma del CEN dentro del día, ajusta el PCP con la operación real.</div>
   <div><span style='display:inline-block;width:28px;height:3px;background:{AES_VIOLETA};
   vertical-align:middle;margin-right:7px;border-radius:2px'></span>
   <b>Modelo FV</b> — lo que debería generar según el sol y la temperatura.</div>

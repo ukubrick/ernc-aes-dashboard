@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from config import BESS, BESS_HORAS, CMG_NODO
 
@@ -34,7 +35,7 @@ def _cmg_hist_nodo(nodo: str, horas: int) -> pd.DataFrame:
     try:
         from utils.db import get_client
         sb = get_client()
-        santiago = timezone(timedelta(hours=-3))
+        santiago = ZoneInfo("America/Santiago")
         desde = (datetime.now(santiago) - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
         res = (sb.table("cmg_ernc")
                  .select("fecha_hora,cmg_usd_mwh")

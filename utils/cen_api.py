@@ -9,8 +9,9 @@ from config import (
     API_BASE_SIP, API_BASE_OPS, CMG_S3_URL,
     TZ_CHILE, ID_CENTRAL, LLAVES_OPREAL, LLAVES_GEN_PROG,
     NOMBRE_DISPLAY, LLAVES_SSCC, PMAX,
-    DIAS_VENTANA, DIAS_VENTANA_LIM,
+    DIAS_VENTANA, DIAS_VENTANA_LIM, DIAS_VENTANA_PID,
     CMG_PROG_LLAVE_A_NODO, CMG_8B_NOMBRE_A_NODO,
+    DEMANDA_ZONAS_EXCLUIR,
 )
 
 _KEY_SIP: str | None = None
@@ -304,6 +305,139 @@ def fetch_gen_programada(start_date: str = None, end_date: str = None) -> list[d
         page += 1
         print(f"[PCP] Página {page - 1}/{total_pages} procesada — {len(registros)} registros acumulados")
 
+    return registros
+
+
+# ── Generación programada PID (reprograma intra-día) ─────────────────────────────
+
+def fetch_gen_programada_pid(start_date: str = None, end_date: str = None) -> list[dict]:
+    """
+    Descarga generación programada PID para los parques del portfolio.
+
+    El PID (Programa Intra-Día) ajusta el PCP dentro del día (00-23h) con la
+    operación real. Mismo esquema que el PCP: campo `llave_gen`, NO filtra por
+    idCentral → se pagina todo y se filtra local por LLAVES_GEN_PROG. Se conserva
+    el programa más reciente (mayor `fecha_programa`) por (parque, fecha_hora).
+    Va a la misma tabla generacion_programada_ernc con fuente='CEN_PID'.
+    """
+    key_sip, _ = _get_keys()
+    if start_date is None or end_date is None:
+        start_date, end_date = _ventana_fechas(DIAS_VENTANA_PID)
+
+    llave_a_parque: dict[str, str] = {}
+    for parque, llaves in LLAVES_GEN_PROG.items():
+        for llave in llaves:
+            llave_a_parque[llave] = parque
+
+    url = f"{API_BASE_SIP}/generacion-programada-pid/v4/findByDate"
+    mejor: dict[tuple[str, str], dict] = {}   # (parque, fecha_hora) → registro
+    page = 1
+
+    while True:
+        params = {
+            "startDate": start_date, "endDate": end_date,
+            "limit": 5000, "page": page, "user_key": key_sip,
+        }
+        data = _get_with_retry(url, params, timeout=90)
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items:
+            break
+
+        for item in items:
+            parque = llave_a_parque.get(item.get("llave_gen", ""))
+            if parque is None:
+                continue
+            fh = (item.get("fecha_hora") or "")[:19]
+            if not fh:
+                continue
+            fprog = item.get("fecha_programa") or ""
+            clave = (parque, fh)
+            anterior = mejor.get(clave)
+            if anterior is None or fprog >= anterior["fecha_programa"]:
+                mejor[clave] = {
+                    "parque":                  parque,
+                    "llave_gen":               item.get("llave_gen", ""),
+                    "gen_programada_mw":       item.get("gen_programada_mw"),
+                    "capacidad_disponible_mw": item.get("capacidad_disponible_mw"),
+                    "costo_generacion_usd":    item.get("costo_generacion_usd"),
+                    "fecha_hora":              fh,
+                    "hora":                    int(fh[11:13]) if len(fh) >= 13 else 0,
+                    "fecha_programa":          fprog,
+                    "fuente":                  "CEN_PID",
+                }
+
+        total_pages = data.get("totalPages", 1) if isinstance(data, dict) else 1
+        if page >= total_pages:
+            break
+        page += 1
+        print(f"[PID] Página {page - 1}/{total_pages} procesada — {len(mejor)} registros acumulados")
+
+    return list(mejor.values())
+
+
+# ── Demanda programada PID por zona del SEN ──────────────────────────────────────
+
+def fetch_demanda_pid(start_date: str = None, end_date: str = None) -> list[dict]:
+    """
+    Descarga la demanda programada PID y la agrega por (zona, fecha_hora).
+
+    Endpoint: /demanda-programada-pid/v4/findByDate (SIP). Devuelve la demanda
+    proyectada (MW) por punto de consumo con campo `zona`. Se suma por zona del SEN
+    (excluyendo Argentina y registros sin zona) y se conserva el programa más
+    reciente (mayor `fecha_programa`) por (zona, fecha_hora).
+    Retorna registros para upsert_demanda().
+    """
+    key_sip, _ = _get_keys()
+    if start_date is None or end_date is None:
+        start_date, end_date = _ventana_fechas(DIAS_VENTANA_PID)
+
+    url = f"{API_BASE_SIP}/demanda-programada-pid/v4/findByDate"
+    # (zona, fecha_hora) → {"mw": suma, "fecha_programa": max}
+    acum: dict[tuple[str, str], dict] = {}
+    page = 1
+
+    while True:
+        params = {
+            "startDate": start_date, "endDate": end_date,
+            "limit": 4000, "page": page, "user_key": key_sip,
+        }
+        data = _get_with_retry(url, params, timeout=90)
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items:
+            break
+
+        for item in items:
+            zona = item.get("zona")
+            if zona in DEMANDA_ZONAS_EXCLUIR:
+                continue
+            fh = (item.get("fecha_hora") or "")[:19]
+            if not fh:
+                continue
+            mw = item.get("demanda_prog_mw") or 0.0
+            fprog = item.get("fecha_programa") or ""
+            clave = (zona, fh)
+            cur = acum.get(clave)
+            # Si llega un programa más nuevo, se reinicia la suma de esa hora
+            if cur is None or fprog > cur["fecha_programa"]:
+                acum[clave] = {"mw": float(mw), "fecha_programa": fprog}
+            elif fprog == cur["fecha_programa"]:
+                cur["mw"] += float(mw)
+
+        total_pages = data.get("totalPages", 1) if isinstance(data, dict) else 1
+        if page >= total_pages:
+            break
+        page += 1
+        print(f"[DEM] Página {page - 1}/{total_pages} procesada — {len(acum)} (zona,hora) acumuladas")
+
+    registros = []
+    for (zona, fh), v in acum.items():
+        registros.append({
+            "zona":           zona,
+            "demanda_mw":     round(v["mw"], 2),
+            "fecha_hora":     fh,
+            "hora":           int(fh[11:13]) if len(fh) >= 13 else 0,
+            "fecha_programa": v["fecha_programa"],
+        })
     return registros
 
 

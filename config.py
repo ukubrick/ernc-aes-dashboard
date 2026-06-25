@@ -1,5 +1,10 @@
 from zoneinfo import ZoneInfo
 
+# ── Versión de la app ──────────────────────────────────────────────────────────
+# major 2 = era Pulsar (rebrand + BESS + ML + NASA); minor sube con cada hito de datos.
+# 2.7.0 — Sesión 27: programación PID + demanda por zona + glosario.
+APP_VERSION = "v2.7.0"
+
 # ── Timezone ───────────────────────────────────────────────────────────────────
 TZ_CHILE = ZoneInfo("America/Santiago")
 
@@ -11,6 +16,7 @@ CMG_S3_URL   = "https://cen-template-graph-pweb-prod.s3.us-east-1.amazonaws.com/
 # ── Ventanas de adquisición ────────────────────────────────────────────────────
 DIAS_VENTANA     = 5    # gen. real, meteo, SSCC
 DIAS_VENTANA_PCP = 1    # gen. programada PCP + CMG programado (paginan TODO el sistema → ventana corta para no exceder el timeout del cron)
+DIAS_VENTANA_PID = 1    # gen. programada PID + demanda PID (reprograma intra-día; paginan todo el sistema → ventana corta)
 DIAS_VENTANA_LIM = 30   # limitaciones de transmisión
 
 # ── IDs CEN por parque ─────────────────────────────────────────────────────────
@@ -71,6 +77,32 @@ LLAVES_GEN_PROG = {
     "CUR":  ["LOS_CURUROS_EO"],
     "STM":  ["SAN_MATIAS_EO"],
     "MSM":  ["MESAMAVIDA_EO"],
+}
+
+# ── Demanda programada PID por zona del SEN ───────────────────────────────────
+# El endpoint demanda-programada-pid/v4 entrega la demanda proyectada (MW) por hora
+# y por punto de consumo, con campo `zona`. Se agrega por zona del SEN. Se excluyen
+# 'Argentina' (exportación) y registros sin zona. El total agregado es indicativo de
+# la FORMA del consumo (perfil día/noche) más que un valor absoluto exacto, pues el
+# endpoint suma múltiples puntos/barras de cada zona.
+DEMANDA_ZONAS = ["Norte", "Centro", "Centro Sur", "Sur"]
+DEMANDA_ZONAS_EXCLUIR = {"Argentina", None, ""}
+
+# Color por zona (paleta AES) para series de tiempo de demanda
+DEMANDA_ZONA_COLOR = {
+    "Norte":      "#F59E0B",   # ámbar — zona de los parques solares
+    "Centro":     "#3B4CE8",   # azul AES
+    "Centro Sur": "#4DC8DC",   # cyan — zona de los parques eólicos
+    "Sur":        "#9B6FD4",   # violeta
+}
+
+# Zona del SEN donde está cada parque (para contextualizar demanda local)
+ZONA_PARQUE = {
+    "AS1":  "Norte", "AS2A": "Norte", "AS2B": "Norte",
+    "AS3":  "Norte", "AS4":  "Norte", "BOL":  "Norte",
+    "CUR":  "Norte",                                      # Coquimbo → zona Norte CEN
+    "CL":   "Centro Sur", "OLM": "Centro Sur",
+    "STM":  "Centro Sur", "MSM": "Centro Sur",
 }
 
 # ── Tecnología por parque ──────────────────────────────────────────────────────

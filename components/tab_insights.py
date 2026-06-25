@@ -4,6 +4,7 @@ con fecha y hora del evento."""
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from utils.insights import Insight, evaluar_insights
 
 AES_AZUL    = "#3B4CE8"
@@ -90,7 +91,7 @@ def _cargar_meteo_actual() -> pd.DataFrame:
     try:
         from utils.db import get_client
         sb = get_client()
-        desde = (datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
+        desde = (datetime.now(ZoneInfo("America/Santiago")) - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("meteo_ernc")
             .select(

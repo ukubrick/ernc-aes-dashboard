@@ -16,6 +16,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from config import (
     NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS,
@@ -34,7 +35,7 @@ AES_BLANCO  = "#FFFFFF"
 AES_TEXTO   = "#1A1F36"
 AES_MUTED   = "#6B7280"
 
-SANTIAGO = timezone(timedelta(hours=-3))
+SANTIAGO = ZoneInfo("America/Santiago")
 
 FEATURES_SOLAR = [
     "ghi_wm2", "gti_wm2", "temp_2m", "temp_celda_c",
