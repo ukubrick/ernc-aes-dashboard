@@ -10,12 +10,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Verificar variables de entorno requeridas antes de importar módulos que las usan
-_required = ["CEN_USER_KEY", "CEN_OPS_KEY", "SUPABASE_URL", "SUPABASE_KEY"]
-_missing = [v for v in _required if not os.environ.get(v)]
-if _missing:
-    print(f"[ERROR] Variables de entorno faltantes: {', '.join(_missing)}")
-    sys.exit(1)
+def _verificar_entorno():
+    """Valida las variables requeridas. Se llama desde main(), NO a nivel de módulo,
+    para que otros scripts (p. ej. Adquisicion_potencia_ernc) puedan importar las
+    funciones de adquisición sin exigir todas las keys (ej. CEN_OPS_KEY de SSCC)."""
+    required = ["CEN_USER_KEY", "CEN_OPS_KEY", "SUPABASE_URL", "SUPABASE_KEY"]
+    missing = [v for v in required if not os.environ.get(v)]
+    if missing:
+        print(f"[ERROR] Variables de entorno faltantes: {', '.join(missing)}")
+        sys.exit(1)
 
 from config import (
     NOMBRE_DISPLAY, ID_CENTRAL, CMG_NODO, CMG_NODOS_TODOS,
@@ -160,6 +163,7 @@ def adquirir_sscc() -> int:
 
 
 def main():
+    _verificar_entorno()
     log("=" * 60)
     log("INICIO ADQUISICIÓN ERNC AES ANDES")
     log("=" * 60)
