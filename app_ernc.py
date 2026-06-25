@@ -544,8 +544,8 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
                     st.markdown("</div>", unsafe_allow_html=True)
                 if clicked:
                     st.session_state["parque_activo"] = p
-                    st.session_state["vista"] = "Solar FV"
-                    st.session_state["_force_cat"] = "Operación"   # sincroniza la categoría del menú
+                    st.session_state["vista"] = "Parques"
+                    st.session_state["_parque_tec"] = "Solar"   # fuerza el toggle de tecnología
                     st.session_state["_sync_parque"] = p   # one-shot: fuerza el selectbox una vez
                     st.rerun()
 
@@ -574,8 +574,8 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
                 st.markdown("</div>", unsafe_allow_html=True)
             if clicked:
                 st.session_state["parque_activo"] = p
-                st.session_state["vista"] = "Eolica"
-                st.session_state["_force_cat"] = "Operación"   # sincroniza la categoría del menú
+                st.session_state["vista"] = "Parques"
+                st.session_state["_parque_tec"] = "Eólica"   # fuerza el toggle de tecnología
                 st.session_state["_sync_parque"] = p   # one-shot: fuerza el selectbox una vez
                 st.rerun()
 
@@ -630,10 +630,10 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 # muchos botones sueltos. La categoría activa se deriva de la vista activa y
 # se puede cambiar con las pestañas-categoría (animación fadeInUp en los botones).
 CATEGORIAS = {
-    "Operación":         ["Mapa & Resumen", "Solar FV", "Eolica", "BESS"],
+    "Operación":         ["Mapa & Resumen", "Parques", "BESS"],
     "Análisis":          ["Forecast 7d", "Estadisticas", "ML Analysis"],
-    "Alarmas & Mercado": ["Alarmas", "Meteo & Sistema", "CMG", "Limitaciones"],
-    "Referencia":        ["Recomendaciones", "Reportes", "Infotecnica", "Glosario"],
+    "Mercado & Alertas": ["Mercado & Sistema", "Alertas"],
+    "Referencia":        ["Referencia"],
 }
 VISTAS = [v for grupo in CATEGORIAS.values() for v in grupo]
 
@@ -668,7 +668,7 @@ def _navegacion() -> str:
     for col, (cat, vistas_cat) in zip(cols, CATEGORIAS.items()):
         with col:
             activa = vista in vistas_cat
-            etiqueta = f"{cat}  ·  {vista}" if activa else cat
+            etiqueta = f"{cat}  ·  {vista}" if (activa and vista != cat) else cat
             with st.popover(etiqueta, use_container_width=True):
                 for v in vistas_cat:
                     if st.button(
@@ -827,12 +827,9 @@ def main():
 
     if vista == "Mapa & Resumen":
         _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo)
-    elif vista == "Solar FV":
-        solar_activo = parque_activo if parque_tec == "Solar" else None
-        render_tab_solar(gen_por_parque, prog_por_parque, gen_rows, prog_rows, solar_activo)
-    elif vista == "Eolica":
-        eolica_activo = parque_activo if parque_tec == "Eólica" else None
-        render_tab_eolica(gen_por_parque, prog_por_parque, gen_rows, prog_rows, eolica_activo)
+    elif vista == "Parques":
+        _render_parques(gen_por_parque, prog_por_parque, gen_rows, prog_rows,
+                        parque_activo, parque_tec)
     elif vista == "BESS":
         render_tab_bess(bess_rows)
     elif vista == "Forecast 7d":
@@ -842,7 +839,54 @@ def main():
                                  bess_rows=bess_rows)
     elif vista == "ML Analysis":
         render_tab_ml()
-    elif vista == "Alarmas":
+    elif vista == "Mercado & Sistema":
+        _render_mercado_sistema(cmg_rows, lim_rows)
+    elif vista == "Alertas":
+        _render_alertas(gen_por_parque, prog_por_parque, cmg_val, lim_rows, ultima_hora,
+                        cmg_por_parque, cmg_prom, bess_rows)
+    elif vista == "Referencia":
+        _render_referencia()
+
+
+# ── Vistas-contenedor (agrupan sub-secciones con un selector interno) ───────────
+# Se usa st.radio (no st.tabs) para la sub-navegación: st.tabs deja los paneles
+# inactivos con display:none y los gráficos Plotly se inicializan con ancho 0.
+
+def _render_parques(gen_por_parque, prog_por_parque, gen_rows, prog_rows,
+                    parque_activo, parque_tec):
+    # El sidebar puede forzar la tecnología (one-shot) al saltar a un parque.
+    forzada = st.session_state.pop("_parque_tec", None)
+    if forzada in ("Solar", "Eólica"):
+        st.session_state["parques_tec"] = forzada
+    elif "parques_tec" not in st.session_state:
+        st.session_state["parques_tec"] = parque_tec if parque_tec in ("Solar", "Eólica") else "Solar"
+
+    tec = st.radio("Tecnología", ["Solar", "Eólica"], horizontal=True,
+                   key="parques_tec", label_visibility="collapsed")
+    if tec == "Solar":
+        solar_activo = parque_activo if parque_tec == "Solar" else None
+        render_tab_solar(gen_por_parque, prog_por_parque, gen_rows, prog_rows, solar_activo)
+    else:
+        eolica_activo = parque_activo if parque_tec == "Eólica" else None
+        render_tab_eolica(gen_por_parque, prog_por_parque, gen_rows, prog_rows, eolica_activo)
+
+
+def _render_mercado_sistema(cmg_rows, lim_rows):
+    sub = st.radio("Sección", ["CMG", "Limitaciones", "Meteo & Sistema"],
+                   horizontal=True, key="mercado_sub", label_visibility="collapsed")
+    if sub == "CMG":
+        _render_tab_cmg(cmg_rows)
+    elif sub == "Limitaciones":
+        _render_tab_limitaciones(lim_rows)
+    else:
+        render_tab_meteo_sistema(cmg_rows)
+
+
+def _render_alertas(gen_por_parque, prog_por_parque, cmg_val, lim_rows, ultima_hora,
+                    cmg_por_parque, cmg_prom, bess_rows):
+    sub = st.radio("Sección", ["Alarmas automáticas", "Recomendaciones"],
+                   horizontal=True, key="alertas_sub", label_visibility="collapsed")
+    if sub == "Alarmas automáticas":
         render_tab_insights(
             gen_por_parque=gen_por_parque,
             prog_por_parque=prog_por_parque,
@@ -850,20 +894,17 @@ def main():
             lim_rows=lim_rows,
             ultima_hora=ultima_hora,
         )
-    elif vista == "Meteo & Sistema":
-        render_tab_meteo_sistema(cmg_rows)
-    elif vista == "CMG":
-        _render_tab_cmg(cmg_rows)
-    elif vista == "Limitaciones":
-        _render_tab_limitaciones(lim_rows)
-    elif vista == "Recomendaciones":
+    else:
         _render_tab_recomendaciones(gen_por_parque, prog_por_parque, cmg_por_parque,
                                     cmg_prom, bess_rows, lim_rows)
-    elif vista == "Reportes":
-        _render_tab_reportes()
-    elif vista == "Infotecnica":
+
+
+def _render_referencia():
+    sub = st.radio("Sección", ["Infotécnica", "Glosario"],
+                   horizontal=True, key="referencia_sub", label_visibility="collapsed")
+    if sub == "Infotécnica":
         render_tab_infotecnica()
-    elif vista == "Glosario":
+    else:
         from components.tab_glosario import render_tab_glosario
         render_tab_glosario()
 

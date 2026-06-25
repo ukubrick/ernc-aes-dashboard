@@ -15,4 +15,5 @@ requests-cache>=1.2.1
 retry-requests>=2.0.0
 scipy>=1.13.0
 scikit-learn>=1.4.0
+lightgbm>=4.0.0
 pillow>=10.0.0
