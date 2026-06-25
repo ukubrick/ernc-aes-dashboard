@@ -1508,5 +1508,83 @@ nube de dispersión en dos bandas.
 
 ---
 
-*Actualizado 2026-06-24 — Sesiones 1–24.*
+## SESIÓN 25 — TRACKERS FV, LOGIN, ML FORECAST, BESS SIDEBAR, PDF/RECOMENDACIONES, WORKFLOW 30 MIN (2026-06-24)
+
+Lote grande de 9 ítems pedidos por Erick. Decisiones de modelado confirmadas con él:
+trackers = ganancia tracking 1-eje + **derate disponibilidad 0.80**; **stow a 16 m/s**.
+
+### 1. Password gate (`app_ernc.py`)
+- `_password_correcto()` al inicio de `main()` (antes de cargar datos). Contraseña
+  compartida: `st.secrets["APP_PASSWORD"]` → `os.environ` → fallback **`"carbon"`**.
+- Pantalla de login centrada con logo. **Logo keyed:** `_logo_keyed_html(color, width)` —
+  reusa la lógica de Sesión 16 (key por luminancia, corte 251 sobre el checkerboard
+  horneado) pero recolorea a **negro azulado** `(26,31,54)` y lo centra. En el sidebar el
+  logo sigue blanco.
+- En Streamlit Cloud: agregar `APP_PASSWORD` en Settings → Secrets (opcional).
+
+### 2-3. Modelo FV con trackers + viento solar (`config.py`, `utils/calculos.py`, `utils/openmeteo_api.py`, `components/tab_solar.py`)
+- `config.py`: `TRACKER_GAIN=1.18`, `TRACKER_AVAIL=0.80`, `TRACKER_STOW_WIND_MS=16.0`,
+  `TRACKER_POA_MAX=1100`. Se agregó `windgusts_10m` a `OPENMETEO_VARS_SOLAR`.
+- `calculos.py`: **nuevo** `poa_tracker(gti_fijo, ghi, wind, gusts)` — POA de seguidores
+  1-eje = `GTI_fijo × 1.18`, acotado a `[GHI, 1100]`; **si viento/ráfaga ≥ 16 m/s → POA=GHI**
+  (stow horizontal). `calcular_potencia_fv_estimada(...)` ahora recibe el POA y aplica el
+  factor `availability=0.80`. El `gti` que entra ya debe ser POA.
+- `openmeteo_api.py`: el bloque Solar calcula `poa = poa_tracker(...)` y guarda
+  `p_fv_estimada_mw = calcular_potencia_fv_estimada(poa, tc, pmax)`. **Requiere re-correr
+  `Adquisicion_meteo_ernc.py`** (ya hecho en la sesión; el cron lo mantiene).
+- `tab_solar.py`: métrica **"Viento 10m"** + ráfagas + **aviso de stow** cuando viento/ráfaga
+  ≥ 16 m/s (paneles horizontales). Select amplía a `wind_speed_10m,wind_gusts_10m`.
+- Todos los consumidores leen la columna `p_fv_estimada_mw` ya almacenada → solo cambia el
+  punto de cálculo (openmeteo_api).
+
+### 4. ML en Forecast 7d (`components/tab_forecast.py`)
+- `_ml_forecast_parque` ahora devuelve **(df, métricas)** con R²/MAE de holdout 80/20.
+- **Nuevo** `_ml_portfolio_total()`: suma el ML de los 11 parques → banda data-driven.
+- Checkbox "Superponer pronóstico ML del portfolio" + **KPI "Total ML 7d"** (delta vs físico).
+- En el detalle por parque: 3 métricas (R², MAE, horas) + nota de confiabilidad.
+
+### 5. BESS en el sidebar (`app_ernc.py::render_sidebar`)
+- Nuevo parámetro `bess_rows`. Sección "BESS · Almacenamiento" con botones por BESS y estado
+  inline (▲ descarga / ▼ carga / reposo). Click → vista "BESS".
+
+### 6-7. Referencia: PDF + Recomendaciones (`utils/pdf_report.py`, `utils/recomendaciones.py`, `app_ernc.py`)
+- `CATEGORIAS["Referencia"] = ["Recomendaciones", "Reportes", "Infotecnica"]`. El botón PDF
+  **se movió del sidebar** a Referencia → Reportes.
+- **`utils/recomendaciones.py` (nuevo):** `generar_recomendaciones(...)` → lista de
+  `Recomendacion(prioridad, horizonte, titulo, detalle, categoria)`. Reglas: CMG muy bajo/alto,
+  BESS vs precio, desvíos >±25%, limitaciones persistentes, buen FP global.
+- **PDF reescrito:** paleta AES, **sin emojis** (antes tenía ⚡🔴…), secciones: portada,
+  resumen ejecutivo, estado Solar/Eólica, **tabla BESS**, **recomendaciones**, alarmas.
+  Nueva firma con `bess_rows`, `recomendaciones`, `cmg_promedio`.
+- `app_ernc.py`: helper `cmg_promedio_sen()` (excl. P.MONTT). Vista Recomendaciones con cards
+  coloreadas por prioridad. Vista Reportes con botón generar + descarga.
+
+### 8. Workflow de potencia cada 30 min (`Adquisicion_potencia_ernc.py`, `.github/workflows/potencia_ernc.yml`)
+- Script ligero que solo corre **gen-real + BESS** (reusa funciones de `Adquisicion_ernc.py`).
+  Cron `25,55 * * * *`, timeout 15 min, `concurrency` para no solaparse. **No usa CEN_OPS_KEY.**
+  Bajó el lag de la generación de ~5-6 h a ~real (corre 2×/h además del horario completo).
+
+### Fixes del cron (CEN_OPS_KEY opcional) — 2 bugs encadenados
+El workflow de 30 min no define `CEN_OPS_KEY` (solo la usa SSCC, plan Operaciones):
+1. `Adquisicion_ernc.py`: el chequeo de env estaba a **nivel de módulo** → `sys.exit(1)` al
+   importarlo. Movido a `_verificar_entorno()` llamado desde `main()`.
+2. `utils/cen_api.py::_get_keys`: leía `os.environ["CEN_OPS_KEY"]` con corchetes → `KeyError`
+   en cada llamada gen-real/BESS. Ahora `os.environ.get("CEN_OPS_KEY", "")`.
+- **Regla:** `CEN_OPS_KEY` es OPCIONAL; solo SSCC la necesita. Cualquier script SIP-only
+  (gen-real, BESS, PCP, CMG, limitaciones) debe correr sin ella.
+
+### Viento del mapa = tiempo real (consulta de Erick)
+`mapa_ernc._viento_actual_parques()` usa el endpoint **`current`** de Open-Meteo (nowcast del
+modelo, ~15 min), caché 5 min + auto-refresh 5 min. Es viento **modelado** (no medido por
+SCADA/anemómetro del parque). Independiente de la adquisición CEN/DB.
+
+### Pendiente Sesión 25
+- [ ] (Opcional) Aclarar en tooltip del mapa que el viento es "modelo/pronóstico", no medición.
+- [ ] En Streamlit Cloud: agregar `APP_PASSWORD` si se quiere cambiar de `carbon`.
+- [ ] El subdominio `*.streamlit.app` se puede personalizar (Settings → General). Si se cambia,
+      actualizar el `curl` keep-alive en `adquisicion_ernc.yml`.
+
+---
+
+*Actualizado 2026-06-24 — Sesiones 1–25.*
 *Stack: Streamlit + folium/pydeck + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER*
