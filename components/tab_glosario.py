@@ -1,8 +1,9 @@
-"""Glosario del proyecto Pulsar — términos, siglas y abreviaciones (Sesión 27).
+"""Glosario del proyecto Pulsar — términos, siglas y abreviaciones (Sesiones 27-28).
 
 Referencia consolidada de toda la terminología usada en el dashboard: programas del
 Coordinador (PCP/PID/CMG), magnitudes eléctricas, variables meteorológicas, modelos
-FV/eólico, BESS y fuentes de datos. Solo lectura, sin Plotly. Buscable.
+FV/eólico, BESS, IA/ML (forecast probabilístico, MILP, soiling) y fuentes de datos.
+Solo lectura, sin Plotly. Buscable.
 """
 import streamlit as st
 
@@ -95,6 +96,36 @@ GLOSARIO: dict[str, list[tuple[str, str]]] = {
         ("Streamlit", "Framework del dashboard (Python). Desplegado en Streamlit Cloud."),
         ("ML / RandomForest", "Modelos de aprendizaje que predicen gen. desde meteo y detectan anomalías/eficiencia."),
         ("TZ_CHILE", "Zona horaria America/Santiago (ZoneInfo). Todos los fecha_hora se guardan en hora civil de Chile."),
+    ],
+    "Inteligencia Artificial y modelos (ML)": [
+        ("IA", "Inteligencia Artificial. Término amplio que incluye el Machine Learning y la optimización. Pulsar usa IA en ambos sentidos."),
+        ("ML (Machine Learning)", "Aprendizaje automático: modelos que aprenden patrones de los datos (clima→generación, etc.). Es una rama de la IA."),
+        ("Deep Learning", "Sub-rama del ML basada en redes neuronales (CNN, RNN/LSTM, Transformers). NO se usa en Pulsar: con ~115 días de datos, el gradient boosting rinde mejor. Quedaría para nowcasting de nubes con CNN a futuro."),
+        ("Forecast puntual", "Pronóstico de un solo valor por hora (ej. RandomForest meteo→gen). Responde '¿cuánto?', no '¿con qué incertidumbre?'."),
+        ("Forecast probabilístico", "Pronóstico que entrega un rango (banda P10–P50–P90) en vez de un número. Permite declarar al CEN y gestionar desvíos con incertidumbre."),
+        ("Cuantil / Percentil", "Valor bajo el cual cae un % de los casos. P10 = solo 10% de las horas generan menos; P90 = 90%. P50 = mediana."),
+        ("P10 / P50 / P90", "Escenarios del forecast probabilístico: P10 pesimista, P50 central (más probable), P90 optimista. Entre P10 y P90 cae el 80% de los casos."),
+        ("Banda de confianza", "Rango P10–P90. 'Con 80% de confianza la generación caerá dentro de esta banda'."),
+        ("Cobertura", "Métrica clave del forecast probabilístico: % de horas reales que caen dentro de la banda P10–P90. Ideal ≈ 80%."),
+        ("Pinball loss", "Métrica de calidad de un cuantil pronosticado (menor = mejor). Penaliza estar por encima o por debajo del cuantil objetivo."),
+        ("LightGBM", "Algoritmo de gradient boosting (árboles) usado para el forecast probabilístico cuantílico. Rápido y preciso en datos tabulares."),
+        ("Gradient boosting", "Técnica ML que combina muchos árboles débiles en secuencia, cada uno corrigiendo el error del anterior. Base de LightGBM."),
+        ("RandomForest", "Ensemble que promedia muchos árboles de decisión sobre submuestras. Usado en el forecast puntual, anomalías y CMG."),
+        ("CQR (calibración conformal)", "Conformalized Quantile Regression. Ajusta el ancho de la banda contra un set de calibración para que la cobertura empírica alcance el 80% real. Corrige la subcobertura del viento."),
+        ("R²", "Coeficiente de determinación. Varianza explicada por el modelo: 1.0 = perfecto, 0 = igual que la media, <0 = peor."),
+        ("MAE", "Mean Absolute Error. Error absoluto medio del pronóstico, en MW. Cuánto se equivoca en promedio."),
+        ("IsolationForest", "Algoritmo no supervisado que aísla observaciones raras. Detecta horas con combinaciones atípicas de clima+generación."),
+        ("KMeans / Clustering", "Agrupa observaciones similares. En eficiencia, separa regímenes de operación (alta/media/baja)."),
+        ("Feature / Variable", "Cada entrada del modelo (GHI, viento, hora, etc.). 'Importancia de variables' = cuánto pesa cada una."),
+        ("Hora seno/coseno", "Codificación cíclica de la hora del día para que el modelo entienda que las 23h y las 0h están juntas."),
+        ("MILP / Programación lineal", "Optimización matemática que halla la mejor decisión sujeta a restricciones. Usada para el arbitraje óptimo del BESS. Es IA en sentido amplio, no ML."),
+        ("Optimizador BESS", "Calcula el cronograma óptimo de carga/descarga sobre el CMG futuro para maximizar ingreso, respetando SoC, eficiencia y ciclos."),
+        ("Round-trip (η)", "Eficiencia de ida y vuelta del BESS: la energía que sale / la que entró (~85%). El resto se pierde al cargar/descargar."),
+        ("Performance Ratio (PR)", "Generación real / generación teórica del modelo. PR más bajo = pérdidas (suciedad, sombras, limitaciones)."),
+        ("Soiling", "Pérdida de generación FV por suciedad acumulada (polvo del desierto). Se recupera con lluvia o lavado."),
+        ("Soiling ratio", "Índice diario de limpieza: PR normalizado contra el mejor estado reciente del parque (P90). 1.0 = limpio, <1.0 = sucio/subrendimiento."),
+        ("Backtest", "Validación del modelo sobre datos históricos no usados en el entrenamiento, para medir su precisión real."),
+        ("Suncast", "Plataforma comercial chilena de pronóstico ERNC (competidor de referencia). Usa ML clásico; ofrece soiling y servicios para PMGD."),
     ],
     "Parques del portfolio": [
         ("Solares FV (Norte)", "AS1 Andes Solar I, AS2A, AS2B, AS3, AS4 (Atacama) y BOL Bolero (Sierra Gorda). ~682 MW netos."),

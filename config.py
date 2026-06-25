@@ -3,7 +3,9 @@ from zoneinfo import ZoneInfo
 # ── Versión de la app ──────────────────────────────────────────────────────────
 # major 2 = era Pulsar (rebrand + BESS + ML + NASA); minor sube con cada hito de datos.
 # 2.7.0 — Sesión 27: programación PID + demanda por zona + glosario.
-APP_VERSION = "v2.7.0"
+# 2.8.0 — Sesión 28: simplificación nav (15→8), forecast probabilístico (LightGBM+CQR),
+#         optimizador BESS (MILP), soiling FV, backfill histórico ~115 días.
+APP_VERSION = "v2.8.0"
 
 # ── Timezone ───────────────────────────────────────────────────────────────────
 TZ_CHILE = ZoneInfo("America/Santiago")

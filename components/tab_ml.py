@@ -6,6 +6,7 @@ Siete análisis:
   2. Detección de anomalías  — residuos del modelo + IsolationForest sobre el clima.
   3. Predicción de CMG        — RandomForest con rezagos (lags) por nodo.
   4. Análisis de eficiencia   — performance ratio real/teórico + clustering de condiciones.
+  4b. Soiling FV              — soiling ratio (gen/modelo normalizado) + tendencia de suciedad.
   5. BESS — operación         — perfil horario, neta vs CMG y optimizador de arbitraje (LP/MILP).
   6. Validación recurso (NASA) — GHI Open-Meteo vs NASA POWER (fuente satelital independiente).
 
@@ -220,6 +221,9 @@ def _render_forecast_gen(parque: str) -> None:
 
     with st.expander("¿Cómo se calcula esta predicción? (metodología)"):
         st.markdown(
+            "**Qué entrega:** un pronóstico **puntual** (un valor de MW por hora). Si necesitas el "
+            "**rango de incertidumbre** (banda P10–P90, '80% de confianza'), usa la pestaña "
+            "**Forecast probabilístico**.\n\n"
             "**Modelo:** Random Forest Regressor (160 árboles) — un *ensemble* que promedia "
             "muchos árboles de decisión sobre submuestras, robusto a relaciones no lineales "
             "entre clima y generación.\n\n"
@@ -231,7 +235,9 @@ def _render_forecast_gen(parque: str) -> None:
             "métrica correcta. Una partición cronológica daba R² negativos engañosos cuando el "
             "tramo final caía en un régimen meteorológico distinto al del entrenamiento.\n\n"
             "**Métricas:** R² (varianza explicada, 1.0 = perfecto, <0 = peor que la media) y MAE "
-            "(error absoluto medio en MW)."
+            "(error absoluto medio en MW).\n\n"
+            "**Datos:** se entrena en vivo con el histórico de Supabase (meteo Open-Meteo + "
+            "generación real CEN), ventana de los últimos ~115 días."
         )
 
     from sklearn.model_selection import train_test_split
@@ -465,6 +471,8 @@ def _render_forecast_prob(parque: str) -> None:
     st.plotly_chart(_fan_chart(res["bt_fecha"], res["bt10"], res["bt50"], res["bt90"],
                                real=res["bt_real"]),
                     use_container_width=True, key=f"ml_prob_test_{parque}")
+    st.caption("Validación: la línea punteada (generación real) debe caer dentro de la banda "
+               "azul ~80% del tiempo. Si se sale a menudo, la banda está mal calibrada.")
 
     # Pronóstico futuro sobre el forecast meteo (barato; se aplica el modelo ya entrenado)
     dff = _forecast_meteo_parque(parque)
@@ -664,10 +672,13 @@ def _render_eficiencia() -> None:
     with st.expander("¿Qué mide el análisis de eficiencia? (metodología)"):
         st.markdown(
             "**Performance Ratio (PR)** = generación real / generación teórica del modelo físico, "
-            "calculado solo en horas con recurso relevante (>5% de Pmax). PR≈1 significa que el "
-            "parque rinde lo esperado; PR bajo indica pérdidas (suciedad, sombras, "
-            "indisponibilidad, limitaciones o curtailment). Se usa la **mediana** del PR para "
-            "robustez ante valores extremos.\n\n"
+            "calculado solo en horas con recurso relevante (>5% de Pmax). Un PR **más bajo** indica "
+            "pérdidas (suciedad, sombras, indisponibilidad, limitaciones o curtailment). Se usa la "
+            "**mediana** del PR para robustez ante valores extremos.\n\n"
+            "*Nota:* el modelo físico puede tener un sesgo sistemático (sub o sobreestimar), por lo "
+            "que importa **comparar el PR entre parques y entre horas**, más que su valor absoluto. "
+            "Para seguimiento de suciedad en el tiempo, ver la pestaña **Soiling FV** (PR "
+            "normalizado).\n\n"
             "**Clustering (K-Means):** agrupa las horas según recurso (GHI o viento) y PR, "
             "revelando regímenes de operación. Los grupos se etiquetan por nivel de eficiencia "
             "(alta/media/baja). Puntos con buen recurso pero PR bajo son los que conviene investigar."
@@ -787,6 +798,103 @@ def _render_eficiencia() -> None:
     )
 
 
+# ── 4b. Soiling FV (ensuciamiento de paneles) ───────────────────────────────────
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _soiling_diario(parque: str) -> pd.DataFrame:
+    """Serie diaria del soiling ratio de un parque solar. Método: PR = gen_real /
+    modelo físico (corrige temperatura, POA y trackers) por hora de sol fuerte,
+    agregado a mediana diaria y normalizado contra el mejor estado reciente del propio
+    parque (P90) para quitar el sesgo del modelo. SR≈1 = limpio; SR<1 = subrendimiento
+    (soiling + curtailment + limitaciones)."""
+    df = _dataset_parque(parque, dias=120)
+    if df.empty:
+        return pd.DataFrame()
+    d = df.copy()
+    d["pfv"] = pd.to_numeric(d.get("p_fv_estimada_mw"), errors="coerce")
+    techo = d["pfv"].max()
+    if not techo or techo <= 0:
+        return pd.DataFrame()
+    d = d[(d["is_day"] == True) & (d["ghi_wm2"] > 400) &
+          (d["pfv"] > 0.10 * techo) & (d["gen_real_mw"] >= 0)]
+    if d.empty:
+        return pd.DataFrame()
+    d["pr"] = d["gen_real_mw"] / d["pfv"]
+    d["fecha"] = pd.to_datetime(d["fecha_hora"]).dt.date
+    daily = (d.groupby("fecha").agg(pr=("pr", "median"), n=("pr", "size"),
+                                    gen=("gen_real_mw", "sum")).reset_index())
+    daily = daily[daily["n"] >= 3]
+    if len(daily) < 10:
+        return pd.DataFrame()
+    ref = daily["pr"].quantile(0.90)
+    daily["sr"] = (daily["pr"] / ref).clip(upper=1.05)
+    daily["fecha"] = pd.to_datetime(daily["fecha"])
+    return daily
+
+
+def _render_soiling(parque: str) -> None:
+    with st.expander("¿Cómo se estima el soiling? (metodología)"):
+        st.markdown(
+            "**Soiling** = pérdida de generación por suciedad acumulada en los paneles "
+            "(polvo del desierto), que se recupera con lluvia o lavado.\n\n"
+            "**Método:** se compara la generación real con el modelo físico (que ya corrige "
+            "sol, temperatura y trackers) hora a hora con sol fuerte, se agrega a un valor "
+            "diario y se **normaliza contra el mejor estado reciente del propio parque** "
+            "(percentil 90 = referencia 'limpio'). El resultado es el **soiling ratio**: "
+            "1.0 = limpio, <1.0 = subrendimiento.\n\n"
+            "**Importante:** este índice capta el subrendimiento *total* vs los mejores días "
+            "— incluye soiling pero también curtailment y limitaciones. La precisión mejora "
+            "con datos de precipitación y una referencia de panel limpio medida."
+        )
+
+    daily = _soiling_diario(parque)
+    if daily.empty:
+        st.info("Datos insuficientes para estimar soiling (se necesitan ≥10 días con sol).")
+        return
+
+    sr = daily["sr"].values
+    x = np.arange(len(sr))
+    slope = float(np.polyfit(x, sr, 1)[0] * 100)        # %/día
+    sr_actual = float(daily["sr"].tail(7).mean())        # estado actual suavizado 7d
+    perdida_pct = (1 - sr_actual) * 100
+    # Eventos de recuperación (limpieza/lluvia): salto diario > +8%
+    rec = (daily["sr"].diff() > 0.08).sum()
+    # Energía perdida estimada en la ventana: Σ (1-sr)·gen_diaria sobre referencia limpia
+    perdida_mwh = float(((1 - daily["sr"]).clip(lower=0) * daily["gen"] / daily["sr"].clip(lower=0.3)).sum())
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Soiling ratio actual", f"{sr_actual:.2f}", help="1.0 = panel limpio")
+    estado = "acumulando" if slope < -0.05 else ("limpiando" if slope > 0.05 else "estable")
+    c2.metric("Tendencia", f"{slope:+.2f}%/día", delta=estado, delta_color="off")
+    c3.metric("Pérdida estimada", f"{perdida_pct:.1f}%")
+    c4.metric("Recuperaciones (lluvia/lavado)", f"{int(rec)}")
+
+    if perdida_pct > 8 and slope < -0.05:
+        st.warning(f"Posible soiling significativo en {NOMBRE_DISPLAY[parque]}: "
+                   f"rendimiento {perdida_pct:.0f}% bajo el estado limpio y en descenso. "
+                   "Evaluar lavado si no hay lluvia próxima.")
+
+    _titulo(f"Soiling ratio diario — {NOMBRE_DISPLAY[parque]}", "12px 0 6px")
+    tend = np.polyval(np.polyfit(x, sr, 1), x)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=daily["fecha"], y=daily["sr"], mode="lines+markers",
+                             name="Soiling ratio", line=dict(color=AES_AZUL, width=2),
+                             marker=dict(size=5)))
+    fig.add_trace(go.Scatter(x=daily["fecha"], y=tend, name="Tendencia",
+                             line=dict(color=AES_AMBAR, width=1.6, dash="dash")))
+    fig.add_hline(y=1.0, line=dict(color=AES_VERDE, width=1, dash="dot"))
+    recs = daily[daily["sr"].diff() > 0.08]
+    if not recs.empty:
+        fig.add_trace(go.Scatter(x=recs["fecha"], y=recs["sr"], mode="markers",
+                                 name="Recuperación", marker=dict(color=AES_CYAN, size=11,
+                                 symbol="triangle-up")))
+    fig.update_yaxes(range=[max(0, sr.min() - 0.1), 1.1])
+    st.plotly_chart(_layout_base(fig), use_container_width=True, key=f"ml_soil_{parque}")
+    st.caption("Línea verde = estado limpio (1.0). Caídas sostenidas = ensuciamiento; "
+               "saltos hacia arriba (cyan) = lluvia o lavado. La tendencia ámbar resume la "
+               "acumulación de soiling en el período.")
+
+
 # ── 5. BESS — patrón de operación y arbitraje (ML) ──────────────────────────────
 
 @st.cache_data(ttl=900)
@@ -825,14 +933,20 @@ def _dataset_bess(cod: str, dias: int = 20) -> pd.DataFrame:
 def _render_bess_ml(cod: str) -> None:
     with st.expander("¿Qué analiza esta sección? (metodología)"):
         st.markdown(
-            "Estudia **cómo opera el BESS** y si su arbitraje es racional:\n\n"
+            "Estudia **cómo opera el BESS hoy** y **cómo debería operar** para maximizar ingresos:\n\n"
             "1. **Perfil horario:** potencia neta media por hora del día (negativa = carga, "
             "positiva = descarga). Un BESS solar bien operado carga al mediodía (CMG bajo) y "
             "descarga en la punta de la tarde (CMG alto).\n"
             "2. **Relación con el CMG:** dispersión de potencia neta vs CMG del nodo. Si el BESS "
             "arbitra bien, debería cargar con CMG bajo y descargar con CMG alto.\n"
-            "3. **Modelo:** Random Forest que predice la potencia neta a partir de hora del día y "
-            "CMG; la importancia de variables indica qué guía la operación."
+            "3. **Modelo descriptivo:** Random Forest que predice la potencia neta a partir de hora "
+            "del día y CMG; la importancia de variables indica qué guía la operación actual.\n"
+            "4. **Optimizador de arbitraje (al final):** programación lineal que calcula el "
+            "cronograma **óptimo** de carga/descarga sobre el CMG **programado futuro**, maximizando "
+            "el ingreso. Respeta el estado de carga (SoC), la eficiencia *round-trip* (85%) y un "
+            "límite de 1.5 ciclos. Es la diferencia entre *observar* el BESS y *decirle qué hacer* "
+            "con un valor en USD asociado. El ingreso es estimado sobre el CMG programado, no "
+            "garantizado."
         )
 
     db = _dataset_bess(cod)
@@ -1202,7 +1316,7 @@ def render_tab_ml() -> None:
     analisis = st.radio(
         "Análisis",
         ["Forecast de generación", "Forecast probabilístico", "Detección de anomalías",
-         "Predicción de CMG", "Análisis de eficiencia", "BESS — operación",
+         "Predicción de CMG", "Análisis de eficiencia", "Soiling FV", "BESS — operación",
          "Validación recurso (NASA)"],
         horizontal=True, key="ml_analisis",
     )
@@ -1234,6 +1348,12 @@ def render_tab_ml() -> None:
     elif analisis == "Análisis de eficiencia":
         with st.spinner("Calculando..."):
             _render_eficiencia()
+
+    elif analisis == "Soiling FV":
+        parque = st.selectbox("Parque solar", PARQUES_SOLAR,
+                              format_func=lambda p: NOMBRE_DISPLAY[p], key="ml_soil_parque")
+        with st.spinner("Estimando soiling..."):
+            _render_soiling(parque)
 
     elif analisis == "BESS — operación":
         cod = st.selectbox("BESS", list(BESS.keys()),
