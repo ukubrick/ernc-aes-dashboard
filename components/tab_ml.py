@@ -1,7 +1,8 @@
 """Tab ML Analysis — modelos predictivos y analítica sobre los datos ERNC.
 
-Seis análisis:
+Siete análisis:
   1. Forecast de generación  — RandomForest meteo→gen, comparado con el modelo físico.
+  1b. Forecast probabilístico — LightGBM cuantílico (banda P10–P50–P90) meteo→gen.
   2. Detección de anomalías  — residuos del modelo + IsolationForest sobre el clima.
   3. Predicción de CMG        — RandomForest con rezagos (lags) por nodo.
   4. Análisis de eficiencia   — performance ratio real/teórico + clustering de condiciones.
@@ -55,6 +56,15 @@ try:
 except Exception:
     _SKLEARN = False
 
+try:
+    from lightgbm import LGBMRegressor
+    _LGBM = True
+except Exception:
+    _LGBM = False
+
+# Cuantiles de la banda probabilística: P10 (pesimista) — P50 (central) — P90 (optimista)
+CUANTILES = (0.10, 0.50, 0.90)
+
 
 # ── Layout helpers ───────────────────────────────────────────────────────────
 
@@ -79,6 +89,19 @@ def _layout_base(fig, height=340):
 
 # ── Carga de datos ───────────────────────────────────────────────────────────
 
+def _fetch_paginado(query_fn, page: int = 1000) -> list[dict]:
+    """Trae TODAS las filas de una query paginando con .range(): PostgREST tope a
+    1000 filas por request, y una ventana de 120 días son ~2.880 filas/parque."""
+    filas, i = [], 0
+    while True:
+        lote = query_fn().range(i, i + page - 1).execute().data or []
+        filas.extend(lote)
+        if len(lote) < page:
+            break
+        i += page
+    return filas
+
+
 @st.cache_data(ttl=900)
 def _dataset_parque(parque: str, dias: int = 25) -> pd.DataFrame:
     """meteo histórico (es_forecast=False) ⋈ gen_real por hora para un parque."""
@@ -86,18 +109,19 @@ def _dataset_parque(parque: str, dias: int = 25) -> pd.DataFrame:
     sb = get_client()
     desde = (datetime.now(SANTIAGO) - timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
     try:
-        m = (sb.table("meteo_ernc").select("*")
-             .eq("parque", parque).eq("es_forecast", False)
-             .gte("fecha_hora", desde).order("fecha_hora").execute())
-        g = (sb.table("generacion_real_ernc").select("fecha_hora,gen_real_mw")
-             .eq("parque", parque).gte("fecha_hora", desde)
-             .order("fecha_hora").execute())
+        m_data = _fetch_paginado(lambda: (sb.table("meteo_ernc").select("*")
+                                          .eq("parque", parque).eq("es_forecast", False)
+                                          .gte("fecha_hora", desde).order("fecha_hora")))
+        g_data = _fetch_paginado(lambda: (sb.table("generacion_real_ernc")
+                                          .select("fecha_hora,gen_real_mw")
+                                          .eq("parque", parque).gte("fecha_hora", desde)
+                                          .order("fecha_hora")))
     except Exception:
         return pd.DataFrame()
-    if not m.data or not g.data:
+    if not m_data or not g_data:
         return pd.DataFrame()
-    dm = pd.DataFrame(m.data)
-    dg = pd.DataFrame(g.data)
+    dm = pd.DataFrame(m_data)
+    dg = pd.DataFrame(g_data)
     df = dm.merge(dg, on="fecha_hora", how="inner")
     if df.empty:
         return df
@@ -270,6 +294,188 @@ def _render_forecast_gen(parque: str) -> None:
                        height=240, margin=dict(l=0, r=0, t=10, b=0), xaxis_title="Importancia relativa")
     figi.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     st.plotly_chart(figi, use_container_width=True, key=f"ml_fc_imp_{parque}")
+
+
+# ── 1b. Forecast probabilístico (LightGBM cuantílico) ──────────────────────────
+
+def _add_ciclicas(df: pd.DataFrame) -> pd.DataFrame:
+    """Codifica la hora del día como seno/coseno para que el modelo capte la
+    periodicidad diaria sin tratar las 23h y las 0h como lejanas."""
+    df = df.copy()
+    df["hora_sin"] = np.sin(2 * np.pi * df["hora_dia"] / 24)
+    df["hora_cos"] = np.cos(2 * np.pi * df["hora_dia"] / 24)
+    return df
+
+
+def _pinball(y_true, y_pred, alpha: float) -> float:
+    """Pérdida pinball (quantile loss): mide la calidad de un cuantil predicho."""
+    diff = y_true - y_pred
+    return float(np.mean(np.maximum(alpha * diff, (alpha - 1.0) * diff)))
+
+
+def _train_cuantiles(X, y, pmax: float):
+    """Entrena un LGBMRegressor por cuantil. Devuelve dict {alpha: modelo}."""
+    modelos = {}
+    for a in CUANTILES:
+        m = LGBMRegressor(objective="quantile", alpha=a, n_estimators=300,
+                          num_leaves=31, learning_rate=0.05, min_child_samples=20,
+                          subsample=0.9, colsample_bytree=0.9, random_state=42, n_jobs=-1,
+                          verbose=-1)
+        m.fit(X, y)
+        modelos[a] = m
+    return modelos
+
+
+def _predict_banda(modelos, X, pmax: float):
+    """Predice los 3 cuantiles, los acota a [0, pmax] y reordena para que P10≤P50≤P90
+    (los cuantiles se entrenan por separado y pueden cruzarse en zonas con pocos datos)."""
+    qs = np.column_stack([np.clip(modelos[a].predict(X), 0, pmax) for a in CUANTILES])
+    qs = np.sort(qs, axis=1)
+    return qs[:, 0], qs[:, 1], qs[:, 2]
+
+
+def _train_cal(Xtr, ytr, Xcal, ycal, pmax: float, alpha: float = 0.20):
+    """Entrena los cuantiles y calibra el ancho de banda por CQR (Conformalized
+    Quantile Regression): sobre un set de calibración mide cuánto hay que ensanchar
+    la banda P10–P90 para que la cobertura empírica alcance 1-alpha (80%). Devuelve
+    (modelos, Q) donde Q es el ajuste de ancho. Corrige la subcobertura típica del
+    viento sin tocar el modelo."""
+    modelos = _train_cuantiles(Xtr, ytr, pmax)
+    c10, _, c90 = _predict_banda(modelos, Xcal, pmax)
+    E = np.maximum(c10 - ycal, ycal - c90)            # score de no-conformidad
+    n = len(ycal)
+    nivel = min(1.0, (1 - alpha) * (1 + 1.0 / n))     # corrección de muestra finita
+    Q = float(np.quantile(E, nivel))
+    return modelos, Q
+
+
+def _banda_cal(modelos, X, Q: float, pmax: float):
+    """Banda conformalizada: ensancha P10/P90 por Q y reacota a [0, pmax]."""
+    p10, p50, p90 = _predict_banda(modelos, X, pmax)
+    return np.clip(p10 - Q, 0, pmax), p50, np.clip(p90 + Q, 0, pmax)
+
+
+def _render_forecast_prob(parque: str) -> None:
+    if not _LGBM:
+        st.warning("LightGBM no está instalado en este entorno. Agrega `lightgbm>=4.0` a "
+                   "requirements.txt y vuelve a desplegar.")
+        return
+
+    tec = TECNOLOGIA[parque]
+    pmax = PMAX[parque] if tec == "Solar" else PMAX_FP[parque]
+    df = _dataset_parque(parque, dias=120)
+    if df.empty or len(df) < 300:
+        st.info("Datos insuficientes para una banda confiable (se necesitan ≥300 horas con "
+                "meteo+generación). Corre el backfill / espera a que se acumule histórico.")
+        return
+
+    feats = _feats_disponibles(df, tec)
+    df = _add_ciclicas(df)
+    feats_q = feats + ["hora_sin", "hora_cos"]
+    d = df.dropna(subset=feats_q + ["gen_real_mw"])
+    if len(d) < 300:
+        st.info("Datos insuficientes tras limpiar valores faltantes.")
+        return
+
+    with st.expander("¿Qué es un forecast probabilístico? (metodología)"):
+        st.markdown(
+            "**Idea:** en vez de un solo número, el modelo entrega una **banda**: P10 (escenario "
+            "pesimista), P50 (central) y P90 (optimista). Con 80% de confianza la generación real "
+            "caerá entre P10 y P90. Esto es lo que sirve para declarar al CEN y gestionar desvíos.\n\n"
+            "**Modelo:** tres `LightGBM` con `objective=quantile` (gradient boosting), uno por "
+            "cuantil. Entradas: las variables meteo del parque + hora del día codificada en "
+            "seno/coseno.\n\n"
+            "**Métricas:**\n"
+            "- **Cobertura P10–P90:** % de horas reales que caen dentro de la banda. Ideal ≈ 80%. "
+            "Es la métrica clave de un forecast probabilístico.\n"
+            "- **Pinball loss:** calidad de los cuantiles (menor = mejor).\n"
+            "- **MAE del P50** vs **MAE del modelo físico:** cuánto le gana el ML al modelo "
+            "determinístico que ya usa el dashboard."
+        )
+
+    from sklearn.model_selection import train_test_split
+    col_fis = "p_fv_estimada_mw" if tec == "Solar" else "p_eolica_estimada_mw"
+    cols_split = feats_q + ["gen_real_mw"] + ([col_fis] if col_fis in d.columns else [])
+    tr_full, te = train_test_split(d[cols_split], test_size=0.2, random_state=42)
+    tr, cal = train_test_split(tr_full, test_size=0.25, random_state=42)  # 60/20/20
+
+    modelos, Q = _train_cal(tr[feats_q].values, tr["gen_real_mw"].values,
+                            cal[feats_q].values, cal["gen_real_mw"].values, pmax)
+    p10, p50, p90 = _banda_cal(modelos, te[feats_q].values, Q, pmax)
+    y_te = te["gen_real_mw"].values
+
+    cobertura = float(np.mean((y_te >= p10) & (y_te <= p90)) * 100)
+    pinball = np.mean([_pinball(y_te, pq, a)
+                       for pq, a in zip((p10, p50, p90), CUANTILES)])
+    mae_p50 = mean_absolute_error(y_te, p50)
+    mae_fis = None
+    if col_fis in te.columns:
+        fis = pd.to_numeric(te[col_fis], errors="coerce")
+        m = fis.notna().values
+        if m.any():
+            mae_fis = mean_absolute_error(y_te[m], np.clip(fis.values[m], 0, pmax))
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Cobertura P10–P90", f"{cobertura:.0f}%", help="Ideal ≈ 80%")
+    c2.metric("Pinball loss", f"{pinball:.2f}")
+    c3.metric("MAE P50", f"{mae_p50:.2f} MW")
+    if mae_fis is not None:
+        mejora = (mae_fis - mae_p50) / mae_fis * 100 if mae_fis else 0
+        c4.metric("MAE modelo físico", f"{mae_fis:.2f} MW", delta=f"{mejora:+.0f}% ML",
+                  delta_color="normal")
+    else:
+        c4.metric("Registros entren.", f"{len(tr)}")
+    if cobertura < 65:
+        st.warning("Cobertura baja: la banda está demasiado angosta para el histórico disponible. "
+                   "Mejora al acumular más datos.")
+
+    # Modelos finales + calibración sobre todo el set, para el pronóstico futuro
+    trf, calf = train_test_split(d[cols_split], test_size=0.2, random_state=7)
+    modelos_full, Q_full = _train_cal(trf[feats_q].values, trf["gen_real_mw"].values,
+                                      calf[feats_q].values, calf["gen_real_mw"].values, pmax)
+
+    # Backtest visual sobre el tramo reciente
+    _titulo(f"Banda P10–P90 vs generación real — {NOMBRE_DISPLAY[parque]}", "12px 0 6px")
+    n_vis = min(len(d), max(72, int(len(d) * 0.25)))
+    dv = d.sort_values("fecha_hora").iloc[-n_vis:]
+    b10, b50, b90 = _banda_cal(modelos_full, dv[feats_q].values, Q_full, pmax)
+    st.plotly_chart(_fan_chart(dv["fecha_hora"], b10, b50, b90,
+                               real=dv["gen_real_mw"].values),
+                    use_container_width=True, key=f"ml_prob_test_{parque}")
+
+    # Pronóstico futuro sobre el forecast meteo
+    dff = _forecast_meteo_parque(parque)
+    if not dff.empty:
+        dff = _add_ciclicas(dff)
+        if set(feats_q).issubset(dff.columns):
+            dfx = dff.dropna(subset=feats_q).copy()
+            if not dfx.empty:
+                f10, f50, f90 = _banda_cal(modelos_full, dfx[feats_q].values, Q_full, pmax)
+                # Solar: forzar banda a 0 de noche (sin irradiancia no hay generación)
+                if tec == "Solar" and "is_day" in dfx.columns:
+                    noche = ~dfx["is_day"].astype(bool).values
+                    f10[noche] = f50[noche] = f90[noche] = 0.0
+                _titulo("Pronóstico probabilístico — próximos días", "16px 0 6px")
+                st.plotly_chart(_fan_chart(dfx["fecha_hora"], f10, f50, f90),
+                                use_container_width=True, key=f"ml_prob_fut_{parque}")
+                st.caption("Banda sombreada = rango P10–P90 (80% de confianza). Línea central = P50 "
+                           "(escenario más probable). Aplicada al pronóstico meteo Open-Meteo.")
+
+
+def _fan_chart(x, p10, p50, p90, real=None):
+    """Fan chart: banda P10–P90 sombreada + línea P50 (+ real opcional)."""
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=p90, name="P90", line=dict(width=0),
+                             showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=x, y=p10, name="Banda P10–P90", line=dict(width=0),
+                             fill="tonexty", fillcolor="rgba(59,76,232,0.16)",
+                             hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=x, y=p50, name="P50 (central)",
+                             line=dict(color=AES_AZUL, width=2.4)))
+    if real is not None:
+        fig.add_trace(go.Scatter(x=x, y=real, name="Gen. real",
+                                 line=dict(color=AES_TEXTO, width=1.6, dash="dot")))
+    return _layout_base(fig, height=360)
 
 
 # ── 2. Detección de anomalías ──────────────────────────────────────────────────
@@ -865,8 +1071,9 @@ def render_tab_ml() -> None:
 
     analisis = st.radio(
         "Análisis",
-        ["Forecast de generación", "Detección de anomalías", "Predicción de CMG",
-         "Análisis de eficiencia", "BESS — operación", "Validación recurso (NASA)"],
+        ["Forecast de generación", "Forecast probabilístico", "Detección de anomalías",
+         "Predicción de CMG", "Análisis de eficiencia", "BESS — operación",
+         "Validación recurso (NASA)"],
         horizontal=True, key="ml_analisis",
     )
 
@@ -875,6 +1082,12 @@ def render_tab_ml() -> None:
                               key="ml_fc_parque")
         with st.spinner("Entrenando modelo..."):
             _render_forecast_gen(parque)
+
+    elif analisis == "Forecast probabilístico":
+        parque = st.selectbox("Parque", PARQUES_TODOS, format_func=lambda p: NOMBRE_DISPLAY[p],
+                              key="ml_prob_parque")
+        with st.spinner("Entrenando banda probabilística..."):
+            _render_forecast_prob(parque)
 
     elif analisis == "Detección de anomalías":
         parque = st.selectbox("Parque", PARQUES_TODOS, format_func=lambda p: NOMBRE_DISPLAY[p],
