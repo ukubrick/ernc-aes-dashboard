@@ -1725,5 +1725,191 @@ en la sección Referencia.
 
 ---
 
-*Actualizado 2026-06-25 — Sesiones 1–27 (v2.7.0).*
-*Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER*
+## SESIÓN 28 — SIMPLIFICACIÓN + ETAPA IA: FORECAST PROBABILÍSTICO, OPTIMIZADOR BESS (MILP), SOILING (2026-06-25)
+
+Sesión grande de cierre de la etapa de IA. Tres ejes: (1) **simplificación** de la
+navegación para el cliente, (2) **forecast probabilístico** calibrado, (3) **optimizador
+de arbitraje BESS** y **soiling**. Más backfill histórico masivo para que los modelos
+tengan datos. Esta sección está escrita en detalle para servir de manual de presentación.
+
+### 0. Concepto clave para presentar: ¿es "IA"?
+- Todo lo construido (RandomForest, LightGBM, IsolationForest, KMeans) **es IA** — el
+  Machine Learning es una rama de la Inteligencia Artificial. Es correcto y honesto decir
+  "Pulsar usa modelos de IA (Machine Learning)".
+- El **optimizador BESS (MILP)** es **optimización matemática / investigación de
+  operaciones** — IA en sentido amplio (decisión óptima), no ML.
+- **NO** se usó deep learning (CNN, RNN/LSTM, Transformers) y fue **decisión correcta**:
+  con ~115 días de datos horarios, gradient boosting (LightGBM) le gana al deep learning,
+  que sobreajusta con datasets pequeños. El deep learning brillaría con años de datos o con
+  imágenes satelitales de nubes (CNN para nowcasting) → pendiente a futuro.
+- Suncast (competidor, suncast.cl) también es "plataforma de IA" con ML clásico. Misma
+  categoría tecnológica.
+
+### 1. Simplificación de navegación: 15 → 8 vistas (`app_ernc.py`)
+El proyecto había acumulado 15 vistas en 27 sesiones. Se redujo la **superficie de UX**
+(lo que el cliente percibe) sin reescribir la lógica interna de cada tab.
+
+- `CATEGORIAS` ahora:
+  - **Operación**: Mapa & Resumen · **Parques** · BESS
+  - **Análisis**: Forecast 7d · Estadisticas · ML Analysis
+  - **Mercado & Alertas**: **Mercado & Sistema** · **Alertas**
+  - **Referencia**: **Referencia**
+- **Vistas-contenedor** (funciones delgadas que reúsan los `render_*` existentes con un
+  `st.radio` interno — NO `st.tabs`, por el bug de Plotly ancho 0):
+  - `_render_parques()` — fusiona Solar FV + Eólica con **toggle de tecnología**. El sidebar
+    al clicar un parque escribe `vista="Parques"` + `_parque_tec` (Solar/Eólica) one-shot.
+  - `_render_mercado_sistema()` — CMG + Limitaciones + Meteo & Sistema.
+  - `_render_alertas()` — Alarmas automáticas + Recomendaciones.
+  - `_render_referencia()` — Infotécnica + Glosario.
+- **Reportes/PDF** salió del menú (no se usa). `_render_tab_reportes` quedó como código
+  muerto (no se borró para no arriesgar imports).
+- El menú de popovers deriva la categoría activa de `vista` (sin estado `nav_cat`). Etiqueta
+  `f"{cat} · {vista}"` salvo categoría de una sola vista.
+
+### 2. Backfill histórico masivo (datos para entrenar)
+**Problema raíz:** la `generacion_real_ernc` solo tenía ~9 días (ventana móvil del cron),
+mientras la meteo open-meteo cubría desde 2026-03-01. Sin pares meteo→gen no hay ML.
+
+- **`Backfill_historico_ernc.py`** (NUEVO, NO va al cron): gen-real + BESS de la API CEN en
+  tramos de 7 días. Reusa `fetch_gen_real_todos` y `fetch_gen_bess` (ya aceptan
+  start/end). Idempotente (mismos upserts on_conflict). Resultado: **gen_real 2.453 →
+  30.701 filas**, **BESS 635 → 13.600** (span 2026-03-01 → hoy, ~115 días).
+- **`Backfill_meteo_historico_ernc.py`** (NUEVO): meteo histórica de los **parques eólicos**
+  (el backfill de la Sesión 24 fue solo solar → la meteo de viento solo existía ~8 días).
+  Usa `OPENMETEO_HISTORICAL_URL` (reanálisis) con los internos de `openmeteo_api`
+  (`_params_eolica`, `_response_to_registros`) → mismas variables y cálculos (v100m,
+  densidad, cizalle). +14.035 filas eólicas. Dedup `(parque,fecha_hora,fuente)` obligatorio.
+- **Regla:** estos scripts son utilidades puntuales, no cron. La API CEN devuelve gen-real
+  hasta varios meses atrás; el reanálisis Open-Meteo desde ~2026-03.
+
+### 3. Bug crítico de paginación Supabase (afecta TODO query >1000 filas)
+`_dataset_parque` (en `tab_ml.py`) no paginaba → **PostgREST/Supabase trunca a 1000 filas
+por request**. Con 120 días (~2.880 filas/parque) el join meteo⋈gen se quedaba sin solape:
+eólica daba "sin datos", solar truncaba a 916. Nunca importó pre-backfill (había <1000
+filas). **Fix:** helper `_fetch_paginado(query_fn, page=1000)` que pagina con `.range()`
+hasta agotar. **Regla:** cualquier query que pueda superar 1000 filas DEBE paginar con
+`.range()`; `.limit(N)` NO sube el tope del servidor.
+
+### 4. Forecast probabilístico (LightGBM cuantílico + CQR) — `tab_ml.py`
+Nueva subsección **"Forecast probabilístico"** en ML Analysis (junto al RF puntual, no lo
+reemplaza). Es el hito de mayor valor: pasa de "200 MW" a **"180–220 MW con 80% de
+confianza"** (banda P10–P50–P90), lo que sirve para declarar al CEN y gestionar desvíos.
+
+- **Modelo:** 3 × `LGBMRegressor(objective="quantile", alpha=q)` para q ∈ {0.10, 0.50,
+  0.90}. `n_estimators=200, learning_rate=0.07, num_leaves=31`.
+- **Features:** las meteo del parque (`FEATURES_SOLAR`/`FEATURES_EOLICA`) + hora del día
+  codificada en **seno/coseno** (`_add_ciclicas`) para periodicidad diaria.
+- **Calibración conformal (CQR)** — `_train_cal()`: el LightGBM cuantílico subcubre (la
+  eólica daba 66% de cobertura para una banda nominal 80%). CQR mide sobre un set de
+  calibración cuánto ensanchar la banda (score de no-conformidad `E = max(p10−y, y−p90)`,
+  `Q = quantile(E, (1−α)(1+1/n))`) y `_banda_cal()` aplica `[p10−Q, p90+Q]`. **Resultado:
+  cobertura 77–82% en los 11 parques** (eólica subió de 66% a ~80%). Sin CQR el "80%" sería
+  mentira.
+- **Split 60/20/20**: train (entrena cuantiles) / calibración (CQR) / test (métricas).
+  Se reutiliza el mismo modelo (60%) para backtest y futuro (evita un 2º entrenamiento).
+- **Métricas mostradas:** Cobertura P10–P90 (clave, ideal 80%), Pinball loss, MAE P50, y
+  **MAE del P50 vs MAE del modelo físico** (cuánto le gana el ML).
+- **Monotonía** P10≤P50≤P90 garantizada (`np.sort`). Solar: banda forzada a 0 de noche.
+- **PERFORMANCE — `@st.cache_data` en `_entrenar_prob(parque)`**: el entrenamiento (~10-15s)
+  se hacía en cada interacción → la UI "colgaba". Ahora se entrena **una vez por parque
+  (ttl 1h)** y las re-ejecuciones son instantáneas. Primera carga ~2-5s con spinner.
+  **Regla:** entrenamientos ML costosos siempre dentro de una función `@st.cache_data` que
+  devuelva el modelo + métricas, no re-entrenar en el cuerpo del render.
+- `requirements.txt`: `lightgbm>=4.0.0`.
+
+### 5. Optimizador de arbitraje BESS (programación lineal) — `tab_ml.py`
+Reemplaza la heurística previa (n horas baratas/caras) por un **óptimo real**. Es el "wow"
+comercial: convierte el dashboard de *observar* a *recomendar con USD asociado*.
+
+- **`_optimizar_bess(precios, pmax, energia_mwh, eta_rt=0.85, max_ciclos=1.5)`**:
+  - Variables por hora: carga `c_t`, descarga `d_t` ∈ [0, pmax]; estado `s_t` ∈ [0, E].
+  - Dinámica SoC: `s_t = s_{t-1} + η·c_t − d_t`. Objetivo: `max Σ precio_t·(d_t − c_t)`.
+  - Restricción de ciclos: `Σ d_t ≤ max_ciclos · E`.
+  - **Es LP, no MILP con binarios**: con precios positivos el óptimo nunca carga y descarga
+    a la vez → no hacen falta binarios → rápido. Solver CBC vía **PuLP**.
+- **`_render_arbitraje_milp(cod)`**: corre sobre el **CMG programado futuro**
+  (`cmg_programado_ernc`, denso). Muestra cronograma carga/descarga (barras), **SoC** (área),
+  e **ingreso esperado en USD** + ciclos. Fallback a la heurística `_recomendacion_arbitraje`
+  si PuLP no está. Capacidad de energía = `pmax × BESS_HORAS` (declaradas) o 4h asumidas.
+- Validado con CMG real: AS3_B ~$33k/33h, BOL_B ~$35k. Restricciones (SoC, η=85%, 1.5
+  ciclos, sin simultaneidad) verificadas.
+- `requirements.txt`: `pulp>=2.7.0`.
+
+### 6. Soiling FV (ensuciamiento de paneles) — `tab_ml.py`
+Nueva subsección **"Soiling FV"** (solo parques solares). Cierra un gap conceptual con
+Suncast (que vende "predicción de soiling").
+
+- **No hay columna de precipitación** en `meteo_ernc` → el soiling se infiere del
+  **performance ratio**, sin necesidad de lluvia (método tipo Kimber/NREL).
+- **`_soiling_diario(parque)`** (`@st.cache_data` 30min): PR = `gen_real / p_fv_estimada`
+  (modelo físico, que ya corrige temperatura/POA/trackers) en horas de sol fuerte
+  (`is_day, ghi>400, pfv>10%max`), agregado a **mediana diaria**, y **normalizado contra el
+  P90 del propio parque** (= estado limpio de referencia) para quitar el sesgo del modelo.
+  Soiling ratio: 1.0 = limpio, <1.0 = subrendimiento.
+- **Por qué normalizar:** el modelo físico tiene sesgo (PR absoluto sale ~1.4 en solar →
+  subestima). El P90 propio elimina el sesgo y la estacionalidad de temperatura.
+- **`_render_soiling`**: métricas (soiling ratio actual 7d, tendencia %/día, pérdida
+  estimada, nº de recuperaciones por lluvia/lavado), serie diaria con línea de tendencia y
+  marcadores de recuperación. **Salvedad honesta en el expander:** capta subrendimiento
+  *total* (soiling + curtailment + limitaciones); la precisión mejora con datos de
+  precipitación y una referencia de panel limpio medida.
+
+### 7. DS88 — DESCARTADO (no aplica a AES)
+Investigación web: **Decreto Supremo 88/2020 = Reglamento de PMGD/PMG (≤9.000 kW conectados
+a distribución)** con régimen de precio estabilizado. Los parques de AES son utility-scale
+(23–220 MW, transmisión) → **DS88 NO les aplica**. Suncast lo ofrece para sus clientes PMGD
+pequeños; no es un gap real para AES. **Alternativa que sí aplica a generadores grandes:**
+informe de cumplimiento de pronóstico al CEN (forecast vs generado, skill vs PCP/PID) e
+informe operacional mensual. Quedan como pendientes opcionales.
+
+### 8. Auditoría de expanders ML (manual para el cliente)
+Se revisaron TODOS los expanders de metodología y se actualizaron a los cambios:
+- **Forecast de generación (RF):** aclara que es pronóstico *puntual* y remite al
+  probabilístico para la banda; nota de datos (~115 días).
+- **BESS — operación:** nuevo punto 4 (optimizador MILP, "decirle qué hacer con USD").
+- **Análisis de eficiencia:** nota sobre el sesgo del modelo físico (comparar PR relativo,
+  no absoluto) + remite a Soiling FV.
+- **Leyenda** agregada al backtest del probabilístico ("la real debe caer en la banda ~80%").
+- Ya correctos: Forecast probabilístico, Anomalías, CMG, Soiling, Validación NASA.
+- Los expanders de Solar/Eólica (fórmulas físicas, Sesión 26) e Infotécnica no se tocaron.
+
+### Inventario de subsecciones de ML Analysis (8 análisis) — para presentar
+1. **Forecast de generación** — RF puntual meteo→gen, R²/MAE, vs modelo físico, importancia.
+2. **Forecast probabilístico** — banda P10–P50–P90 (LightGBM+CQR), cobertura ~80%, fan chart.
+3. **Detección de anomalías** — residuo z-score>3 + IsolationForest sobre clima+gen.
+4. **Predicción de CMG** — RF con rezagos, pronóstico recursivo 12h.
+5. **Análisis de eficiencia** — PR real/teórico + clustering KMeans de regímenes.
+6. **Soiling FV** — soiling ratio diario, tendencia, recuperaciones, pérdida estimada.
+7. **BESS — operación** — perfil horario, neta vs CMG, **optimizador de arbitraje (LP)**.
+8. **Validación recurso (NASA)** — GHI Open-Meteo vs NASA POWER (sesgo/RMSE/correlación).
+
+### Glosario (`components/tab_glosario.py`)
+Se agregaron los términos nuevos de la etapa IA: forecast puntual vs probabilístico,
+P10/P50/P90, cuantil, banda de confianza, cobertura, pinball loss, LightGBM, gradient
+boosting, CQR, MAE/R², MILP/programación lineal, arbitraje BESS, round-trip, ciclo
+equivalente, soiling/soiling ratio, performance ratio, IA vs ML vs deep learning.
+
+### Archivos tocados Sesión 28
+- `app_ernc.py` — navegación 15→8, vistas-contenedor, saltos sidebar.
+- `components/tab_ml.py` — forecast probabilístico+CQR+cache, paginación, optimizador BESS,
+  soiling, expanders actualizados.
+- `components/tab_glosario.py` — términos nuevos de IA.
+- `requirements.txt` — `lightgbm>=4.0.0`, `pulp>=2.7.0`.
+- `config.py` — `APP_VERSION = v2.8.0`.
+- `Backfill_historico_ernc.py`, `Backfill_meteo_historico_ernc.py` — NUEVOS (utilidades).
+
+### Pendientes Sesión 28
+- [ ] (Opcional) Informe de cumplimiento de pronóstico al CEN / operacional mensual (lo que
+      reemplaza a DS88 para generadores grandes).
+- [ ] (Opcional) Agregar **precipitación** a `meteo_ernc` (schema + adquisición) para atribuir
+      lavados de soiling a lluvia.
+- [ ] (Futuro lejano) Nowcasting de nubes con **CNN** sobre imágenes satelitales — único caso
+      donde el deep learning superaría al boosting; requiere pipeline de imágenes + GPU.
+- [ ] (Opcional) `.gitignore` para `.cache_openmeteo.sqlite`.
+- [ ] Para Streamlit Cloud: el primer deploy reinstala deps (lightgbm + pulp) → arranque más
+      lento la primera vez.
+
+---
+
+*Actualizado 2026-06-25 — Sesiones 1–28 (v2.8.0).*
+*Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER + scikit-learn + LightGBM + PuLP*
