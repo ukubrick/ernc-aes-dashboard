@@ -7,6 +7,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from config import (
     NOMBRE_DISPLAY, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS,
@@ -27,7 +28,7 @@ AES_MUTED   = "#6B7280"
 
 
 def _ahora_santiago() -> datetime:
-    return datetime.now(timezone(timedelta(hours=-3))).replace(tzinfo=None)
+    return datetime.now(ZoneInfo("America/Santiago")).replace(tzinfo=None)
 
 
 @st.cache_data(ttl=900)
@@ -255,7 +256,7 @@ def render_tab_meteo_sistema(cmg_rows: list | None = None) -> None:
         )
         if not nub_solar.empty and nub_solar.max() <= 5:
             st.caption(
-                "☀️ Cielos despejados pronosticados (≤5% de nubosidad en las próximas 48 h) "
+                "Cielos despejados pronosticados (≤5% de nubosidad en las próximas 48 h) "
                 "— recurso solar óptimo, sin caídas de GHI por nubes. El heatmap plano es "
                 "correcto, no un fallo de datos."
             )
@@ -273,3 +274,8 @@ def render_tab_meteo_sistema(cmg_rows: list | None = None) -> None:
     # 3) Contexto de mercado CMG
     st.divider()
     _seccion_cmg_sistema(cmg_rows or [])
+
+    # 4) Demanda del SEN por zona (programa PID)
+    st.divider()
+    from components.demanda import render_demanda_zonas
+    render_demanda_zonas(horas=48, key="meteo")

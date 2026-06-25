@@ -1642,5 +1642,88 @@ Helper compartido `_paso(n, titulo, desc)` (badge numerado + título + descripci
 
 ---
 
-*Actualizado 2026-06-25 — Sesiones 1–26.*
+## SESIÓN 27 — PROGRAMACIÓN PID + DEMANDA POR ZONA + GLOSARIO (2026-06-25)
+
+Erick pidió: (1) integrar el programa **PID** (reprograma intra-día) en un workflow
+propio para no saturar la adquisición horaria, (2) sumar la **demanda** de los
+principales nodos y mostrarla en las series/gráficas pertinentes, y (3) un **glosario**
+en la sección Referencia.
+
+### Endpoints nuevos (validados contra la API real)
+- **`/generacion-programada-pid/v4/findByDate`** (SIP): mismo esquema que el PCP — campo
+  `llave_gen`, NO filtra por idCentral → se pagina todo y se filtra local por
+  `LLAVES_GEN_PROG`. Va a la **misma tabla** `generacion_programada_ernc` con
+  `fuente='CEN_PID'`. Se conserva el programa más reciente (mayor `fecha_programa`) por
+  (parque, fecha_hora). `fetch_gen_programada_pid()` en `utils/cen_api.py`.
+- **`/demanda-programada-pid/v4/findByDate`** (SIP): demanda proyectada (MW) por hora y
+  punto de consumo con campo `zona`. **Resuelve el bloqueo histórico de demanda** (las
+  variantes `demanda-real`/`v1-v5` daban 404; PID sí publica). Se agrega por
+  `(zona, fecha_hora)` excluyendo `Argentina`/None. `fetch_demanda_pid()`.
+  - Zonas del SEN: **Norte** (parques solares), **Centro**, **Centro Sur** (parques
+    eólicos), **Sur**. El total agregado refleja la **forma** del consumo, no un absoluto
+    exacto (el endpoint suma múltiples puntos/barras por zona).
+
+### config.py
+- `DIAS_VENTANA_PID = 1` (ambos endpoints paginan todo el sistema → ventana corta).
+- `DEMANDA_ZONAS`, `DEMANDA_ZONAS_EXCLUIR`, `DEMANDA_ZONA_COLOR`, `ZONA_PARQUE`.
+
+### Base de datos
+- Nueva tabla **`demanda_ernc`** (`zona, fecha_hora, demanda_mw, hora, fecha_programa`,
+  PK `(zona,fecha_hora)`) + RLS `anon_select` + índice. Bloque agregado a `schema.sql`.
+  **PENDIENTE: ejecutar ese bloque en Supabase SQL Editor** (igual que cmg_programado en
+  su momento). Sin la tabla, `query_demanda_ultimas_horas` degrada a `[]` y la sección
+  muestra un aviso; el upsert del cron fallará hasta crearla.
+- `utils/db.py`: `upsert_demanda()` (dedup + on_conflict `zona,fecha_hora`),
+  `query_demanda_ultimas_horas()` (try/except → `[]`). El PID reusa
+  `upsert_generacion_programada` (conflict ya incluye `fuente`).
+
+### Adquisición — workflow PROPIO (no satura el horario)
+- `Adquisicion_ernc.py`: funciones `adquirir_gen_programada_pid()` y
+  `adquirir_demanda_pid()` (importables, igual patrón que potencia).
+- `Adquisicion_pid_ernc.py` (**nuevo**): script ligero gen PID + demanda PID. Solo
+  `CEN_USER_KEY` (SIP) — NO usa `CEN_OPS_KEY`.
+- `.github/workflows/programacion_pid_ernc.yml` (**nuevo**): cron `40 * * * *` (espaciado
+  de :10 horario y :25/:55 potencia), `concurrency`, timeout 30 min.
+
+### Visualización
+- **PID en las series de generación**: traza propia **verde punteada** ("PID intra-día")
+  junto a la PCP (ámbar dash) en `tab_solar.py`, `tab_eolica.py` y el gráfico 24h del
+  portfolio (`app_ernc::_render_tab_resumen`). **CRÍTICO:** como PCP y PID comparten tabla,
+  se separan por `fuente` antes de graficar/sumar para no duplicar (el portfolio suma
+  PCP y PID por separado). El desvío vs PCP filtra `fuente=='CEN_PCP'`. Leyendas
+  actualizadas en ambos tabs.
+- **Demanda por zona**: componente reutilizable `components/demanda.py::render_demanda_zonas()`
+  (área apilada por zona + línea "ahora" pasado/proyectado). Se muestra en la vista **CMG**
+  (contexto de mercado) y en **Meteo & Sistema**.
+
+### Glosario (Referencia)
+- `components/tab_glosario.py` (**nuevo**) + vista `"Glosario"` en `CATEGORIAS["Referencia"]`.
+  Buscable, agrupado: Coordinador/programación, magnitudes eléctricas, solar/meteo, eólica,
+  BESS, fuentes/stack, parques. Incluye PCP/PID/CMG/demanda y toda la terminología hasta hoy.
+
+### Versión de la app
+- `config.APP_VERSION = "v2.7.0"` — major 2 = era Pulsar (rebrand + BESS + ML + NASA);
+  minor sube con cada hito de datos (2.7 = PID + demanda). Se muestra como **chip cyan**
+  en el sidebar, bajo el logo Pulsar y sobre "Creado por Erick Herrera".
+
+### TZ global RESUELTO (pendiente desde Sesión 17)
+- Reemplazados los **11 usos** de `timezone(timedelta(hours=-3))` (offset fijo) por
+  `ZoneInfo("America/Santiago")` en: `utils/db.py` (`_ahora_santiago`), `app_ernc.py` (×2),
+  `components/tab_ml.py`, `tab_insights.py`, `tab_solar.py`, `tab_eolica.py`,
+  `tab_meteo_sistema.py`, `tab_bess.py`, `tab_forecast.py` (×2). El offset fijo corría las
+  ventanas/filtros 1 h en **invierno chileno (UTC-4)**; ZoneInfo respeta el DST. Validado:
+  `_ahora_santiago()` ahora devuelve `-04:00` en junio. **Regla:** nunca más offset fijo −3.
+- **Emoji ☀️ eliminado** de `tab_meteo_sistema.py` (regla "sin emojis"). (Los círculos de
+  severidad en `utils/insights.py` se mantienen — uso funcional, no decorativo.)
+
+### Pendiente Sesión 27
+- [ ] Activar el nuevo workflow PID en GitHub (se dispara solo por cron `:40`; o
+      `workflow_dispatch`). Falta el `git push` de la sesión.
+- [x] Bloque `demanda_ernc` ejecutado en Supabase (Erick, esta sesión). Gen PID + demanda
+      poblados y validados (528 PID + 100 demanda).
+- [x] TZ global resuelto. ☀️ emoji eliminado.
+
+---
+
+*Actualizado 2026-06-25 — Sesiones 1–27 (v2.7.0).*
 *Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER*

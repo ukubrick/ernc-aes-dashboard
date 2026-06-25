@@ -307,6 +307,7 @@ st.markdown(
 from config import (
     NOMBRE_DISPLAY, TECNOLOGIA, PARQUES_TODOS, PMAX, PMAX_FP,
     PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODO, CMG_NODOS_TODOS,
+    APP_VERSION,
 )
 from utils.db import (
     query_gen_real_ultimas_horas,
@@ -407,9 +408,10 @@ def _estado_fuente(ts: str | None, horas_max: float = 12.0) -> str:
     if not ts:
         return "bad"
     try:
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
         dt = datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
-        ahora = datetime.now(timezone(timedelta(hours=-3))).replace(tzinfo=None)
+        ahora = datetime.now(ZoneInfo("America/Santiago")).replace(tzinfo=None)
         return "ok" if (ahora - dt) <= timedelta(hours=horas_max) else "bad"
     except Exception:
         return "bad"
@@ -491,6 +493,9 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
                 f"<div style='padding:2px 4px 6px;text-align:center'>"
                 f"<img src='data:image/png;base64,{_logo_b64}' "
                 f"style='width:210px;display:block;margin:0 auto;' />"
+                f"<div style='display:inline-block;margin-top:6px;padding:1px 9px;border-radius:10px;"
+                f"background:rgba(77,200,220,0.18);border:1px solid rgba(77,200,220,0.35);"
+                f"font-size:10px;font-weight:700;letter-spacing:0.5px;color:#4DC8DC'>{APP_VERSION}</div>"
                 f"<div style='font-size:11px;color:rgba(255,255,255,0.55);margin-top:6px'>"
                 f"Creado por <b style='color:rgba(255,255,255,0.80)'>Erick Herrera</b></div>"
                 f"</div>",
@@ -500,6 +505,9 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
             st.markdown(
                 f"<div style='padding:16px 4px 12px;text-align:center'>"
                 f"<div style='font-size:22px;font-weight:800;color:white;letter-spacing:-0.5px'>Pulsar</div>"
+                f"<div style='display:inline-block;margin-top:6px;padding:1px 9px;border-radius:10px;"
+                f"background:rgba(77,200,220,0.18);border:1px solid rgba(77,200,220,0.35);"
+                f"font-size:10px;font-weight:700;letter-spacing:0.5px;color:#4DC8DC'>{APP_VERSION}</div>"
                 f"<div style='font-size:11px;color:rgba(255,255,255,0.55);margin-top:6px'>"
                 f"Creado por <b style='color:rgba(255,255,255,0.80)'>Erick Herrera</b></div>"
                 f"</div>",
@@ -625,7 +633,7 @@ CATEGORIAS = {
     "Operación":         ["Mapa & Resumen", "Solar FV", "Eolica", "BESS"],
     "Análisis":          ["Forecast 7d", "Estadisticas", "ML Analysis"],
     "Alarmas & Mercado": ["Alarmas", "Meteo & Sistema", "CMG", "Limitaciones"],
-    "Referencia":        ["Recomendaciones", "Reportes", "Infotecnica"],
+    "Referencia":        ["Recomendaciones", "Reportes", "Infotecnica", "Glosario"],
 }
 VISTAS = [v for grupo in CATEGORIAS.values() for v in grupo]
 
@@ -855,6 +863,9 @@ def main():
         _render_tab_reportes()
     elif vista == "Infotecnica":
         render_tab_infotecnica()
+    elif vista == "Glosario":
+        from components.tab_glosario import render_tab_glosario
+        render_tab_glosario()
 
 
 # ── Referencia: Recomendaciones ─────────────────────────────────────────────────
@@ -1008,14 +1019,25 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
     piv["Total"] = piv["Solar"].fillna(0) + piv["Eólica"].fillna(0)
 
     if prog_rows:
-        # La PCP se publica hacia el futuro; se alinea a la MISMA ventana del gráfico
-        # de generación (no a su propio máximo) para que la serie aparezca completa.
+        # La programación se publica hacia el futuro; se alinea a la MISMA ventana del
+        # gráfico de generación (no a su propio máximo) para que aparezca completa.
+        # PCP y PID se suman por separado para no duplicar el total del portfolio.
         df_prog = pd.DataFrame(prog_rows)
         df_prog["fecha_hora"] = pd.to_datetime(df_prog["fecha_hora"])
         df_prog = df_prog[(df_prog["fecha_hora"] >= win_min) & (df_prog["fecha_hora"] <= win_max)]
-        df_prog_t = df_prog.groupby("fecha_hora")["gen_programada_mw"].sum().reset_index()
-        df_prog_t.rename(columns={"gen_programada_mw": "Programada"}, inplace=True)
-        piv = piv.merge(df_prog_t, on="fecha_hora", how="left").sort_values("fecha_hora")
+        if "fuente" not in df_prog.columns:
+            df_prog["fuente"] = "CEN_PCP"
+        df_pcp_t = (df_prog[df_prog["fuente"] == "CEN_PCP"]
+                    .groupby("fecha_hora")["gen_programada_mw"].sum().reset_index()
+                    .rename(columns={"gen_programada_mw": "Programada"}))
+        df_pid_t = (df_prog[df_prog["fuente"] == "CEN_PID"]
+                    .groupby("fecha_hora")["gen_programada_mw"].sum().reset_index()
+                    .rename(columns={"gen_programada_mw": "Programada_PID"}))
+        if not df_pcp_t.empty:
+            piv = piv.merge(df_pcp_t, on="fecha_hora", how="left")
+        if not df_pid_t.empty:
+            piv = piv.merge(df_pid_t, on="fecha_hora", how="left")
+        piv = piv.sort_values("fecha_hora")
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -1032,7 +1054,13 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
         fig.add_trace(go.Scatter(
             x=piv["fecha_hora"], y=piv["Programada"],
             name="Programada PCP", line=dict(color=AES_AMBAR, width=1.8, dash="dash"),
-            hovertemplate="%{y:.1f} MW<extra>Programada PCP</extra>",
+            hovertemplate="%{y:.1f} MW<extra>Programada PCP (diario D-1)</extra>",
+        ))
+    if "Programada_PID" in piv.columns:
+        fig.add_trace(go.Scatter(
+            x=piv["fecha_hora"], y=piv["Programada_PID"],
+            name="Programada PID", line=dict(color=AES_VERDE, width=1.6, dash="dot"),
+            hovertemplate="%{y:.1f} MW<extra>Programada PID (reprograma intra-día)</extra>",
         ))
     fig.update_layout(
         template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
@@ -1045,7 +1073,8 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
     st.plotly_chart(fig, use_container_width=True, key="mapa_grafico_tendencia")
     st.caption("Área apilada = aporte de Solar FV y Eólica a la generación total; "
-               "línea ámbar = programa PCP del CEN para el portfolio.")
+               "línea ámbar = programa PCP (diario D-1) y línea verde punteada = "
+               "programa PID (reprograma intra-día) del CEN para el portfolio.")
 
 
 # ── Tab CMG ────────────────────────────────────────────────────────────────────
@@ -1081,7 +1110,8 @@ def _render_tab_cmg(cmg_rows):
     import plotly.graph_objects as go
     import pandas as pd
     from utils.db import get_client
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
 
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin-bottom:10px'>"
@@ -1099,7 +1129,7 @@ def _render_tab_cmg(cmg_rows):
     df_hist = pd.DataFrame()
     try:
         sb = get_client()
-        santiago = timezone(timedelta(hours=-3))
+        santiago = ZoneInfo("America/Santiago")
         desde = (datetime.now(santiago) - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
             sb.table("cmg_ernc")
@@ -1244,6 +1274,10 @@ def _render_tab_cmg(cmg_rows):
             "Sin CMG programado todavia. Se poblara al correr Adquisicion_ernc.py "
             "(o el cron horario) con el endpoint cmg-programado-pcp."
         )
+
+    # ── Demanda del SEN por zona (contexto de mercado) ──
+    from components.demanda import render_demanda_zonas
+    render_demanda_zonas(horas=48, key="cmg")
 
 
 # ── Tab Limitaciones ──────────────────────────────────────────────────────────

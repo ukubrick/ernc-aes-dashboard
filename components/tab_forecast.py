@@ -3,6 +3,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from config import NOMBRE_DISPLAY, PMAX, TECNOLOGIA, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS
 
@@ -23,7 +24,7 @@ def _cargar_forecast() -> pd.DataFrame:
     try:
         from utils.db import get_client
         sb = get_client()
-        santiago = timezone(timedelta(hours=-3))
+        santiago = ZoneInfo("America/Santiago")
         ahora = datetime.now(santiago).strftime("%Y-%m-%d %H:%M:%S")
         hasta = (datetime.now(santiago) + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
         res = (
@@ -120,7 +121,7 @@ def _ml_forecast_parque(parque: str) -> tuple[pd.DataFrame, dict]:
     tec = TECNOLOGIA[parque]
     feats = ["ghi_wm2", "cloud_cover_pct"] if tec == "Solar" else ["wind_speed_100m", "wind_gusts_10m"]
     sb = get_client()
-    santiago = timezone(timedelta(hours=-3))
+    santiago = ZoneInfo("America/Santiago")
     desde = (datetime.now(santiago) - timedelta(days=45)).strftime("%Y-%m-%d %H:%M:%S")
     try:
         sel = "fecha_hora," + ",".join(feats)

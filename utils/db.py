@@ -116,6 +116,27 @@ def upsert_cmg_programado(registros: list[dict]) -> int:
     return len(registros)
 
 
+# ── Demanda programada PID por zona ──────────────────────────────────────────────
+
+def upsert_demanda(registros: list[dict]) -> int:
+    if not registros:
+        return 0
+    # Deduplicar por (zona, fecha_hora) antes del upsert
+    vistos: set[tuple] = set()
+    unicos = []
+    for r in registros:
+        clave = (r["zona"], r["fecha_hora"])
+        if clave not in vistos:
+            vistos.add(clave)
+            unicos.append(r)
+    sb = get_client()
+    for i in range(0, len(unicos), 500):
+        sb.table("demanda_ernc").upsert(
+            unicos[i:i + 500], on_conflict="zona,fecha_hora"
+        ).execute()
+    return len(unicos)
+
+
 # ── Limitaciones ───────────────────────────────────────────────────────────────
 
 def upsert_limitaciones(registros: list[dict]) -> int:
@@ -143,8 +164,11 @@ def upsert_sscc(registros: list[dict]) -> int:
 # ── Queries de lectura para el dashboard ──────────────────────────────────────
 
 def _ahora_santiago():
-    from datetime import datetime, timezone, timedelta
-    return datetime.now(timezone(timedelta(hours=-3)))
+    # ZoneInfo respeta el DST chileno (UTC-3 verano / UTC-4 invierno); un offset fijo
+    # −3 corría las ventanas 1 h en invierno respecto a los timestamps reales en DB.
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("America/Santiago"))
 
 
 def query_gen_real_ultimas_horas(horas: int = 48) -> list[dict]:
@@ -326,6 +350,24 @@ def query_cmg_programado(horas: int = 48) -> list[dict]:
         sb = get_client()
         res = (sb.table("cmg_programado_ernc")
                  .select("nodo,cmg_usd_mwh,fecha_hora,fecha_programa")
+                 .gte("fecha_hora", desde)
+                 .order("fecha_hora", desc=False)
+                 .limit(5000)
+                 .execute())
+        return res.data or []
+    except Exception:
+        return []
+
+
+def query_demanda_ultimas_horas(horas: int = 48) -> list[dict]:
+    """Demanda programada PID por zona del SEN, ventana en horas (incluye horas
+    futuras del programa intra-día). try/except → [] si la tabla no existe aún."""
+    from datetime import timedelta
+    desde = (_ahora_santiago() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        sb = get_client()
+        res = (sb.table("demanda_ernc")
+                 .select("zona,demanda_mw,fecha_hora,hora")
                  .gte("fecha_hora", desde)
                  .order("fecha_hora", desc=False)
                  .limit(5000)
