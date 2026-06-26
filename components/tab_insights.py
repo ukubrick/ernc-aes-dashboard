@@ -6,6 +6,7 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from utils.insights import Insight, evaluar_insights
+from config import NOMBRE_DISPLAY, TECNOLOGIA
 
 AES_AZUL    = "#3B4CE8"
 AES_CYAN    = "#4DC8DC"
@@ -37,6 +38,23 @@ def _fmt_ts(ts: str | None) -> str:
         return str(ts)[:16]
 
 
+def _destino(ins: Insight):
+    """Mapea una alarma a la vista donde se ve el detalle.
+    Devuelve (vista, etiqueta_boton, estado_a_setear) o None si no hay destino claro."""
+    t = f"{ins.titulo} {ins.detalle}".lower()
+    if "limitaci" in t:
+        return ("Mercado & Sistema", "Limitaciones", {"mercado_sub": "Limitaciones"})
+    if ins.categoria == "mercado" or "cmg" in t or "vertimiento" in t:
+        return ("Mercado & Sistema", "CMG", {"mercado_sub": "CMG"})
+    if ins.parque:
+        tec = TECNOLOGIA.get(ins.parque, "Solar")
+        return ("Parques", NOMBRE_DISPLAY.get(ins.parque, ins.parque),
+                {"_parque_tec": tec, "_sync_parque": ins.parque, "parque_activo": ins.parque})
+    if ins.categoria == "meteo":
+        return ("Mercado & Sistema", "Meteo & Sistema", {"mercado_sub": "Meteo & Sistema"})
+    return ("Mapa & Resumen", "Mapa & Resumen", {})
+
+
 def _card(insight: Insight, idx: int = 0) -> None:
     sev = insight.severidad
     delay = f"{idx * 0.06:.2f}s"
@@ -49,16 +67,26 @@ def _card(insight: Insight, idx: int = 0) -> None:
         "positivo": "rgba(90,184,72,0.10)",
     }[sev]
     ts_str = _fmt_ts(insight.timestamp)
-    st.markdown(
+    destino = _destino(insight)
+    # La tarjeta COMPLETA es clicable (sin botón aparte): un st.button transparente
+    # se superpone sobre el HTML de la card vía CSS (.st-key-alarma_card_*). Click en
+    # cualquier punto de la alarma → navega a la vista de detalle.
+    hint = ""
+    if destino:
+        hint = (
+            f"<span style='font-size:11px;color:{_BORDER[sev]};margin-left:auto;"
+            f"font-weight:700'>Ver en {destino[1]}  →</span>"
+        )
+    card_html = (
         f"<div class='{card_class}' style='"
         f"background:{_BG[sev]};"
         f"border-left:4px solid {_BORDER[sev]};"
         f"border-radius:0 10px 10px 0;"
         f"padding:14px 18px;"
-        f"margin-bottom:10px;"
         f"border:1px solid {_BORDER[sev]}33;"
         f"border-left-color:{_BORDER[sev]};"
         f"animation-delay:{delay};"
+        f"cursor:pointer;"
         f"transition:transform 0.18s ease,box-shadow 0.18s ease;"
         f"'>"
         f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:6px'>"
@@ -70,19 +98,32 @@ def _card(insight: Insight, idx: int = 0) -> None:
         f"    {_LABEL[sev]}"
         f"  </span>"
         f"  <span style='font-size:10.5px;color:{AES_MUTED};font-weight:600'>"
-        f"    {_fmt_ts(insight.timestamp)} hrs"
+        f"    {ts_str} hrs"
         f"  </span>"
-        f"  <span style='font-size:11px;color:{AES_MUTED};margin-left:auto;font-weight:500'>"
+        f"  <span style='font-size:11px;color:{AES_MUTED};font-weight:500'>"
         f"    {insight.nombre_parque}"
         f"  </span>"
+        f"  {hint}"
         f"</div>"
         f"<div style='font-size:13px;font-weight:700;color:{AES_TEXTO};margin-bottom:4px'>"
         f"  {insight.titulo}"
         f"</div>"
         f"<div style='font-size:12px;color:{AES_MUTED};line-height:1.6'>{insight.detalle}</div>"
-        f"</div>",
-        unsafe_allow_html=True,
+        f"</div>"
     )
+
+    if not destino:
+        st.markdown(f"<div style='margin-bottom:10px'>{card_html}</div>", unsafe_allow_html=True)
+        return
+
+    with st.container(key=f"alarma_card_{idx}"):
+        st.markdown(card_html, unsafe_allow_html=True)
+        if st.button("Ver detalle", key=f"nav_alarma_{idx}", use_container_width=True):
+            vista, _etiqueta, estado = destino
+            st.session_state["vista"] = vista
+            for k, v in estado.items():
+                st.session_state[k] = v
+            st.rerun()
 
 
 @st.cache_data(ttl=900)
@@ -190,6 +231,20 @@ def _render_subtab_alertas(gen_por_parque, prog_por_parque, cmg_crucero, lim_row
         st.info("Sin alarmas en este filtro.")
         return
 
+    # El botón de cada alarma se vuelve invisible y se estira para cubrir toda la
+    # tarjeta (overlay) → la alarma entera es clicable, sin botón visible debajo.
+    st.markdown(
+        "<style>"
+        "[class*='st-key-alarma_card_']{position:relative;margin-bottom:10px}"
+        "[class*='st-key-alarma_card_'] .stButton{position:absolute;top:0;left:0;"
+        "right:0;bottom:0;height:100%;margin:0;z-index:3}"
+        "[class*='st-key-alarma_card_'] .stButton button{width:100%;height:100%;"
+        "opacity:0;border:none;background:transparent}"
+        "[class*='st-key-alarma_card_']:hover{transform:translateY(-1px);"
+        "box-shadow:0 6px 18px rgba(0,0,0,0.10)}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
     for idx, insight in enumerate(filtrados):
         _card(insight, idx)
 
