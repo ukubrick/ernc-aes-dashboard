@@ -171,6 +171,80 @@ def _ahora_santiago():
     return datetime.now(ZoneInfo("America/Santiago"))
 
 
+def _fetch_rango(tabla: str, select: str, desde: str, hasta: str,
+                 filtros: list[tuple] | None = None) -> list[dict]:
+    """Trae TODAS las filas de `tabla` entre [desde, hasta] paginando con .range()
+    (PostgREST trunca a 1000 filas/request). Para la sección Históricos."""
+    sb = get_client()
+    filas: list[dict] = []
+    page, i = 1000, 0
+    while True:
+        q = (sb.table(tabla).select(select)
+               .gte("fecha_hora", desde).lte("fecha_hora", hasta))
+        for col, val in (filtros or []):
+            q = q.eq(col, val)
+        lote = q.order("fecha_hora").range(i, i + page - 1).execute().data or []
+        filas.extend(lote)
+        if len(lote) < page:
+            break
+        i += page
+    return filas
+
+
+def query_gen_real_rango(desde: str, hasta: str) -> list[dict]:
+    try:
+        return _fetch_rango("generacion_real_ernc", "parque,fecha_hora,gen_real_mw", desde, hasta)
+    except Exception:
+        return []
+
+
+def query_gen_prog_rango(desde: str, hasta: str) -> list[dict]:
+    try:
+        return _fetch_rango("generacion_programada_ernc",
+                            "parque,fecha_hora,gen_programada_mw,fuente", desde, hasta)
+    except Exception:
+        return []
+
+
+def query_bess_rango(desde: str, hasta: str) -> list[dict]:
+    try:
+        return _fetch_rango("generacion_bess_ernc",
+                            "bess,parque,fecha_hora,inyeccion_mw,retiro_mw,potencia_neta_mw",
+                            desde, hasta)
+    except Exception:
+        return []
+
+
+def query_cmg_rango(desde: str, hasta: str) -> list[dict]:
+    try:
+        return _fetch_rango("cmg_ernc", "nodo,fecha_hora,cmg_usd_mwh", desde, hasta)
+    except Exception:
+        return []
+
+
+def query_meteo_rango(parque: str, desde: str, hasta: str) -> list[dict]:
+    try:
+        return _fetch_rango(
+            "meteo_ernc",
+            "parque,fecha_hora,fuente,es_forecast,ghi_wm2,temp_2m,temp_celda_c,"
+            "p_fv_estimada_mw,wind_speed_10m,wind_speed_100m,wind_gusts_10m,"
+            "wind_shear_alpha,p_eolica_estimada_mw,cloud_cover_pct",
+            desde, hasta, filtros=[("parque", parque), ("es_forecast", False)])
+    except Exception:
+        return []
+
+
+def query_fecha_min_gen_real() -> str | None:
+    """Primer fecha_hora disponible en gen real (para el límite del selector histórico)."""
+    try:
+        sb = get_client()
+        r = (sb.table("generacion_real_ernc").select("fecha_hora")
+               .order("fecha_hora").limit(1).execute())
+        return r.data[0]["fecha_hora"] if r.data else None
+    except Exception:
+        return None
+
+
 def query_gen_real_ultimas_horas(horas: int = 48) -> list[dict]:
     from datetime import timedelta
     sb = get_client()

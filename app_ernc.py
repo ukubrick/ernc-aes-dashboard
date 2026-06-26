@@ -330,6 +330,7 @@ from components.tab_estadisticas import render_tab_estadisticas
 from components.tab_ml import render_tab_ml
 from components.tab_meteo_sistema import render_tab_meteo_sistema
 from components.tab_bess import render_tab_bess
+from components.tab_historicos import render_tab_historicos
 from components.tab_infotecnica import render_tab_infotecnica
 
 
@@ -631,7 +632,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
 # se puede cambiar con las pestañas-categoría (animación fadeInUp en los botones).
 CATEGORIAS = {
     "Operación":         ["Mapa & Resumen", "Parques", "BESS"],
-    "Análisis":          ["Forecast 7d", "Estadisticas", "ML Analysis"],
+    "Análisis":          ["Forecast 7d", "Estadisticas", "ML Analysis", "Históricos"],
     "Mercado & Alertas": ["Mercado & Sistema", "Alertas"],
     "Referencia":        ["Referencia"],
 }
@@ -839,6 +840,8 @@ def main():
                                  bess_rows=bess_rows)
     elif vista == "ML Analysis":
         render_tab_ml()
+    elif vista == "Históricos":
+        render_tab_historicos()
     elif vista == "Mercado & Sistema":
         _render_mercado_sistema(cmg_rows, lim_rows)
     elif vista == "Alertas":
