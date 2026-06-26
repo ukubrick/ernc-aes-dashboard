@@ -29,33 +29,59 @@ _COLOR = {
 
 # ── Nubosidad: tile OWM clouds_new (textura real) + filtros de color ────────────
 # El tile gratuito clouds_new entrega nubes blancas/grises sobre fondo transparente,
-# donde la densidad se codifica como opacidad. El color se logra con filtros CSS
-# (sepia+saturate+hue-rotate) aplicados por className → permite paletas, incl. ROJA.
+# donde la densidad se codifica como opacidad. El color se logra con filtros CSS.
+# CLAVE: el blanco puro NO se puede teñir con hue-rotate (no tiene matiz) → primero
+# se OSCURECE (grayscale + brightness<1) para crear tono, luego sepia(base naranja
+# ~35°) + saturate + hue-rotate al color objetivo, y se re-ilumina al final. Sin el
+# oscurecido previo, "Roja" salía amarilla y "Violeta" blanca.
+# El matiz final ≈ 38° (base sepia) + hue_deg. El brillo final alto lava el color a
+# pastel (rojo→rosa); para tonos cálidos puros se baja `bright`.
+def _tint(hue_deg: float, sat: float = 9.0, contrast: float = 1.5, bright: float = 1.7) -> str:
+    return (f"filter:grayscale(1) brightness(0.5) sepia(1) saturate({sat}) "
+            f"hue-rotate({hue_deg}deg) brightness({bright}) contrast({contrast});")
+
 _CLOUD_FILTROS = {
-    "f-natural": "filter:contrast(1.5) brightness(1.05) saturate(1.0);",
-    "f-azul":    "filter:sepia(1) saturate(6) hue-rotate(175deg) brightness(1.0) contrast(1.5);",
-    "f-roja":    "filter:sepia(1) saturate(10) hue-rotate(-55deg) brightness(1.1) contrast(1.6);",
-    "f-violeta": "filter:sepia(1) saturate(7) hue-rotate(240deg) brightness(1.05) contrast(1.5);",
+    "f-natural": "filter:contrast(1.6) brightness(1.05) saturate(1.0);",
+    "f-azul":    _tint(180),
+    "f-roja":    _tint(-40, sat=10, bright=1.25),   # rojo profundo (brillo alto lo rosaba)
+    "f-violeta": _tint(250),     # violeta real (no blanco)
+    "f-amarilla": _tint(-12),    # 38−12 ≈ 26° naranja-amarillo
+    "f-verde":   _tint(70, bright=1.4),
+    # Térmica (densidad / Predator): el tile codifica la densidad en el canal ALFA
+    # (opacidad), no en brillo → no se puede mapear un LUT multicolor por densidad con
+    # CSS. Se logra el efecto de mapa de calor con un tono cálido muy saturado
+    # (amarillo-naranja) y alto contraste; al apilar capas (refuerzo) las zonas densas
+    # se intensifican hacia el blanco mientras las finas quedan tenues sobre el terreno.
+    "f-termica": ("filter:grayscale(1) brightness(0.45) sepia(1) saturate(16) "
+                  "hue-rotate(-8deg) brightness(2.1) contrast(2.2);"),
 }
-# clase = filtro de color · refuerzo = nº de capas apiladas (densifica) · opacity.
+# clase = filtro único aplicado a todas las capas · clases = lista (una por capa, para
+# stacks con blend) · refuerzo = nº de capas apiladas (densifica) · opacity.
 _CLOUD_PRESETS = {
-    "Natural (blanco)": {"opacity": 1.0, "refuerzo": 2, "clase": "f-natural"},
-    "Azul":             {"opacity": 1.0, "refuerzo": 2, "clase": "f-azul"},
-    "Roja":             {"opacity": 1.0, "refuerzo": 2, "clase": "f-roja"},
-    "Violeta":          {"opacity": 1.0, "refuerzo": 2, "clase": "f-violeta"},
+    "Térmica (densidad)": {"opacity": 1.0, "refuerzo": 3, "clase": "f-termica"},
+    "Natural (blanco)":   {"opacity": 1.0, "refuerzo": 2, "clase": "f-natural"},
+    "Azul":               {"opacity": 1.0, "refuerzo": 2, "clase": "f-azul"},
+    "Roja":               {"opacity": 1.0, "refuerzo": 2, "clase": "f-roja"},
+    "Amarilla":           {"opacity": 1.0, "refuerzo": 2, "clase": "f-amarilla"},
+    "Verde":              {"opacity": 1.0, "refuerzo": 2, "clase": "f-verde"},
+    "Violeta":            {"opacity": 1.0, "refuerzo": 2, "clase": "f-violeta"},
 }
 
 
 def _build_cloud_layers(folium, key: str, cfg: dict) -> list:
-    """TileLayers de nubosidad OWM clouds_new para el preset (color) elegido."""
+    """TileLayers de nubosidad OWM clouds_new para el preset (color) elegido.
+    Soporta `clases` (lista, una capa por clase para stacks con blend) o `clase`
+    (string, replicada `refuerzo` veces para densificar)."""
     url = f"https://tile.openweathermap.org/map/clouds_new/{{z}}/{{x}}/{{y}}.png?appid={key}"
-    clase = cfg.get("clase")
-    n = max(1, int(cfg.get("refuerzo", 1)))
+    if cfg.get("clases"):
+        clases = list(cfg["clases"])
+    else:
+        clases = [cfg.get("clase") or ""] * max(1, int(cfg.get("refuerzo", 1)))
     layers = []
-    for i in range(n):
+    for i, clase in enumerate(clases):
         layers.append(folium.TileLayer(
             tiles=url, attr="© OpenWeather",
-            name="Nubosidad" if i == 0 else f"Nubosidad (refuerzo {i})",
+            name="Nubosidad" if i == 0 else f"Nubosidad (capa {i})",
             overlay=True, control=(i == 0), opacity=cfg["opacity"], show=True,
             className=clase or "",
         ))
