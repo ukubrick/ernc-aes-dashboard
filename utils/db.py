@@ -204,13 +204,24 @@ def query_gen_prog_ultimas_horas(horas: int = 48) -> list[dict]:
     sb = get_client()
     # PCP puede venir en hora UTC (servidor GitHub Actions) — ampliar ventana en 6h para cubrir desfase
     desde = (_ahora_santiago() - timedelta(hours=horas + 6)).strftime("%Y-%m-%d %H:%M:%S")
-    res = (sb.table("generacion_programada_ernc")
-             .select("parque,fecha_hora,gen_programada_mw,capacidad_disponible_mw,costo_generacion_usd,fuente")
-             .gte("fecha_hora", desde)
-             .order("fecha_hora", desc=True)
-             .limit(1000)
-             .execute())
-    return res.data or []
+    # PostgREST trunca a 1000 filas/request. Con 11 parques × ~168 h × 2 fuentes
+    # (CEN_PCP + CEN_PID) son ~3.700 filas → .limit(1000) recortaba la PCP/PID a las
+    # ~45 h más recientes y la serie aparecía cortada en los días viejos. Paginar.
+    filas: list[dict] = []
+    page = 1000
+    i = 0
+    while True:
+        lote = (sb.table("generacion_programada_ernc")
+                  .select("parque,fecha_hora,gen_programada_mw,capacidad_disponible_mw,costo_generacion_usd,fuente")
+                  .gte("fecha_hora", desde)
+                  .order("fecha_hora", desc=True)
+                  .range(i, i + page - 1)
+                  .execute()).data or []
+        filas.extend(lote)
+        if len(lote) < page:
+            break
+        i += page
+    return filas
 
 
 def query_meteo_parque(parque: str, horas: int = 48) -> list[dict]:

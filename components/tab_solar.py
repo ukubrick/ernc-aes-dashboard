@@ -96,9 +96,10 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
 
     fig = go.Figure()
 
-    # Modelo FV: histórico, con la línea ROTA de noche (NaN + connectgaps=False).
-    # Antes se filtraban los puntos nocturnos y Plotly los unía con una diagonal
-    # que simulaba "potencia de noche" — artefacto, no dato real.
+    # Modelo FV: histórico, línea CONTINUA que baja a 0 de noche. De noche no hay
+    # irradiancia (POA=0) → la potencia física es 0, no "faltante". Se fuerza 0 en
+    # las horas nocturnas (en vez de NaN) para que la curva toque el eje y se
+    # reconecte al amanecer sin dibujar la diagonal falsa que daba el filtrado.
     if not df_meteo.empty and "p_fv_estimada_mw" in df_meteo.columns:
         df_mod = df_meteo[df_meteo["es_forecast"] != True].copy() if "es_forecast" in df_meteo.columns else df_meteo.copy()
         df_mod = df_mod.sort_values("fecha_hora")
@@ -106,14 +107,14 @@ def _grafico_gen(df_gen: pd.DataFrame, df_prog: pd.DataFrame, df_meteo: pd.DataF
             is_day_mask = df_mod["is_day"].apply(
                 lambda v: bool(v) if not isinstance(v, str) else v.lower() == "true"
             )
-            # Noche → NaN para que la traza se corte en vez de dibujar diagonal
-            df_mod.loc[~is_day_mask, "p_fv_estimada_mw"] = float("nan")
+            # Noche → 0 (dato físico real: sin sol no hay generación FV)
+            df_mod.loc[~is_day_mask, "p_fv_estimada_mw"] = 0.0
         if df_mod["p_fv_estimada_mw"].notna().any():
             fig.add_trace(go.Scatter(
                 x=df_mod["fecha_hora"], y=df_mod["p_fv_estimada_mw"],
                 name="Modelo FV",
                 line=dict(color=AES_VIOLETA, width=2, dash="solid"),
-                connectgaps=False,
+                connectgaps=True,
                 fill="tozeroy", fillcolor="rgba(155,111,212,0.04)",
                 hovertemplate="%{y:.1f} MW<extra>Modelo FV</extra>",
             ))
