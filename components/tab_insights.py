@@ -235,11 +235,17 @@ def _render_subtab_alertas(gen_por_parque, prog_por_parque, cmg_crucero, lim_row
     # tarjeta (overlay) → la alarma entera es clicable, sin botón visible debajo.
     st.markdown(
         "<style>"
-        "[class*='st-key-alarma_card_']{position:relative;margin-bottom:10px}"
-        "[class*='st-key-alarma_card_'] .stButton{position:absolute;top:0;left:0;"
-        "right:0;bottom:0;height:100%;margin:0;z-index:3}"
-        "[class*='st-key-alarma_card_'] .stButton button{width:100%;height:100%;"
-        "opacity:0;border:none;background:transparent}"
+        "[class*='st-key-alarma_card_']{position:relative !important;margin-bottom:10px}"
+        # El stElementContainer del botón también se estira para cubrir la card; sin
+        # !important el CSS emotion de Streamlit gana en top/bottom/height y deja el
+        # botón con altura 0 al pie de la tarjeta (no recibe el clic).
+        "[class*='st-key-alarma_card_'] [data-testid='stElementContainer']:has([data-testid='stButton']),"
+        "[class*='st-key-alarma_card_'] [data-testid='stButton']{"
+        "position:absolute !important;inset:0 !important;height:100% !important;"
+        "width:100% !important;margin:0 !important;z-index:5}"
+        "[class*='st-key-alarma_card_'] [data-testid='stButton'] button{"
+        "width:100% !important;height:100% !important;min-height:100% !important;"
+        "opacity:0 !important;border:none !important;background:transparent !important}"
         "[class*='st-key-alarma_card_']:hover{transform:translateY(-1px);"
         "box-shadow:0 6px 18px rgba(0,0,0,0.10)}"
         "</style>",

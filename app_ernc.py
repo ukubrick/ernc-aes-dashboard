@@ -826,7 +826,7 @@ def main():
     parque_tec = TECNOLOGIA.get(parque_activo, "Solar") if parque_activo else None
 
     if vista == "Mapa & Resumen":
-        _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo)
+        _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo, bess_rows)
     elif vista == "Parques":
         _render_parques(gen_por_parque, prog_por_parque, gen_rows, prog_rows,
                         parque_activo, parque_tec)
@@ -984,7 +984,7 @@ def _render_tab_reportes():
 
 # ── Tab Resumen ───────────────────────────────────────────────────────────────
 
-def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None):
+def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None, bess_rows=None):
     import plotly.graph_objects as go
     import pandas as pd
 
@@ -1091,6 +1091,23 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
         line=dict(color=AES_CYAN, width=0.5), fillcolor="rgba(77,200,220,0.55)",
         hovertemplate="%{y:.1f} MW<extra>Eólica</extra>",
     ))
+    # BESS: potencia neta del portfolio por hora (>0 descarga = inyecta, <0 carga =
+    # consume). Plotly apila lo positivo sobre la generación y lo negativo bajo cero.
+    if bess_rows:
+        df_bess = pd.DataFrame(bess_rows)
+        if not df_bess.empty and "potencia_neta_mw" in df_bess.columns:
+            df_bess["fecha_hora"] = pd.to_datetime(df_bess["fecha_hora"])
+            df_bess = df_bess[(df_bess["fecha_hora"] >= win_min) & (df_bess["fecha_hora"] <= win_max)]
+            bess_t = (df_bess.groupby("fecha_hora")["potencia_neta_mw"].sum()
+                      .reset_index().rename(columns={"potencia_neta_mw": "BESS"}))
+            if not bess_t.empty:
+                piv = piv.merge(bess_t, on="fecha_hora", how="left").sort_values("fecha_hora")
+                piv["BESS"] = piv["BESS"].fillna(0.0)
+                fig.add_trace(go.Scatter(
+                    x=piv["fecha_hora"], y=piv["BESS"], name="BESS (neto)", stackgroup="gen",
+                    line=dict(color=AES_VIOLETA, width=0.5), fillcolor="rgba(155,111,212,0.55)",
+                    hovertemplate="%{y:.1f} MW<extra>BESS neto (+ descarga / − carga)</extra>",
+                ))
     if "Programada" in piv.columns:
         fig.add_trace(go.Scatter(
             x=piv["fecha_hora"], y=piv["Programada"],
@@ -1113,7 +1130,8 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None)
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
     st.plotly_chart(fig, use_container_width=True, key="mapa_grafico_tendencia")
-    st.caption("Área apilada = aporte de Solar FV y Eólica a la generación total; "
+    st.caption("Área apilada = aporte de Solar FV, Eólica y BESS a la generación total "
+               "(BESS neto: positivo = descarga inyectando, negativo = carga bajo cero); "
                "línea ámbar = programa PCP (diario D-1) y línea verde punteada = "
                "programa PID (reprograma intra-día) del CEN para el portfolio.")
 
