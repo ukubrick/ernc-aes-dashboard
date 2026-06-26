@@ -72,27 +72,42 @@ def calcular_eficiencia_real(gen_real_mw: float, p_estimada_mw: float) -> float 
 
 # ── Eólica ────────────────────────────────────────────────────────────────────
 
-def interpolar_viento_100m(v_80m: float, v_120m: float) -> tuple[float, float]:
+def interpolar_viento_100m(v_80m: float, v_120m: float, v_10m: float | None = None) -> tuple[float, float]:
     """
-    Interpolación ley de potencia entre 80m y 120m → v100m y α (wind shear).
+    Interpolación ley de potencia entre dos alturas → v100m y α (wind shear).
     Retorna (v100m, alpha). Unidades de entrada: m/s.
 
-    A vientos muy bajos (<1.5 m/s) la razón v120/v80 es ruido y el exponente α se
-    dispara a valores no físicos; en ese caso se interpola linealmente y α=0.
+    A vientos muy bajos (<1.5 m/s) la razón entre alturas es ruido y el exponente α
+    se dispara a valores no físicos; en ese caso se interpola linealmente y α=0.
+
+    Saneamiento del nivel 80m: en algunas celdas Open-Meteo entrega un
+    wind_speed_80m corrupto (cae fuera del rango [v10, v120], ej. PE Los Cururos
+    donde v80<v10 el 82% de las horas) → α se satura siempre al tope. Si se pasa
+    v_10m y el v80 es no físico (fuera del bracket 10m–120m), se descarta el 80m y
+    el cizalle se calcula con el par fiable 10m–120m.
     """
-    if not v_80m or not v_120m or v_80m <= 0 or v_120m <= 0:
-        return (round(v_80m or 0.0, 3), 0.0)
+    h_baja, v_baja, h_alta, v_alta = 80.0, v_80m, 120.0, v_120m
+
+    # Si el 80m es no físico respecto al bracket 10m–120m, usar 10m–120m
+    if v_10m and v_10m > 0 and v_120m and v_120m > 0:
+        lo, hi = min(v_10m, v_120m), max(v_10m, v_120m)
+        tol = 0.05 * hi  # tolerancia 5% para no descartar por ruido menor
+        if (not v_80m) or v_80m <= 0 or v_80m < lo - tol or v_80m > hi + tol:
+            h_baja, v_baja = 10.0, v_10m
+
+    if not v_baja or not v_alta or v_baja <= 0 or v_alta <= 0:
+        return (round(v_baja or v_80m or 0.0, 3), 0.0)
     # Con vientos despreciables, el cizalle no es informativo
-    if v_80m < 1.5 or v_120m < 1.5:
-        v100m = v_80m + (v_120m - v_80m) * (100.0 - 80.0) / (120.0 - 80.0)
+    if v_baja < 1.5 or v_alta < 1.5:
+        v100m = v_baja + (v_alta - v_baja) * (100.0 - h_baja) / (h_alta - h_baja)
         return (round(max(0.0, v100m), 3), 0.0)
     try:
-        alpha = math.log(v_120m / v_80m) / math.log(120.0 / 80.0)
+        alpha = math.log(v_alta / v_baja) / math.log(h_alta / h_baja)
         alpha = max(SHEAR_ALPHA_MIN, min(alpha, SHEAR_ALPHA_MAX))  # acotar a rango físico
-        v100m = v_80m * (100.0 / 80.0) ** alpha
+        v100m = v_baja * (100.0 / h_baja) ** alpha
         return (round(v100m, 3), round(alpha, 4))
     except (ValueError, ZeroDivisionError):
-        return (round(v_80m, 3), 0.0)
+        return (round(v_baja, 3), 0.0)
 
 
 def calcular_densidad_aire(temp_c: float, presion_hpa: float) -> float:
