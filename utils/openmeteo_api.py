@@ -146,9 +146,10 @@ def _response_to_registros(response, parque: str, variables: list[str]) -> list[
         else:
             v80  = row.get("wind_speed_80m")
             v120 = vals["windspeed_120m"][j] if "windspeed_120m" in vals else None
+            v10  = row.get("wind_speed_10m")
             temp = row.get("temp_2m")
             pres = row.get("surface_pressure")
-            v100m, alpha = interpolar_viento_100m(v80 or 0.0, v120 or 0.0)
+            v100m, alpha = interpolar_viento_100m(v80 or 0.0, v120 or 0.0, v10)
             rho = calcular_densidad_aire(temp or 15.0, pres or 1013.25)
             row["wind_speed_100m"] = v100m
             row["wind_shear_alpha"] = alpha
