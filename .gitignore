@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .cache/
 .cache_openmeteo/
+.cache_openmeteo.sqlite
+*.sqlite
 *.egg-info/
 .DS_Store
 assets/*
