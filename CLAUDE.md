@@ -1911,5 +1911,129 @@ equivalente, soiling/soiling ratio, performance ratio, IA vs ML vs deep learning
 
 ---
 
-*Actualizado 2026-06-25 — Sesiones 1–28 (v2.8.0).*
+## SESIÓN 29 — FIX SERIES TRUNCADAS, SHEAR CUR, AUDITORÍA DATOS, HISTÓRICOS, NUBES (2026-06-26)
+
+Sesión de pulido de datos/visualización para presentación. Foco: integridad de datos
+(Erick enfatiza que errores perjudican la presentación), navegación de alarmas, y dos
+features nuevas (Históricos + nubes térmicas).
+
+### 1. Series truncadas a 1000 filas (PostgREST) — PCP/PID y GEN REAL
+**Bug raíz recurrente:** PostgREST/Supabase trunca a **1000 filas/request**. Con 11
+parques × 168 h, los queries de lectura sin paginar perdían las filas más viejas
+(ordenadas `desc` → solo las ~45-90 h recientes) → las series aparecían "cortadas" en
+los días viejos, en TODOS los tabs (comparten `gen_rows`/`prog_rows`).
+- `utils/db.py::query_gen_prog_ultimas_horas` (PCP/PID, ~3.700 filas con 2 fuentes) y
+  `query_gen_real_ultimas_horas` (~1.850 filas): ahora **paginan con `.range()`** hasta
+  agotar. Validado: PCP 2.882 filas / gen real 1.712 filas, ventana completa 7 días.
+- **Regla (ya en Sesión 28 para `_dataset_parque`):** toda query >1000 filas DEBE
+  paginar con `.range()`; `.limit(N)` NO sube el tope del servidor. BESS (5×168=840) y
+  meteo por parque (168) quedan bajo el tope → no se truncan hoy.
+
+### 2. Modelo FV — línea continua a 0 de noche (`tab_solar.py`)
+El modelo FV se cortaba de noche (NaN + `connectgaps=False`). De noche la potencia
+física es **0** (sin irradiancia POA=0; el calor de las celdas NO genera, resta
+eficiencia). Ahora las horas nocturnas se grafican como **0 real** con
+`connectgaps=True` → la curva baja al eje y se reconecta al amanecer sin la diagonal
+falsa que motivó el corte. (Pregunta de Erick: no es por calor almacenado.)
+
+### 3. Alarmas clicables que SÍ navegan (`tab_insights.py`)
+La tarjeta de alarma completa es clicable (botón overlay transparente), pero **no
+navegaba**: el CSS emotion de Streamlit sobrescribía por especificidad `top/bottom/
+height` del botón → quedaba con **altura 0 al pie de la card** (verificado con
+Playwright: rect y=1182 h=0). **Fix:** forzar la geometría del overlay con
+`!important` (+ estirar el `stElementContainer` del botón). Verificado: clic en
+cualquier punto de la alarma navega a la vista de detalle.
+- **Regla:** para overlays de botón sobre HTML en Streamlit, las propiedades
+  geométricas (`inset/top/bottom/height/width`) necesitan `!important` o el CSS interno
+  de Streamlit las gana.
+
+### 4. Wind shear de PE Los Cururos saturado (dato corrupto de Open-Meteo)
+El α (cizalle) de **CUR** estaba clavado en el tope 0.60 el 100% del tiempo. Causa: en
+la celda de CUR, Open-Meteo entrega `wind_speed_80m` **corrupto** (cae por debajo del
+v10m el **82%** de las horas: v80~3.5 con v10~5.7 y v120~10). El 120m y 10m son
+coherentes; solo el 80m está glitcheado. α=ln(v120/v80)/ln(120/80) se disparaba a ~3.
+- **Fix** (`utils/calculos.py::interpolar_viento_100m`): ahora recibe `v_10m` y, si el
+  v80 cae fuera del bracket físico `[v10, v120]`, lo descarta y calcula el cizalle con
+  el par fiable **10m–120m**. CUR pasó de α med 0.60 (100% clip) a 0.22 (5-11% clip);
+  los demás parques apenas cambian (el fallback solo actúa en horas con 80m no físico).
+  `openmeteo_api.py` pasa `v10` a la función.
+- **`Backfill_historico` no, sino `Recompute_shear_ernc.py` (NUEVO):** reescribió
+  `wind_shear_alpha`/`wind_speed_100m` de las **~15k filas eólicas** ya almacenadas con
+  el fix. Utilidad de una sola vez, idempotente, NO va al cron.
+- **Memoria:** `[[integridad-datos-pulsar]]` registra este modo de falla (glitch de
+  niveles de viento Open-Meteo por celda) + el de truncación 1000 filas.
+
+### 5. Auditoría de integridad de datos (todo sano salvo CUR)
+Barrido sistemático 2026-06-26: gen_real sin negativos ni sobre-Pmax, continuidad
+horaria sin huecos ni duplicados (168 filas/parque); CMG 8 nodos 0-313 USD sin
+negativos; BESS signo correcto (`neta=iny-ret` exacto); demanda 4 zonas sin negativos;
+densidad aire eólica 1.22-1.25; p_fv/p_eolica dentro de límites. Falso positivo
+aclarado: `p_fv>0` con `is_day=False` es **crepúsculo legítimo** (GHI~58 a las 18:00),
+no error. Único problema real: el shear de CUR (corregido).
+
+### 6. BESS en la serie del portfolio (`app_ernc.py::_render_tab_resumen`)
+El gráfico apilado "Generación del portfolio — últimas 24h" ahora incluye la traza
+**BESS neto** (violeta): potencia neta agregada por hora, >0 descarga apila sobre la
+generación, <0 carga se dibuja **bajo cero** (consumo). `_render_tab_resumen` recibe
+`bess_rows`.
+
+### 7. Nubes del mapa — paleta térmica de densidad + fix colores (`mapa_ernc.py`)
+El tile `clouds_new` de OWM entrega nubes **casi blancas** (densidad en el canal
+**alfa**, no en brillo) → el blanco no se puede teñir con `hue-rotate` (sin matiz):
+"Roja" salía amarilla y "Violeta" blanca.
+- **Fix:** helper `_tint(hue, sat, contrast, bright)` que **oscurece primero**
+  (`grayscale + brightness 0.5`) para crear tono, luego `sepia + saturate + hue-rotate`.
+  El matiz final ≈ **38° (base sepia) + hue_deg**; un brillo final alto lava el color a
+  pastel (rojo→rosa) → se baja `bright` en tonos cálidos. Colores reales: Azul/Roja/
+  Violeta/Amarilla/Verde (verificado con Playwright).
+- **Nuevo preset "Térmica (densidad)" (default):** mapa de calor amarillo→blanco tipo
+  visión térmica; la densidad se intensifica apilando capas (`refuerzo`).
+  **LIMITACIÓN honesta:** un LUT multicolor real por densidad (azul→rojo→blanco) NO es
+  posible con CSS sobre este tile (densidad en alfa) — requeriría la API de paletas de
+  OWM, de pago (descartada Sesión 20). Un `mix-blend-mode:screen` de 2 capas se probó y
+  daba verde-azulado → descartado.
+
+### 8. Sección Históricos (NUEVA) — `components/tab_historicos.py`
+Vista **"Históricos"** en `CATEGORIAS["Análisis"]`. Visualiza cualquier evento del
+pasado en **todo el rango de la DB** (~desde 2026-03-01, backfill Sesión 28). A
+diferencia de los tabs operativos (ventana móvil 168 h), consulta por **rango de fechas
+explícito** con selector Desde/Hasta acotado al rango real.
+- 4 temas: **Generación** (real vs PCP/PID, por parque o portfolio apilado con energía
+  total), **Meteorología** (GHI+modelo FV / viento hub+ráfagas+modelo), **CMG**
+  (multi-nodo), **BESS** (neto + descarga/carga/energía).
+- `utils/db.py`: `_fetch_rango(tabla, select, desde, hasta, filtros)` paginado +
+  `query_gen_real_rango`, `query_gen_prog_rango`, `query_bess_rango`, `query_cmg_rango`,
+  `query_meteo_rango`, `query_fecha_min_gen_real`. Todas degradan a `[]` si falla.
+
+### 9. Nubosidad TOTAL en el forecast del GHI (`tab_solar.py::_grafico_ghi`)
+El gráfico GHI solo mostraba **nubosidad baja**, que en el desierto (Atacama) es ~0 (no
+hay camanchaca tierra adentro) → el forecast se veía vacío pese a haber nubes (visibles
+en el heat map del mapa). Ahora muestra **ambas** series con color distinto:
+**Nubosidad total %** (gris, `cloud_cover_pct` — forecast real hasta 98%, la que baja
+el GHI) + **Nubosidad baja %** (violeta, `cloudcover_low_pct` — camanchaca). Título y
+leyenda actualizados.
+
+### 10. Limpieza repo
+`.cache_openmeteo.sqlite` (caché requests-cache) destrackeado (`git rm --cached`) e
+ignorado (`.gitignore` + `*.sqlite`) → `git status` limpio. (Pendiente cerrado de
+Sesión 28.)
+
+### Archivos tocados Sesión 29
+- `utils/db.py` — paginación gen real/PCP + queries por rango (Históricos).
+- `utils/calculos.py`, `utils/openmeteo_api.py` — fix shear bracket 10m-120m.
+- `components/tab_solar.py` — modelo FV continuo + nubosidad total/baja.
+- `components/tab_insights.py` — overlay alarmas con `!important`.
+- `components/mapa_ernc.py` — paleta térmica + fix colores nubes.
+- `components/tab_historicos.py` — NUEVO (sección Históricos).
+- `app_ernc.py` — BESS en portfolio + vista Históricos + import.
+- `Recompute_shear_ernc.py` — NUEVO (utilidad recálculo shear).
+- `.gitignore` — `*.sqlite`.
+
+### Pendientes Sesión 29
+- [ ] (Opcional) Paleta térmica multicolor real → requiere tier de pago de OpenWeather.
+- [ ] (Opcional) Anclar la ventana del comparador NASA a la última fecha de NASA.
+
+---
+
+*Actualizado 2026-06-26 — Sesiones 1–29 (v2.8.0).*
 *Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER + scikit-learn + LightGBM + PuLP*
