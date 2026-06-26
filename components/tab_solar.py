@@ -199,12 +199,25 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
             line=dict(color=AES_AMBAR, width=1.5, dash="dot"),
             hovertemplate="%{y:.0f} W/m²<extra>GHI forecast Open-Meteo (7 d)</extra>",
         ))
-    if "cloudcover_low_pct" in df_meteo.columns:
+    # Nubosidad TOTAL: es la que afecta el GHI y la que se ve en el heat map del mapa.
+    # En el desierto (Atacama) la nubosidad BAJA suele ser 0 (no hay camanchaca tierra
+    # adentro) → si solo se graficaba la baja, el forecast se veía "vacío". Se muestra
+    # la total como serie principal y la baja solo si aporta (camanchaca costera).
+    if "cloud_cover_pct" in df_meteo.columns:
+        fig.add_trace(go.Scatter(
+            x=df_meteo["fecha_hora"], y=df_meteo["cloud_cover_pct"],
+            name="Nubosidad total %",
+            yaxis="y2",
+            line=dict(color=AES_MUTED, width=1.2, dash="dot"),
+            fill="tozeroy", fillcolor="rgba(107,114,128,0.06)",
+            hovertemplate="%{y:.0f}%<extra>Nubosidad total (afecta el GHI)</extra>",
+        ))
+    if "cloudcover_low_pct" in df_meteo.columns and df_meteo["cloudcover_low_pct"].fillna(0).max() > 5:
         fig.add_trace(go.Scatter(
             x=df_meteo["fecha_hora"], y=df_meteo["cloudcover_low_pct"],
             name="Nubosidad baja %",
             yaxis="y2",
-            line=dict(color=AES_MUTED, width=1, dash="dot"),
+            line=dict(color=AES_VIOLETA, width=1, dash="dot"),
             hovertemplate="%{y:.0f}%<extra>Nubosidad baja (camanchaca si >60% con cielo total <35%)</extra>",
         ))
 
@@ -391,7 +404,7 @@ def render_tab_solar(
     # ── Segunda serie de tiempo: GHI + nubosidad (antes que leyenda/fórmulas) ──
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:10px 0 6px'>"
-        f"Irradiancia GHI + nubosidad baja — {NOMBRE_DISPLAY[parque_sel]}</div>",
+        f"Irradiancia GHI + nubosidad — {NOMBRE_DISPLAY[parque_sel]}</div>",
         unsafe_allow_html=True,
     )
     _grafico_ghi(df_meteo, parque_sel, corte)
@@ -423,7 +436,10 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
   <b>GHI forecast</b> — sol pronosticado para los próximos 7 días.</div>
   <div><span style='display:inline-block;width:28px;height:1px;background:{AES_MUTED};
   vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_MUTED}'></span>
-  <b>Nubosidad baja %</b> — nubes bajas; muchas con cielo despejado arriba = camanchaca.</div>
+  <b>Nubosidad total %</b> — nubes que tapan el sol y bajan el GHI (histórico + forecast).</div>
+  <div><span style='display:inline-block;width:28px;height:1px;background:{AES_VIOLETA};
+  vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_VIOLETA}'></span>
+  <b>Nubosidad baja %</b> — solo si hay; nubes bajas con cielo despejado arriba = camanchaca.</div>
 </div>
 </div>""",
         unsafe_allow_html=True,
