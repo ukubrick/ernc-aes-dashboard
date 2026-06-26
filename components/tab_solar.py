@@ -212,12 +212,12 @@ def _grafico_ghi(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) -> No
             fill="tozeroy", fillcolor="rgba(107,114,128,0.06)",
             hovertemplate="%{y:.0f}%<extra>Nubosidad total (afecta el GHI)</extra>",
         ))
-    if "cloudcover_low_pct" in df_meteo.columns and df_meteo["cloudcover_low_pct"].fillna(0).max() > 5:
+    if "cloudcover_low_pct" in df_meteo.columns:
         fig.add_trace(go.Scatter(
             x=df_meteo["fecha_hora"], y=df_meteo["cloudcover_low_pct"],
             name="Nubosidad baja %",
             yaxis="y2",
-            line=dict(color=AES_VIOLETA, width=1, dash="dot"),
+            line=dict(color=AES_VIOLETA, width=1.2, dash="dot"),
             hovertemplate="%{y:.0f}%<extra>Nubosidad baja (camanchaca si >60% con cielo total <35%)</extra>",
         ))
 
@@ -439,7 +439,7 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
   <b>Nubosidad total %</b> — nubes que tapan el sol y bajan el GHI (histórico + forecast).</div>
   <div><span style='display:inline-block;width:28px;height:1px;background:{AES_VIOLETA};
   vertical-align:middle;margin-right:7px;border-bottom:2px dotted {AES_VIOLETA}'></span>
-  <b>Nubosidad baja %</b> — solo si hay; nubes bajas con cielo despejado arriba = camanchaca.</div>
+  <b>Nubosidad baja %</b> — nubes bajas; muchas con cielo despejado arriba = camanchaca.</div>
 </div>
 </div>""",
         unsafe_allow_html=True,
