@@ -175,12 +175,23 @@ def query_gen_real_ultimas_horas(horas: int = 48) -> list[dict]:
     from datetime import timedelta
     sb = get_client()
     desde = (_ahora_santiago() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
-    res = (sb.table("generacion_real_ernc")
-             .select("*")
-             .gte("fecha_hora", desde)
-             .order("fecha_hora", desc=True)
-             .execute())
-    return res.data or []
+    # PostgREST trunca a 1000 filas/request. Con 11 parques × ~168 h son ~1.850 filas
+    # → sin paginar, la serie se cortaba a las ~90 h más recientes. Paginar con .range().
+    filas: list[dict] = []
+    page = 1000
+    i = 0
+    while True:
+        lote = (sb.table("generacion_real_ernc")
+                  .select("*")
+                  .gte("fecha_hora", desde)
+                  .order("fecha_hora", desc=True)
+                  .range(i, i + page - 1)
+                  .execute()).data or []
+        filas.extend(lote)
+        if len(lote) < page:
+            break
+        i += page
+    return filas
 
 
 def query_bess_ultimas_horas(horas: int = 168) -> list[dict]:
