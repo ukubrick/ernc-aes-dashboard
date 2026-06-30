@@ -268,11 +268,12 @@ def _gen_prog_mismo_hora(df_gen, df_prog, parque):
 
 def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
     """Fila de métricas horizontales debajo del gráfico de generación."""
-    gen, prog, _ = _gen_prog_mismo_hora(df_gen, df_prog, parque_sel)
+    gen, prog, hora_gen = _gen_prog_mismo_hora(df_gen, df_prog, parque_sel)
     fp   = calcular_factor_planta(gen, PMAX_FP[parque_sel])
     dev  = calcular_desvio(gen, prog)
 
     ghi = tc = viento = rafaga = None
+    hora_met = None
     if not df_meteo.empty:
         hist_m = df_meteo[df_meteo["es_forecast"] == False]
         if len(hist_m) > 0:
@@ -281,10 +282,20 @@ def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
             tc     = u.get("temp_celda_c")
             viento = u.get("wind_speed_10m")
             rafaga = u.get("wind_gusts_10m")
+            hora_met = u.get("fecha_hora")
+
+    def _fmt_h(h):
+        try:
+            return pd.to_datetime(h).strftime("%d/%m %H:%M")
+        except Exception:
+            return "—"
+    h_gen = _fmt_h(hora_gen)
+    h_met = _fmt_h(hora_met)
 
     c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     with c1:
-        st.metric("Generacion actual", f"{gen:.1f} MW" if gen is not None else "—")
+        st.metric("Generacion", f"{gen:.1f} MW" if gen is not None else "—")
+        st.caption(f"dato: {h_gen}")
     with c2:
         st.metric("Pmax neta CEN", f"{PMAX_FP[parque_sel]:.1f} MW")
     with c3:
@@ -298,8 +309,10 @@ def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
         )
     with c5:
         st.metric("GHI", f"{ghi:.0f} W/m²" if ghi is not None else "—")
+        st.caption(f"dato: {h_met}")
     with c6:
         st.metric("Temp. celda", f"{tc:.1f} °C" if tc is not None else "—")
+        st.caption(f"dato: {h_met}")
     with c7:
         v_ref = max(viento or 0.0, rafaga or 0.0)
         delta_stow = "Stow (horizontal)" if v_ref >= TRACKER_STOW_WIND_MS else None
@@ -309,21 +322,24 @@ def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
             delta=delta_stow,
             delta_color="inverse",
         )
+        st.caption(f"dato: {h_met}")
 
     v_ref = max(viento or 0.0, rafaga or 0.0)
     if v_ref >= TRACKER_STOW_WIND_MS:
         st.warning(
-            f"Protección de viento alto activa: viento/ráfaga {v_ref:.1f} m/s ≥ "
+            f"Protección de viento alto activa ({h_met}): viento/ráfaga {v_ref:.1f} m/s ≥ "
             f"{TRACKER_STOW_WIND_MS:.0f} m/s → trackers en posición horizontal (stow). "
             "La generación cae porque los paneles dejan de seguir al sol."
         )
 
     st.caption(
-        "Generacion: ultimo gen_real CEN · Pmax neta CEN (potencia aceptada) · "
+        f"Generacion/FP/Desvio: gen_real CEN a las {h_gen} (la gen real del CEN llega "
+        f"con rezago de ~4-5 h). GHI/Temp/Viento: meteo Open-Meteo a las {h_met} "
+        "(sin rezago, ~actual). Por eso el stow puede estar activo ahora aunque la "
+        "generacion mostrada sea de horas antes. · Pmax neta CEN (potencia aceptada) · "
         "FP = Gen/Pmax neta × 100 · Desvio = (Gen − PCP)/PCP × 100 a la misma hora "
-        "(verde ≤15% · ambar ≤25% · rojo >25%) · GHI: irradiancia global horizontal "
-        "Open-Meteo · Temp. celda: modelo NOCT · Viento 10m: protección de trackers "
-        f"(stow horizontal sobre {TRACKER_STOW_WIND_MS:.0f} m/s)."
+        "(verde ≤15% · ambar ≤25% · rojo >25%) · Temp. celda: modelo NOCT · "
+        f"Viento 10m: protección de trackers (stow horizontal sobre {TRACKER_STOW_WIND_MS:.0f} m/s)."
     )
 
 

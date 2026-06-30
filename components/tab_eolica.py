@@ -278,8 +278,8 @@ def _grafico_viento(df_meteo: pd.DataFrame, parque: str, corte: pd.Timestamp) ->
 
 
 def _gen_prog_mismo_hora(gen_rows, prog_rows, parque):
-    """(gen, prog) en la última hora con gen real, con la PCP de esa misma hora."""
-    gen = prog = None
+    """(gen, prog, hora) en la última hora con gen real, con la PCP de esa misma hora."""
+    gen = prog = hora = None
     if gen_rows:
         d = pd.DataFrame(gen_rows)
         d["fecha_hora"] = pd.to_datetime(d["fecha_hora"]).dt.tz_localize(None)
@@ -298,16 +298,17 @@ def _gen_prog_mismo_hora(gen_rows, prog_rows, parque):
                     dp = dp_pcp if not dp_pcp.empty else dp
                 if not dp.empty:
                     prog = dp.iloc[-1]["gen_programada_mw"]
-    return gen, prog
+    return gen, prog, hora
 
 
 def _panel_metricas(gen_rows, prog_rows, df_meteo, parque_sel):
     """Fila de métricas horizontales debajo del gráfico de generación."""
-    gen, prog = _gen_prog_mismo_hora(gen_rows, prog_rows, parque_sel)
+    gen, prog, hora_gen = _gen_prog_mismo_hora(gen_rows, prog_rows, parque_sel)
     fp   = calcular_factor_planta(gen, PMAX_FP[parque_sel])
     dev  = calcular_desvio(gen, prog)
 
     v100 = alpha = gusts = None
+    hora_met = None
     if not df_meteo.empty:
         hist_m = df_meteo[df_meteo["es_forecast"] == False]
         if len(hist_m) > 0:
@@ -315,10 +316,20 @@ def _panel_metricas(gen_rows, prog_rows, df_meteo, parque_sel):
             v100  = u.get("wind_speed_100m")
             alpha = u.get("wind_shear_alpha")
             gusts = u.get("wind_gusts_10m")
+            hora_met = u.get("fecha_hora")
+
+    def _fmt_h(h):
+        try:
+            return pd.to_datetime(h).strftime("%d/%m %H:%M")
+        except Exception:
+            return "—"
+    h_gen = _fmt_h(hora_gen)
+    h_met = _fmt_h(hora_met)
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
-        st.metric("Generacion actual", f"{gen:.1f} MW" if gen is not None else "—")
+        st.metric("Generacion", f"{gen:.1f} MW" if gen is not None else "—")
+        st.caption(f"dato: {h_gen}")
     with c2:
         st.metric("Pmax neta CEN", f"{PMAX_FP[parque_sel]:.1f} MW")
     with c3:
@@ -332,15 +343,19 @@ def _panel_metricas(gen_rows, prog_rows, df_meteo, parque_sel):
         )
     with c5:
         st.metric("Viento 100m", f"{v100:.1f} m/s" if v100 is not None else "—")
+        st.caption(f"dato: {h_met}")
     with c6:
         st.metric(
             "Rafagas / Shear α",
             f"{gusts:.1f} m/s" if gusts is not None else "—",
             delta=f"α = {alpha:.3f}" if alpha is not None else None,
         )
+        st.caption(f"dato: {h_met}")
 
     st.caption(
-        "Generacion: ultimo gen_real CEN · Pmax neta CEN (potencia aceptada) · "
+        f"Generacion/FP/Desvio: gen_real CEN a las {h_gen} (la gen real del CEN llega "
+        f"con rezago de ~4-5 h). Viento/Rafagas/Shear: meteo Open-Meteo a las {h_met} "
+        "(sin rezago, ~actual). · Pmax neta CEN (potencia aceptada) · "
         "FP = Gen/Pmax neta × 100 · Desvio = (Gen − PCP)/PCP × 100 a la misma hora · "
         "Viento 100m: interpolado v80/v120 con ley de potencia v(h)=v_ref·(h/h_ref)^α · "
         "Rafagas: maximas a 10m (cut-out ~25 m/s, curva por parque) · Shear α>0.30 → atmosfera estable."

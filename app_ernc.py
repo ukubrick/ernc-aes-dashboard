@@ -999,10 +999,28 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None,
     )
     render_mapa(gen_por_parque, parque_activo=parque_activo)
 
+    # ── Hora del último dato real por parque (gen_rows viene ordenado desc) ───
+    hora_por_parque: dict[str, object] = {}
+    for r in gen_rows or []:
+        pq = r["parque"]
+        if pq not in hora_por_parque:
+            hora_por_parque[pq] = r.get("fecha_hora")
+
+    def _fmt_hora_dato(h):
+        try:
+            return pd.to_datetime(h).strftime("%d/%m %H:%M")
+        except Exception:
+            return "—"
+
+    # Hora más reciente del conjunto, para el título de la tabla.
+    horas_validas = [pd.to_datetime(h) for h in hora_por_parque.values() if h]
+    hora_max_txt = max(horas_validas).strftime("%d/%m %H:%M") if horas_validas else "—"
+
     # ── Tabla de estado del portfolio, debajo del mapa y con más valor ───────
     st.markdown(
         f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:14px 0 8px'>"
-        f"Estado del portfolio — por parque</div>",
+        f"Estado del portfolio — por parque · datos al {hora_max_txt} "
+        f"(gen real CEN, rezago ~4-5 h)</div>",
         unsafe_allow_html=True,
     )
     prog_por_parque = ultima_prog_por_parque(prog_rows) if prog_rows else {}
@@ -1017,6 +1035,7 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None,
         filas.append({
             "Parque":       NOMBRE_DISPLAY[p],
             "Tipo":         TECNOLOGIA[p],
+            "Hora dato":    _fmt_hora_dato(hora_por_parque.get(p)),
             "Gen. MW":      round(gen, 1) if gen is not None else None,
             "Pmax neta MW": round(pmax, 1),
             "FP %":         fp,
@@ -1035,6 +1054,8 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None,
         },
     )
     st.caption(
+        "Hora dato = última hora con gen real CEN del parque (el CEN publica con rezago "
+        "de ~4-5 h, por eso no es la hora actual; algunos parques quedan en horas distintas). "
         "FP = gen / Pmax neta CEN. % capacidad = uso instantáneo sobre la Pmax neta. "
         "Desvío = (gen − PCP)/PCP de la misma hora; verde ≤15%, ámbar ≤25%, rojo >25%."
     )

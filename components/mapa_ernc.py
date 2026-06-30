@@ -99,7 +99,8 @@ def _css_filtros_nubes() -> str:
 def _viento_actual_parques() -> dict:
     """Viento ACTUAL (velocidad 10m + dirección) de los 11 parques desde Open-Meteo,
     en una sola llamada. Funciona para solares y eólicos por igual (no depende de lo
-    que se guarde en meteo_ernc). Retorna {parque: {"dir": grados, "vel": m/s}}."""
+    que se guarde en meteo_ernc). Retorna {parque: {"dir": grados, "vel": m/s, "raf": m/s}}.
+    La ráfaga gatilla el stow de trackers (≥16 m/s) junto con el viento medio."""
     import requests
     orden = list(PARQUES_TODOS)
     lats = ",".join(f"{COORDENADAS[p]['lat']:.4f}" for p in orden)
@@ -108,7 +109,7 @@ def _viento_actual_parques() -> dict:
         r = requests.get(
             "https://api.open-meteo.com/v1/forecast",
             params={"latitude": lats, "longitude": lons,
-                    "current": "wind_speed_10m,wind_direction_10m",
+                    "current": "wind_speed_10m,wind_direction_10m,wind_gusts_10m",
                     "wind_speed_unit": "ms", "timezone": "America/Santiago"},
             timeout=20,
         )
@@ -122,8 +123,10 @@ def _viento_actual_parques() -> dict:
         cur = o.get("current", {})
         d = cur.get("wind_direction_10m")
         v = cur.get("wind_speed_10m")
+        g = cur.get("wind_gusts_10m")
         if d is not None:
-            out[p] = {"dir": float(d), "vel": float(v) if v is not None else None}
+            out[p] = {"dir": float(d), "vel": float(v) if v is not None else None,
+                      "raf": float(g) if g is not None else None}
     return out
 
 # Ciudades de referencia para dar contexto geográfico al mapa
@@ -230,12 +233,16 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
             if not w or w.get("dir") is None:
                 continue
             vel = w.get("vel")
+            raf = w.get("raf")
             # dir meteorológico = de dónde viene → la flecha apunta hacia donde va (+180).
             # El glifo ➜ apunta al este (0° CSS), y el rumbo es 0=N/90=E → rotar (rumbo-90).
             rumbo = (w["dir"] + 180) % 360
             rot = (rumbo - 90) % 360
-            col = "#EF4444" if (vel or 0) >= 12 else ("#F59E0B" if (vel or 0) >= 7 else "#22D3EE")
+            # Stow de trackers FV: se gatilla con viento medio O ráfaga ≥ 16 m/s.
+            stow = max(vel or 0, raf or 0) >= 16
+            col = "#EF4444" if (stow or (vel or 0) >= 12) else ("#F59E0B" if (vel or 0) >= 7 else "#22D3EE")
             vtxt = f"{vel:.1f}" if vel is not None else "s/d"
+            rtxt = f"{raf:.1f}" if raf is not None else "s/d"
             # Flecha grande rotada + etiqueta de velocidad fija (no rota) debajo
             html = (
                 "<div style='position:relative;width:54px;height:54px'>"
@@ -249,7 +256,9 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
             folium.Marker(
                 location=[r["lat"], r["lon"]],
                 icon=folium.DivIcon(html=html, icon_size=(54, 54), icon_anchor=(27, 27)),
-                tooltip=f"{r['nombre']} — viento {vtxt} m/s desde {w['dir']:.0f}°",
+                tooltip=(f"{r['nombre']} — viento {vtxt} m/s · ráfaga {rtxt} m/s "
+                         f"desde {w['dir']:.0f}°"
+                         + (" · STOW (≥16 m/s)" if stow else "")),
             ).add_to(fgv)
         fgv.add_to(m)
 
