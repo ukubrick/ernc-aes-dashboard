@@ -7,7 +7,9 @@ from zoneinfo import ZoneInfo
 #         optimizador BESS (MILP), soiling FV, backfill histórico ~115 días.
 # 2.8.1 — Sesión 30: BESS solo descarga en Resumen, KPI CMG=0, cap desvío PCP,
 #         eje Y forecast estable, multiselect Históricos meteo, glosario con clave.
-APP_VERSION = "v2.8.1"
+# 2.8.2 — Sesión 31: ráfaga+stow en tooltip del mapa, hora del dato en métricas
+#         Solar/Eólica y tabla resumen (aclara rezago CEN ~4-5 h vs meteo actual).
+APP_VERSION = "v2.8.2"
 
 # ── Timezone ───────────────────────────────────────────────────────────────────
 TZ_CHILE = ZoneInfo("America/Santiago")

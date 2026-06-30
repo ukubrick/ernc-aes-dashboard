@@ -2092,5 +2092,52 @@ Todos cambios acotados, sin tablas ni endpoints nuevos. `APP_VERSION = v2.8.1`.
 
 ---
 
-*Actualizado 2026-06-30 — Sesiones 1–30 (v2.8.1).*
+## SESIÓN 31 — RÁFAGA+STOW EN EL MAPA + HORA DEL DATO EN MÉTRICAS (2026-06-30)
+
+A raíz de la activación real del stow en Andes Solar, Erick quiso revisar el histórico de
+viento del sector y se aclaró la diferencia de "frescura" entre fuentes. `APP_VERSION =
+v2.8.2`. Cambios acotados, sin tablas ni endpoints nuevos.
+
+### Contexto de datos confirmado
+- **Viento histórico del stow** ya estaba disponible en **Históricos → Meteorología** (los
+  parques solares guardan `wind_speed_10m` y `wind_gusts_10m` desde Sesión 25). Solo hay que
+  **deseleccionar** GHI/Nubosidad/Modelo FV en el multiselect y dejar Viento 10m + Ráfagas
+  10m: Históricos grafica **hasta 2 unidades** a la vez (eje izq/der) y descarta las demás
+  con aviso. (No se tocó código de Históricos.)
+- **Rezago gen-real CEN ~4-5 h confirmado contra la API:** a las 13:31 la API solo publica
+  hasta las 09:00 (varios parques hasta 05:00). NO es bug — la tabla del resumen sí muestra
+  la última potencia adquirida; el FP se ve "bajo" porque es una foto de las 09:00 (solar
+  subiendo), no del mediodía. El meteo Open-Meteo NO tiene rezago (modelo) → las métricas de
+  clima son ~actuales. Esa diferencia de horas era lo que confundía.
+
+### 1. Mapa: ráfaga + indicador de stow (`components/mapa_ernc.py`)
+- `_viento_actual_parques()` ahora pide también `wind_gusts_10m` al endpoint `current` de
+  Open-Meteo y devuelve `"raf"` junto a `"vel"`/`"dir"`.
+- Tooltip del viento: `viento X m/s · ráfaga Y m/s desde N°` + **`· STOW (≥16 m/s)`** cuando
+  el viento medio **o** la ráfaga cruzan `TRACKER_STOW_WIND_MS`. La **flecha se pinta roja**
+  en condición de stow (antes solo por velocidad ≥12).
+
+### 2. Hora del dato en las métricas (`tab_solar.py`, `tab_eolica.py`)
+- `_gen_prog_mismo_hora` de eólica ahora devuelve también `hora` (solar ya la devolvía).
+- Cada métrica del panel lleva un **caption `dato: DD/MM HH:MM`** debajo (NO en el label de
+  `st.metric`, que se trunca con "…"). Generación/FP/Desvío usan la hora de gen-real CEN;
+  GHI/Temp/Viento/Ráfagas/Shear usan la hora de la última fila histórica de meteo. El aviso
+  de stow incluye la hora; el caption explica el rezago CEN vs meteo actual.
+
+### 3. Tabla del resumen del portfolio (`app_ernc.py::_render_tab_resumen`)
+- Título con la **hora del último dato**: `…datos al DD/MM HH:MM (gen real CEN, rezago
+  ~4-5 h)`.
+- Nueva columna **"Hora dato"** por parque (algunos quedan en horas distintas: 09:00 vs
+  05:00). Hora derivada de `gen_rows` (ordenado desc → primera fila por parque).
+- Caption explica el rezago y por qué la hora no es la actual.
+
+### Archivos tocados Sesión 31
+- `components/mapa_ernc.py` — ráfaga + stow en tooltip, flecha roja en stow.
+- `components/tab_solar.py`, `components/tab_eolica.py` — caption `dato:` por métrica.
+- `app_ernc.py` — columna "Hora dato" + hora en título de la tabla resumen.
+- `config.py` — `APP_VERSION = v2.8.2`.
+
+---
+
+*Actualizado 2026-06-30 — Sesiones 1–31 (v2.8.2).*
 *Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER + scikit-learn + LightGBM + PuLP*
