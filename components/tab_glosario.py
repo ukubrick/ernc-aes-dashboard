@@ -76,7 +76,7 @@ GLOSARIO: dict[str, list[tuple[str, str]]] = {
         ("Modelo eólico", "Potencia estimada desde el viento al hub, densidad del aire y la curva de potencia del parque."),
     ],
     "BESS (almacenamiento)": [
-        ("BESS", "Battery Energy Storage System. Sistema de baterías asociado a los parques solares de AES."),
+        ("BESS", "Battery Energy Storage System. Sistema de baterías de AES, asociado a un parque solar o standalone (ej. BESS Arenales, 315 MW)."),
         ("Inyección / Descarga", "Energía que el BESS entrega al sistema (potencia_neta > 0)."),
         ("Retiro / Carga", "Energía que el BESS toma del sistema para almacenar (potencia_neta < 0)."),
         ("Potencia neta", "Inyección − retiro. Positiva descargando, negativa cargando."),

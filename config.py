@@ -11,7 +11,9 @@ from zoneinfo import ZoneInfo
 #         Solar/Eólica y tabla resumen (aclara rezago CEN ~4-5 h vs meteo actual).
 # 2.9.0 — Sesión 32: alta de PFV Cristales (300 MW, id_central 2419) + BESS Cristales
 #         (370 MW). Central EN_REVISION en la API (gen=0 hasta PES). 12 parques / 6 BESS.
-APP_VERSION = "v2.9.0"
+# 2.9.1 — Sesión 33: alta de BESS Arenales (315 MW, standalone, sin FV asociado).
+#         Confirmado en gen-real/v3. 7 BESS.
+APP_VERSION = "v2.9.1"
 
 # ── Timezone ───────────────────────────────────────────────────────────────────
 TZ_CHILE = ZoneInfo("America/Santiago")
@@ -222,6 +224,7 @@ CMG_NODO = {
     "AS4":  "CRUCERO_______220",
     "BOL":  "CRUCERO_______220",
     "CRI":  "CRUCERO_______220",   # asignado a CRUCERO (norte) — confirmar barra real al PES
+    "ARE":  "CRUCERO_______220",   # BESS Arenales (norte) — confirmar barra real
     # Eólicos del sur — CHARRUA probable, pendiente confirmar con AES Andes
     "CL":   "CHARRUA_______220",
     "OLM":  "CHARRUA_______220",
@@ -317,6 +320,14 @@ BESS = {
         "iny": ["SAE PFV Cristales (Inyección)"],
         "ret": ["SAE PFV Cristales (Retiro de central)",
                 "SAE PFV Cristales (Retiro de sistema)"],
+    },
+    # BESS Arenales — almacenamiento STANDALONE (sin parque FV asociado todavía).
+    # Confirmado contra gen-real/v3 (2026-06-30): solo 2 llaves, pmax 315 MW, tipo BESS,
+    # id_central None. Su FV aún no publica generación → solo existe el BESS.
+    "ARE_B": {
+        "nombre": "BESS Arenales", "parque": "ARE", "pmax_mw": 315.0,
+        "iny": ["BESS Arenales (Inyección)"],
+        "ret": ["BESS Arenales (Retiro)"],
     },
 }
 
@@ -422,6 +433,7 @@ BESS_HORAS = {
     "AS4_B":  5.0,
     "BOL_B":  None,
     "CRI_B":  None,   # energía declarada no disponible aún → se asume 4 h
+    "ARE_B":  None,   # energía declarada no disponible aún → se asume 4 h
 }
 
 # ── INFOTÉCNICA: ficha consolidada por parque (para la pestaña de referencia) ─────
