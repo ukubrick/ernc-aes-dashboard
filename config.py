@@ -198,8 +198,8 @@ COORDENADAS = {
     "CUR":  {"lat": -31.012533, "lon": -71.637465},  # Los Cururos Sur, Coquimbo
     "STM":  {"lat": -37.434120, "lon": -72.552807},  # Los Angeles, Bio Bio
     "MSM":  {"lat": -37.489984, "lon": -72.459097},  # Los Angeles, Bio Bio
-    # PLACEHOLDER — coordenada aproximada zona norte; PENDIENTE confirmar ubicación real de PFV Cristales
-    "CRI":  {"lat": -22.600000, "lon": -69.100000},
+    # PFV Cristales — sector Salar de Imilac, ~220 km al oriente de Antofagasta (AES Andes)
+    "CRI":  {"lat": -24.1024, "lon": -68.7756},
 }
 
 # ── Colores por tecnología ─────────────────────────────────────────────────────
@@ -479,7 +479,8 @@ INFOTECNICA = {
         "Propietario/coordinado: Cristales SpA.",
         "nota": "Alta Sesión 32. Central EN_REVISION en la API CEN (gen-real=0 hasta la "
         "puesta en servicio). Sin carta CEN de Pmax neta → FP usa Pmax bruta 300 MW. "
-        "Coordenadas y nodo CMG (CRUCERO) PENDIENTES de confirmar.",
+        "Ubicada en el sector Salar de Imilac (~220 km al oriente de Antofagasta). "
+        "Nodo CMG (CRUCERO) por confirmar.",
         "fuente": "gen-real/v3 (id_central 2419), 2026-06-30",
     },
     # ── Eólicos ─────────────────────────────────────────────────────────────────
