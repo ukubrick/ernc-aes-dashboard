@@ -2035,5 +2035,62 @@ Sesión 28.)
 
 ---
 
-*Actualizado 2026-06-26 — Sesiones 1–29 (v2.8.0).*
+## SESIÓN 30 — FIXES RESUMEN/KPIS/FORECAST/HISTÓRICOS/CMG + GLOSARIO CON CLAVE (2026-06-30)
+
+Sesión de pulido a partir de 7 observaciones del usuario sobre la app en producción.
+Todos cambios acotados, sin tablas ni endpoints nuevos. `APP_VERSION = v2.8.1`.
+
+1. **BESS solo descarga en el Resumen.** En `_render_tab_resumen` (`app_ernc.py`) la
+   serie BESS del portfolio (área apilada de las últimas 24 h) ahora **clampea el neto
+   a ≥0** (`bess_t["BESS"].clip(lower=0)`): solo grafica la **descarga** (inyección)
+   como potencia entregada; la carga (neto <0) ya no baja bajo cero. Trace renombrado
+   "BESS (descarga)" y caption actualizado.
+
+2. **KPI CMG en 0 mostraba "—".** En `kpis_generales.py`, `f"...{cmg_prom}..." if cmg_prom`
+   trataba el **0 como falsy**. Cambiado a `if cmg_prom is not None` (también para
+   `ingreso_total`). Ahora un CMG de 0 USD/MWh se muestra como "0.0 USD/MWh".
+
+3. **Desvío vs PCP >1000%.** `calcular_desvio` (`utils/calculos.py`) explotaba cuando el
+   PCP base era ~0 (solar al amanecer). Fix central (afecta KPIs, tab_solar, tab_eolica,
+   insights, PDF): si `|PCP| < DESVIO_BASE_MIN_MW` (1 MW) → se reporta solo el desvío en
+   MW (`desvio_pct=None`, `semaforo=None`); además el % se **acota a ±DESVIO_PCT_CAP**
+   (200%). El cálculo agregado de `tab_estadisticas` (energía del período) no se tocó:
+   su base es grande y no explota.
+
+4. **Forecast 7d: el eje Y se reescalaba al togglear ML.** En `tab_forecast.py`, al
+   superponer la serie ML el eje de potencia autoescalaba (`rangemode="tozero"`) y la
+   curva física parecía "cambiar de valores". Ahora el rango del eje MW se **ancla al
+   modelo físico** (y a `PMAX` del parque), estable con o sin ML. Aplicado a
+   `_grafico_portfolio` (`range=[0, ymax_físico*1.1]`) y `_grafico_parque`
+   (`range=[0, max(data, PMAX)*1.05]`).
+
+5. **Históricos: abanico de parámetros meteo.** `_hist_meteo` (`tab_historicos.py`)
+   reemplaza las 2-3 series fijas por un `st.multiselect` sobre `_METEO_PARAMS` (10
+   parámetros: GHI, nubosidad, temp 2m/celda, viento 10/100m, ráfagas, shear α, modelos
+   FV/eólico). Reparte hasta **2 unidades** en eje izquierdo/derecho; si se elige una 3ª
+   unidad, avisa cuáles quedaron fuera. Default según tecnología del parque.
+
+6. **Demanda y barras CMG fuera de "Meteo & Sistema".** En `tab_meteo_sistema.py` se
+   quitó la **demanda programada del SEN** y el **ranking de barras horizontales de CMG**
+   (queda solo el resumen Norte/Sur/Spread + caption). El ranking de barras se **movió a
+   la subsección CMG** (`_render_tab_cmg` en `app_ernc.py`, key `cmg_ranking_barras`); la
+   demanda ya vivía ahí. Así cada dato aparece en una sola subsección.
+
+7. **Glosario con clave.** `render_tab_glosario` (`tab_glosario.py`) ahora exige password
+   (`lens`, const `_GLOSARIO_PASSWORD`) antes de mostrar contenido; estado en
+   `st.session_state["glosario_ok"]`.
+
+### Archivos tocados Sesión 30
+- `app_ernc.py` — BESS solo descarga (Resumen) + ranking de barras CMG en subsección CMG.
+- `components/kpis_generales.py` — CMG=0 visible (is not None).
+- `utils/calculos.py` — `calcular_desvio` con base mínima 1 MW + cap ±200%.
+- `components/tab_forecast.py` — eje Y de potencia anclado al modelo físico.
+- `components/tab_historicos.py` — multiselect de parámetros meteo (`_METEO_PARAMS`).
+- `components/tab_meteo_sistema.py` — sin demanda ni barras CMG (solo resumen Norte/Sur).
+- `components/tab_glosario.py` — gate de clave.
+- `config.py` — `APP_VERSION = v2.8.1`.
+
+---
+
+*Actualizado 2026-06-30 — Sesiones 1–30 (v2.8.1).*
 *Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER + scikit-learn + LightGBM + PuLP*

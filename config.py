@@ -5,7 +5,9 @@ from zoneinfo import ZoneInfo
 # 2.7.0 — Sesión 27: programación PID + demanda por zona + glosario.
 # 2.8.0 — Sesión 28: simplificación nav (15→8), forecast probabilístico (LightGBM+CQR),
 #         optimizador BESS (MILP), soiling FV, backfill histórico ~115 días.
-APP_VERSION = "v2.8.0"
+# 2.8.1 — Sesión 30: BESS solo descarga en Resumen, KPI CMG=0, cap desvío PCP,
+#         eje Y forecast estable, multiselect Históricos meteo, glosario con clave.
+APP_VERSION = "v2.8.1"
 
 # ── Timezone ───────────────────────────────────────────────────────────────────
 TZ_CHILE = ZoneInfo("America/Santiago")
