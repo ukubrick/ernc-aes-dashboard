@@ -131,44 +131,87 @@ def _resumen_gen(g: pd.DataFrame):
     c[3].metric("Horas con dato", f"{len(g):,}")
 
 
+# Catálogo de parámetros meteo disponibles: col → (etiqueta, unidad, color, fmt).
+_METEO_PARAMS = {
+    "ghi_wm2":              ("GHI",                "W/m²", AES_AMBAR,  ".0f"),
+    "cloud_cover_pct":      ("Nubosidad total",    "%",    AES_MUTED,  ".0f"),
+    "temp_2m":              ("Temp. ambiente",     "°C",   AES_ROJO,   ".1f"),
+    "temp_celda_c":         ("Temp. celda FV",     "°C",   "#F97316",  ".1f"),
+    "p_fv_estimada_mw":     ("Modelo FV",          "MW",   AES_VIOLETA,".1f"),
+    "wind_speed_10m":       ("Viento 10m",         "m/s",  AES_VERDE,  ".1f"),
+    "wind_speed_100m":      ("Viento 100m (hub)",  "m/s",  AES_CYAN,   ".1f"),
+    "wind_gusts_10m":       ("Ráfagas 10m",        "m/s",  AES_ROJO,   ".1f"),
+    "wind_shear_alpha":     ("Wind shear α",       "α",    "#6366F1",  ".2f"),
+    "p_eolica_estimada_mw": ("Modelo eólico",      "MW",   AES_VIOLETA,".1f"),
+}
+_METEO_DEFAULT = {
+    "Solar":  ["ghi_wm2", "cloud_cover_pct", "p_fv_estimada_mw"],
+    "Eólica": ["wind_speed_100m", "wind_gusts_10m", "p_eolica_estimada_mw"],
+}
+
+
 def _hist_meteo(desde: str, hasta: str):
-    p = st.selectbox("Parque", PARQUES_TODOS, format_func=lambda x: NOMBRE_DISPLAY[x],
-                     key="hist_meteo_parque")
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        p = st.selectbox("Parque", PARQUES_TODOS, format_func=lambda x: NOMBRE_DISPLAY[x],
+                         key="hist_meteo_parque")
     df = pd.DataFrame(query_meteo_rango(p, desde, hasta))
     if df.empty:
         st.info("Sin meteo histórica en el rango/parque elegido.")
         return
     df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
     df = df.sort_values("fecha_hora")
+
+    # Abanico de parámetros: solo los que existen y tienen algún dato en el rango.
+    disponibles = [c for c in _METEO_PARAMS
+                   if c in df.columns and df[c].notna().any()]
+    default = [c for c in _METEO_DEFAULT.get(TECNOLOGIA[p], []) if c in disponibles]
+    with c2:
+        sel = st.multiselect(
+            "Parámetros a graficar", disponibles,
+            default=default or disponibles[:3],
+            format_func=lambda c: f"{_METEO_PARAMS[c][0]} ({_METEO_PARAMS[c][1]})",
+            key="hist_meteo_params",
+        )
+    if not sel:
+        st.info("Elige al menos un parámetro para graficar.")
+        return
+
+    # Hasta 2 unidades distintas: la 1ª va al eje izquierdo, la 2ª al derecho.
+    # Si se eligen parámetros de una 3ª unidad, se avisa cuáles quedaron fuera.
+    unidades = []
+    for c in sel:
+        u = _METEO_PARAMS[c][1]
+        if u not in unidades:
+            unidades.append(u)
+    u_izq = unidades[0]
+    u_der = unidades[1] if len(unidades) > 1 else None
+    descartados = []
+
     fig = go.Figure()
-    if TECNOLOGIA[p] == "Solar":
-        fig.add_trace(go.Scatter(x=df["fecha_hora"], y=df.get("ghi_wm2"), name="GHI",
-                                 line=dict(color=AES_AMBAR, width=1.6), fill="tozeroy",
-                                 fillcolor="rgba(245,158,11,0.08)",
-                                 hovertemplate="%{y:.0f} W/m²<extra>GHI</extra>"))
-        if "p_fv_estimada_mw" in df:
-            fig.add_trace(go.Scatter(x=df["fecha_hora"], y=df["p_fv_estimada_mw"],
-                                     name="Modelo FV", yaxis="y2",
-                                     line=dict(color=AES_VIOLETA, width=1.4),
-                                     hovertemplate="%{y:.1f} MW<extra>Modelo FV</extra>"))
-        fig.update_layout(yaxis2=dict(title="MW", overlaying="y", side="right", showgrid=False))
-        _layout(fig, ytitle="W/m²")
-    else:
-        fig.add_trace(go.Scatter(x=df["fecha_hora"], y=df.get("wind_speed_100m"),
-                                 name="Viento 100m", line=dict(color=AES_CYAN, width=1.8),
-                                 hovertemplate="%{y:.1f} m/s<extra>Viento hub</extra>"))
-        if "wind_gusts_10m" in df:
-            fig.add_trace(go.Scatter(x=df["fecha_hora"], y=df["wind_gusts_10m"],
-                                     name="Ráfagas 10m", line=dict(color=AES_ROJO, width=1, dash="dot"),
-                                     hovertemplate="%{y:.1f} m/s<extra>Ráfagas</extra>"))
-        if "p_eolica_estimada_mw" in df:
-            fig.add_trace(go.Scatter(x=df["fecha_hora"], y=df["p_eolica_estimada_mw"],
-                                     name="Modelo eólico", yaxis="y2",
-                                     line=dict(color=AES_VIOLETA, width=1.4),
-                                     hovertemplate="%{y:.1f} MW<extra>Modelo eólico</extra>"))
-        fig.update_layout(yaxis2=dict(title="MW", overlaying="y", side="right", showgrid=False))
-        _layout(fig, ytitle="m/s")
+    for c in sel:
+        etq, unidad, color, fmt = _METEO_PARAMS[c]
+        if unidad == u_izq:
+            yaxis = "y"
+        elif unidad == u_der:
+            yaxis = "y2"
+        else:
+            descartados.append(f"{etq} ({unidad})")
+            continue
+        fig.add_trace(go.Scatter(
+            x=df["fecha_hora"], y=df[c], name=etq, yaxis=yaxis,
+            line=dict(color=color, width=1.6),
+            hovertemplate="%{y:" + fmt + "}<extra>" + etq + "</extra>",
+        ))
+    if u_der:
+        fig.update_layout(yaxis2=dict(title=u_der, overlaying="y", side="right", showgrid=False))
+    _layout(fig, ytitle=u_izq)
     st.plotly_chart(fig, use_container_width=True, key="hist_meteo_fig")
+    if descartados:
+        st.caption(
+            "Solo se grafican dos unidades a la vez (ejes izquierdo y derecho). "
+            f"Quedaron fuera por usar una tercera unidad: {', '.join(descartados)}."
+        )
 
 
 def _hist_cmg(desde: str, hasta: str):

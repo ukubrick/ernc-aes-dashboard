@@ -135,7 +135,28 @@ GLOSARIO: dict[str, list[tuple[str, str]]] = {
 }
 
 
+_GLOSARIO_PASSWORD = "lens"
+
+
 def render_tab_glosario() -> None:
+    # Acceso restringido temporalmente: el glosario queda oculto tras clave.
+    if not st.session_state.get("glosario_ok", False):
+        st.markdown(
+            f"<div style='font-size:18px;font-weight:800;color:{AES_TEXTO};margin:0 0 4px'>"
+            f"Glosario del proyecto</div>",
+            unsafe_allow_html=True,
+        )
+        st.caption("Sección protegida. Ingresa la clave para acceder.")
+        clave = st.text_input("Clave", type="password", key="glosario_clave",
+                              label_visibility="collapsed", placeholder="Clave de acceso")
+        if clave:
+            if clave == _GLOSARIO_PASSWORD:
+                st.session_state["glosario_ok"] = True
+                st.rerun()
+            else:
+                st.error("Clave incorrecta.")
+        return
+
     st.markdown(
         f"<div style='font-size:18px;font-weight:800;color:{AES_TEXTO};margin:0 0 4px'>"
         f"Glosario del proyecto</div>",

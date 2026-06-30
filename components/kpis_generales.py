@@ -88,7 +88,7 @@ def render_kpis(
     cmg_prom = round(sum(cmg_vals) / len(cmg_vals), 1) if cmg_vals else None
     cmg_horas = [cmg_hora_idx[n] for n in nodos_validos if cmg_hora_idx.get(n)]
     cmg_hora = max(cmg_horas)[11:16] if cmg_horas else "—"
-    ingreso_total = round(gen_total * (cmg_prom or 0) / 1000, 1) if cmg_prom else None
+    ingreso_total = round(gen_total * (cmg_prom or 0) / 1000, 1) if cmg_prom is not None else None
 
     hora_gen = ultima_hora[11:16] if ultima_hora else "—"
 
@@ -123,8 +123,8 @@ def render_kpis(
 
     cards.append(_card(
         AES_VIOLETA, "CMG Promedio",
-        f"{cmg_prom:.1f} USD/MWh" if cmg_prom else "—",
-        f"~{ingreso_total:.0f} kUSD/h" if ingreso_total else None, AES_VIOLETA,
+        f"{cmg_prom:.1f} USD/MWh" if cmg_prom is not None else "—",
+        f"~{ingreso_total:.0f} kUSD/h" if ingreso_total is not None else None, AES_VIOLETA,
         f"Prom. {len(cmg_vals)} nodos SEN (excl. P.Montt) · ingreso=gen×CMG · CEN S3 · {cmg_hora} hrs",
     ))
 

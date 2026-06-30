@@ -1094,8 +1094,9 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None,
         line=dict(color=AES_CYAN, width=0.5), fillcolor="rgba(77,200,220,0.55)",
         hovertemplate="%{y:.1f} MW<extra>Eólica</extra>",
     ))
-    # BESS: potencia neta del portfolio por hora (>0 descarga = inyecta, <0 carga =
-    # consume). Plotly apila lo positivo sobre la generación y lo negativo bajo cero.
+    # BESS: solo la potencia de DESCARGA (inyección > 0) cuenta como potencia
+    # entregada al portfolio. La carga (neto < 0) consume energía y no se grafica
+    # aquí — se descarta clampeando el neto a ≥ 0.
     if bess_rows:
         df_bess = pd.DataFrame(bess_rows)
         if not df_bess.empty and "potencia_neta_mw" in df_bess.columns:
@@ -1104,12 +1105,14 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None,
             bess_t = (df_bess.groupby("fecha_hora")["potencia_neta_mw"].sum()
                       .reset_index().rename(columns={"potencia_neta_mw": "BESS"}))
             if not bess_t.empty:
+                # Solo descarga: el aporte negativo (carga) se lleva a 0.
+                bess_t["BESS"] = bess_t["BESS"].clip(lower=0.0)
                 piv = piv.merge(bess_t, on="fecha_hora", how="left").sort_values("fecha_hora")
                 piv["BESS"] = piv["BESS"].fillna(0.0)
                 fig.add_trace(go.Scatter(
-                    x=piv["fecha_hora"], y=piv["BESS"], name="BESS (neto)", stackgroup="gen",
+                    x=piv["fecha_hora"], y=piv["BESS"], name="BESS (descarga)", stackgroup="gen",
                     line=dict(color=AES_VIOLETA, width=0.5), fillcolor="rgba(155,111,212,0.55)",
-                    hovertemplate="%{y:.1f} MW<extra>BESS neto (+ descarga / − carga)</extra>",
+                    hovertemplate="%{y:.1f} MW<extra>BESS descarga (potencia entregada)</extra>",
                 ))
     if "Programada" in piv.columns:
         fig.add_trace(go.Scatter(
@@ -1134,7 +1137,7 @@ def _render_tab_resumen(gen_por_parque, gen_rows, prog_rows, parque_activo=None,
     fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
     st.plotly_chart(fig, use_container_width=True, key="mapa_grafico_tendencia")
     st.caption("Área apilada = aporte de Solar FV, Eólica y BESS a la generación total "
-               "(BESS neto: positivo = descarga inyectando, negativo = carga bajo cero); "
+               "(BESS: solo la descarga, como potencia entregada; la carga no se grafica); "
                "línea ámbar = programa PCP (diario D-1) y línea verde punteada = "
                "programa PID (reprograma intra-día) del CEN para el portfolio.")
 
@@ -1288,6 +1291,31 @@ def _render_tab_cmg(cmg_rows):
         "(<0.5, vertimiento), CMG alto (>200, oportunidad de ingreso) y desacople "
         "(spread >50 entre nodos). Fuente: JSON S3 del Coordinador, actualiza cada ~15 min."
     )
+
+    # ── Ranking de CMG actual por nodo (barras horizontales) ──
+    vals = [(n.replace("_", " ").strip(), cmg_actual[n].get("cmg_usd_mwh"))
+            for n in CMG_NODOS_TODOS
+            if cmg_actual.get(n) and cmg_actual[n].get("cmg_usd_mwh") is not None]
+    if vals:
+        st.markdown(
+            f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:18px 0 6px'>"
+            f"Ranking de CMG actual por nodo</div>",
+            unsafe_allow_html=True,
+        )
+        vals.sort(key=lambda x: x[1])
+        fig_rank = go.Figure(go.Bar(
+            x=[v[1] for v in vals], y=[v[0] for v in vals], orientation="h",
+            marker_color=[AES_ROJO if v[1] < 5 else (AES_VERDE if v[1] > 100 else AES_AZUL) for v in vals],
+            text=[f"{v[1]:.0f}" for v in vals], textposition="outside",
+            hovertemplate="%{y}: %{x:.1f} USD/MWh<extra></extra>",
+        ))
+        fig_rank.update_layout(
+            template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+            height=300, margin=dict(l=0, r=40, t=6, b=0),
+            xaxis_title="USD/MWh", showlegend=False,
+        )
+        fig_rank.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+        st.plotly_chart(fig_rank, use_container_width=True, key="cmg_ranking_barras")
 
     # ── CMG programado (futuro proyectado por el Coordinador) ──
     prog_rows = query_cmg_programado(72)

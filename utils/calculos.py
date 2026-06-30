@@ -7,6 +7,11 @@ from config import (
     TRACKER_GAIN, TRACKER_AVAIL, TRACKER_STOW_WIND_MS, TRACKER_POA_MAX,
 )
 
+# PCP mínimo (MW) para que el % de desvío sea representativo. Por debajo se
+# reporta solo el desvío en MW. Acota además el % a ±DESVIO_PCT_CAP.
+DESVIO_BASE_MIN_MW = 1.0
+DESVIO_PCT_CAP     = 200.0
+
 
 # ── Solar FV ──────────────────────────────────────────────────────────────────
 
@@ -165,12 +170,25 @@ def calcular_desvio(gen_real_mw: float, gen_prog_mw: float) -> dict:
     """
     Retorna dict con desvio_mw, desvio_pct, semaforo ('verde'|'amarillo'|'rojo').
     Verde: |%| ≤ 15 | Amarillo: 15 < |%| ≤ 25 | Rojo: |%| > 25.
+
+    El % se calcula sobre el PCP. Cuando el PCP es muy bajo (p.ej. solar al
+    amanecer programado ~0 MW) la división explota a cientos/miles de %, un valor
+    sin sentido operacional. Por eso: (1) si el PCP es menor a DESVIO_BASE_MIN_MW
+    no se reporta % (el desvío en MW sigue disponible); (2) el % se acota a
+    ±DESVIO_PCT_CAP para no mostrar cifras absurdas. El semáforo no se ve afectado
+    (cualquier desvío grande ya es rojo).
     """
     if gen_real_mw is None or gen_prog_mw is None or gen_prog_mw == 0:
         return {"desvio_mw": None, "desvio_pct": None, "semaforo": None}
 
-    desvio_mw  = round(gen_real_mw - gen_prog_mw, 4)
+    desvio_mw = round(gen_real_mw - gen_prog_mw, 4)
+
+    # PCP demasiado bajo → el % no es representativo; solo se reporta MW.
+    if abs(gen_prog_mw) < DESVIO_BASE_MIN_MW:
+        return {"desvio_mw": desvio_mw, "desvio_pct": None, "semaforo": None}
+
     desvio_pct = round(desvio_mw / gen_prog_mw * 100.0, 2)
+    desvio_pct = max(-DESVIO_PCT_CAP, min(DESVIO_PCT_CAP, desvio_pct))
 
     if abs(desvio_pct) <= 15:
         semaforo = "verde"

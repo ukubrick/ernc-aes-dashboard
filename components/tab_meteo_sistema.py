@@ -219,22 +219,10 @@ def _seccion_cmg_sistema(cmg_rows: list) -> None:
         spread = (norte - sur) if (norte is not None and sur is not None) else None
         st.metric("Spread Norte-Sur", f"{spread:+.1f} USD/MWh" if spread is not None else "—",)
 
-    vals = [(n.replace("_", " ").strip(), idx.get(n)) for n in CMG_NODOS_TODOS if idx.get(n) is not None]
-    if vals:
-        vals.sort(key=lambda x: x[1])
-        fig = go.Figure(go.Bar(
-            x=[v[1] for v in vals], y=[v[0] for v in vals], orientation="h",
-            marker_color=[AES_ROJO if v[1] < 5 else (AES_VERDE if v[1] > 100 else AES_AZUL) for v in vals],
-            text=[f"{v[1]:.0f}" for v in vals], textposition="outside",
-            hovertemplate="%{y}: %{x:.1f} USD/MWh<extra></extra>",
-        ))
-        fig.update_layout(
-            template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
-            height=300, margin=dict(l=0, r=40, t=6, b=0),
-            xaxis_title="USD/MWh", showlegend=False,
-        )
-        fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
-        st.plotly_chart(fig, use_container_width=True, key="meteo_cmg_ranking")
+    st.caption(
+        "El ranking de CMG por nodo (barras) y la demanda programada del SEN viven en la "
+        "subsección **CMG** de esta vista. Aquí solo se muestra el resumen Norte/Sur."
+    )
 
 
 def render_tab_meteo_sistema(cmg_rows: list | None = None) -> None:
@@ -271,11 +259,7 @@ def render_tab_meteo_sistema(cmg_rows: list | None = None) -> None:
     # 2) Alertas priorizadas (alta/media/baja)
     _seccion_alertas(df)
 
-    # 3) Contexto de mercado CMG
+    # 3) Contexto de mercado CMG (solo resumen Norte/Sur; el ranking de barras y la
+    #    demanda programada del SEN viven en la subsección CMG, no aquí).
     st.divider()
     _seccion_cmg_sistema(cmg_rows or [])
-
-    # 4) Demanda del SEN por zona (programa PID)
-    st.divider()
-    from components.demanda import render_demanda_zonas
-    render_demanda_zonas(horas=48, key="meteo")

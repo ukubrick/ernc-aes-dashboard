@@ -69,6 +69,14 @@ def _grafico_portfolio(df: pd.DataFrame, ml_total: pd.DataFrame | None = None) -
     df_solar.columns  = ["fecha_hora", "mw"]
     df_eolica.columns = ["fecha_hora", "mw"]
 
+    # Rango del eje de potencia anclado SOLO al modelo físico → no se reescala al
+    # superponer (o quitar) la serie ML, que confundía al comparar.
+    ymax_fisico = max(
+        df_solar["mw"].max() if not df_solar.empty else 0,
+        df_eolica["mw"].max() if not df_eolica.empty else 0,
+    )
+    ymax = (ymax_fisico or 1) * 1.1
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=df_eolica["fecha_hora"], y=df_eolica["mw"],
@@ -99,7 +107,7 @@ def _grafico_portfolio(df: pd.DataFrame, ml_total: pd.DataFrame | None = None) -
         hovermode="x unified",
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
-    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
+    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, range=[0, ymax])
     st.plotly_chart(fig, use_container_width=True, key="forecast_grafico_portfolio")
 
 
@@ -204,6 +212,10 @@ def _grafico_parque(df: pd.DataFrame, parque: str, con_ml: bool = False) -> None
     color   = AES_AZUL               if tec == "Solar"  else AES_CYAN
     fill_c  = "rgba(59,76,232,0.10)" if tec == "Solar"  else "rgba(77,200,220,0.12)"
 
+    # Eje de potencia anclado al modelo físico (y a la Pmax del parque) → estable
+    # al togglear la comparación ML, que antes reescalaba el eje Y.
+    ymax = max(float(df_p[y_col].max() or 0), PMAX[parque]) * 1.05
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=df_p["fecha_hora"], y=df_p[y_col],
@@ -233,12 +245,13 @@ def _grafico_parque(df: pd.DataFrame, parque: str, con_ml: bool = False) -> None
         template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS, transition=dict(duration=500, easing="cubic-in-out"),
         height=320, margin=dict(l=0, r=0, t=10, b=0),
         xaxis_title=None, yaxis_title="MW",
+        yaxis=dict(range=[0, ymax]),
         yaxis2=dict(overlaying="y", side="right", showgrid=False, title=y2_lbl),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)),
         hovermode="x unified",
     )
     fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
-    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
+    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE)
     st.plotly_chart(fig, use_container_width=True, key=f"forecast_grafico_parque_{parque}")
     return metrics
 
