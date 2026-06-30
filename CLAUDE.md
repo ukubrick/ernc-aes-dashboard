@@ -2139,5 +2139,58 @@ v2.8.2`. Cambios acotados, sin tablas ni endpoints nuevos.
 
 ---
 
-*Actualizado 2026-06-30 — Sesiones 1–31 (v2.8.2).*
+## SESIÓN 32 — ALTA DE PFV CRISTALES (PARQUE FV + BESS) (2026-06-30)
+
+Erick consultó si los nuevos parques FV de AES (Arenales, Cristales) ya estaban en la API
+CEN. Consulta en vivo a `generacion-real/v3`:
+
+- **PFV Cristales — SÍ existe** como central solar: `id_central=2419`, `llave_opreal="PFV
+  Cristales"`, **Pmax 300 MW**, propietario/coordinado **Cristales SpA**. La API la marca
+  **`PFV CRISTALES [EN_REVISION]`** con `gen_real_mw=0` → registrada pero en puesta en
+  servicio (aún no inyecta). **Sin llave PCP** publicada todavía.
+  - BESS asociado: **`SAE PFV Cristales`** (370 MW), llaves `(Inyección)`,
+    `(Retiro de central)`, `(Retiro de sistema)`.
+- **Arenales — NO tiene unidad FV aún**: solo aparece el `BESS Arenales` (315 MW) y la
+  llave PCP `BAT_ARENALES`. Se deja **pendiente** hasta que el CEN publique su generación FV.
+
+### Alta de Cristales en `config.py` (código `CRI`, BESS `CRI_B`)
+Se agregó `CRI` a TODOS los dicts por parque: `ID_CENTRAL` (2419), `NOMBRE_DISPLAY`,
+`LLAVES_OPREAL` ("PFV Cristales"), `LLAVES_GEN_PROG` (**`[]`** — sin PCP aún, no rompe el
+loop de adquisición), `ZONA_PARQUE` (Norte), `TECNOLOGIA` (Solar), `PMAX` (300),
+`PMAX_NETA` (None → FP usa 300), `COORDENADAS` (**PLACEHOLDER** -22.6/-69.1, pendiente
+confirmar), `CMG_NODO` (**CRUCERO_______220**, confirmado con Erick), `INFOTECNICA` (ficha
+con nota EN_REVISION). `BESS["CRI_B"]` (370 MW) + `BESS_HORAS` (None → 4 h asumidas).
+**Totales:** 12 parques (7 FV + 5 eólicos), 6 BESS. `PMAX_TOTAL` 1357 → **1657 MW**.
+
+### UI — conteos dinámicos
+`kpis_generales.py` ahora usa `len(PARQUES_*)`/`len(BESS)` en vez de "11/6/5" hardcodeado.
+Textos actualizados en `tab_bess.py` (mensaje sin datos) y `tab_glosario.py` (lista de parques).
+
+### Incorporación automática
+La adquisición es data-driven: `fetch_gen_real` itera `ID_CENTRAL` (tomará idCentral=2419)
+y `fetch_gen_bess` usa `BESS_LLAVE_MAP` (incluye CRI_B). Sin cambios de schema (tablas
+genéricas por `parque`). Cristales aparecerá en todo el dashboard automáticamente; mientras
+esté EN_REVISION mostrará gen=0.
+
+### Alerta de stow + heatmap de viento solar (mismo push)
+- **Alerta de stow por viento fuerte (solares):** nueva regla `_check_stow_solar` en
+  `utils/insights.py` — cuando el viento 10m o la ráfaga superan `TRACKER_STOW_WIND_MS`
+  (**16 m/s**, sin cambiar el modelo), los trackers se ponen horizontales (POA=GHI) y se
+  pierde la ganancia de tracking (~18%). Severidad "alerta", categoría meteo. (Erick mencionó
+  "5 m/s" pero pidió mantener el umbral original 16.)
+- **Heatmap de ráfagas 10m de los solares** en Meteo & Sistema (`tab_meteo_sistema.py`),
+  análogo al de nubosidad: escala con quiebre en el umbral de stow (verde < 16, ámbar→rojo
+  sobre él), `key="meteo_hm_rafagas_solar"`. Se agregó `wind_speed_10m` al query de forecast
+  y una **alerta anticipada de stow** (próx. 48 h) en `_seccion_alertas`.
+
+### Pendientes Sesión 32
+- [ ] **Coordenadas reales de PFV Cristales** (hoy placeholder en el mapa).
+- [ ] **Llave PCP** de Cristales cuando el CEN la publique → agregar a `LLAVES_GEN_PROG["CRI"]`.
+- [ ] Confirmar **barra/nodo CMG** real (asignado CRUCERO por defecto).
+- [ ] Confirmar **Pmax neta CEN** cuando exista carta → `PMAX_NETA["CRI"]`.
+- [ ] **Arenales:** dar de alta su FV cuando el CEN lo publique (hoy solo BESS 315 MW).
+
+---
+
+*Actualizado 2026-06-30 — Sesiones 1–32 (v2.9.0).*
 *Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER + scikit-learn + LightGBM + PuLP*

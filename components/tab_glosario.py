@@ -128,9 +128,9 @@ GLOSARIO: dict[str, list[tuple[str, str]]] = {
         ("Suncast", "Plataforma comercial chilena de pronóstico ERNC (competidor de referencia). Usa ML clásico; ofrece soiling y servicios para PMGD."),
     ],
     "Parques del portfolio": [
-        ("Solares FV (Norte)", "AS1 Andes Solar I, AS2A, AS2B, AS3, AS4 (Atacama) y BOL Bolero (Sierra Gorda). ~682 MW netos."),
+        ("Solares FV (Norte)", "AS1 Andes Solar I, AS2A, AS2B, AS3, AS4 (Atacama), BOL Bolero (Sierra Gorda) y CRI PFV Cristales (300 MW, EN_REVISION)."),
         ("Eólicos (Sur)", "CL Campo Lindo, OLM Los Olmos, STM San Matías, MSM Mesamávida (Biobío) y CUR Los Cururos (Coquimbo). ~426 MW netos."),
-        ("Pulsar", "Nombre del dashboard (enfoque en predicción). Cubre los 11 parques ERNC de AES Andes."),
+        ("Pulsar", "Nombre del dashboard (enfoque en predicción). Cubre los parques ERNC de AES Andes (FV norte + eólicos sur)."),
     ],
 }
 

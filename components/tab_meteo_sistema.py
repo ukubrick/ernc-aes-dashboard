@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from config import (
     NOMBRE_DISPLAY, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS,
-    CMG_NODOS_TODOS,
+    CMG_NODOS_TODOS, TRACKER_STOW_WIND_MS,
 )
 
 AES_AZUL    = "#3B4CE8"
@@ -44,7 +44,8 @@ def _cargar_forecast_meteo(horas: int = 48) -> pd.DataFrame:
             sb.table("meteo_ernc")
             .select(
                 "parque,fecha_hora,ghi_wm2,cloud_cover_pct,cloudcover_low_pct,"
-                "wind_speed_100m,wind_gusts_10m,p_fv_estimada_mw,p_eolica_estimada_mw,es_forecast"
+                "wind_speed_10m,wind_speed_100m,wind_gusts_10m,"
+                "p_fv_estimada_mw,p_eolica_estimada_mw,es_forecast"
             )
             .eq("es_forecast", True)
             .gte("fecha_hora", desde)
@@ -106,6 +107,20 @@ def _seccion_alertas(df: pd.DataFrame) -> None:
             if len(flojo) >= 6:
                 alertas.append(("baja", NOMBRE_DISPLAY[p], "Recurso eolico bajo",
                                 f"{len(flojo)} h con viento hub < 3 m/s (cut-in) — generacion limitada"))
+    # Solar: viento fuerte que gatilla stow de trackers (pierde ganancia de tracking)
+    for p in PARQUES_SOLAR:
+        sub = df[df["parque"] == p].copy()
+        if sub.empty:
+            continue
+        sub["peor_viento"] = sub[["wind_speed_10m", "wind_gusts_10m"]].max(axis=1)
+        stow = sub[sub["peor_viento"] >= TRACKER_STOW_WIND_MS]
+        if not stow.empty:
+            r = stow.iloc[0]
+            n_h = len(stow)
+            alertas.append(("alta", NOMBRE_DISPLAY[p], "Stow de trackers por viento fuerte",
+                            f"Viento/rafaga {r['peor_viento']:.1f} m/s a las {str(r['fecha_hora'])[5:16]} "
+                            f"(≥{TRACKER_STOW_WIND_MS:.0f} m/s) — {n_h} h con seguidores en stow, merma de generacion"))
+
     # Solar: nubosidad que reduce recurso en horas diurnas
     for p in PARQUES_SOLAR:
         sub = df[(df["parque"] == p) & (df["ghi_wm2"] > 150)]
@@ -248,6 +263,16 @@ def render_tab_meteo_sistema(cmg_rows: list | None = None) -> None:
                 "— recurso solar óptimo, sin caídas de GHI por nubes. El heatmap plano es "
                 "correcto, no un fallo de datos."
             )
+        # Viento 10m / ráfagas en los SOLARES — anticipa el stow de trackers.
+        # Escala con quiebre en el umbral de stow (verde < umbral, ámbar→rojo sobre él).
+        _stow_frac = min(max(TRACKER_STOW_WIND_MS / 25.0, 0.05), 0.95)
+        _esc_stow = [[0, "#F0FDF4"], [max(_stow_frac - 0.001, 0.01), "#FDE68A"],
+                     [_stow_frac, AES_AMBAR], [1, AES_ROJO]]
+        _heatmap(
+            df, PARQUES_SOLAR, "wind_gusts_10m",
+            f"Rafagas 10m pronosticadas (m/s) — anticipan stow de trackers (≥{TRACKER_STOW_WIND_MS:.0f} m/s)",
+            _esc_stow, "meteo_hm_rafagas_solar", ".1f", zmin=0, zmax=25,
+        )
         _heatmap(
             df, PARQUES_EOLICA, "wind_speed_100m",
             "Viento hub 100m pronosticado (m/s) — recurso eolico proximas 48h",

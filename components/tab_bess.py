@@ -63,7 +63,7 @@ def render_tab_bess(bess_rows: list | None = None) -> None:
         st.info(
             "Sin datos de BESS todavía. Crea la tabla con el bloque BESS de schema.sql "
             "en Supabase y ejecuta Adquisicion_ernc.py (o espera el cron). "
-            "Los 5 BESS de AES (Andes Solar IIA/IIB/III/IV y Bolero) "
+            "Los BESS de AES (Andes Solar IIA/IIB/III/IV, Bolero y Cristales) "
             "se poblarán automáticamente."
         )
         return

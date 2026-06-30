@@ -3,8 +3,13 @@ import streamlit as st
 
 from config import (
     PMAX_FP_TOTAL, PMAX_FP_TOTAL_SOLAR, PMAX_FP_TOTAL_EOLICA,
-    PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODOS_TODOS, BESS,
+    PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS, CMG_NODOS_TODOS, BESS,
 )
+
+_N_PARQUES = len(PARQUES_TODOS)
+_N_SOLAR   = len(PARQUES_SOLAR)
+_N_EOLICA  = len(PARQUES_EOLICA)
+_N_BESS    = len(BESS)
 from utils.calculos import calcular_factor_planta, calcular_desvio
 
 # Paleta AES
@@ -98,19 +103,19 @@ def render_kpis(
     cards.append(_card(
         AES_AZUL, "Generacion Total", f"{gen_total:,.1f} MW",
         f"↑ FP {fp_total:.1f}%" if fp_total else None, AES_VERDE,
-        f"Suma 11 parques · Pmax neta {PMAX_FP_TOTAL:,.0f} MW · CEN gen-real · {hora_gen} hrs",
+        f"Suma {_N_PARQUES} parques · Pmax neta {PMAX_FP_TOTAL:,.0f} MW · CEN gen-real · {hora_gen} hrs",
     ))
 
     cards.append(_card(
         AES_AZUL, "Solar FV", f"{gen_solar:,.1f} MW",
         f"↑ FP {fp_solar:.1f}%" if fp_solar else None, AES_VERDE,
-        f"6 parques FV norte · Pmax neta {PMAX_FP_TOTAL_SOLAR:,.0f} MW · FP=gen/Pmax neta · {hora_gen} hrs",
+        f"{_N_SOLAR} parques FV norte · Pmax neta {PMAX_FP_TOTAL_SOLAR:,.0f} MW · FP=gen/Pmax neta · {hora_gen} hrs",
     ))
 
     cards.append(_card(
         AES_CYAN, "Eolica", f"{gen_eolica:,.1f} MW",
         f"↑ FP {fp_eolica:.1f}%" if fp_eolica else None, AES_VERDE,
-        f"5 parques sur · Pmax neta {PMAX_FP_TOTAL_EOLICA:,.0f} MW · FP=gen/Pmax neta · {hora_gen} hrs",
+        f"{_N_EOLICA} parques sur · Pmax neta {PMAX_FP_TOTAL_EOLICA:,.0f} MW · FP=gen/Pmax neta · {hora_gen} hrs",
     ))
 
     dev_val   = f"{desvio_pct:+.1f}%" if desvio_pct is not None else "—"
@@ -134,10 +139,10 @@ def render_kpis(
         AES_CYAN, "BESS — Almacenamiento",
         f"{bess_neta:+.0f} MW" if bess_neta is not None else "—",
         f"{bess_estado}" if bess_estado else None, bess_col,
-        (f"5 BESS AES · uso {bess_util:.0f}% de Pmax descarga · "
+        (f"{_N_BESS} BESS AES · uso {bess_util:.0f}% de Pmax descarga · "
          f"neta=inyección−retiro (>0 descarga) · {bess_hora} hrs")
         if bess_neta is not None else
-        "5 BESS AES · sin telemetría reciente · neta=inyección−retiro",
+        f"{_N_BESS} BESS AES · sin telemetría reciente · neta=inyección−retiro",
     ))
 
     lim_color = AES_ROJO if n_limitaciones_activas > 0 else AES_VERDE

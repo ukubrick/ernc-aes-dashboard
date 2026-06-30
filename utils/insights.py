@@ -11,6 +11,7 @@ from typing import Literal
 from config import (
     NOMBRE_DISPLAY, TECNOLOGIA, PMAX, PMAX_FP,
     PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODO,
+    TRACKER_STOW_WIND_MS, TRACKER_GAIN,
 )
 from utils.calculos import calcular_factor_planta, calcular_desvio
 
@@ -157,6 +158,37 @@ def _check_eficiencia_solar(parque: str, gen_por_parque: dict, insights: list[In
             unidad="%",
             categoria="operacional",
         ))
+
+
+def _check_stow_solar(parque: str, insights: list[Insight]) -> None:
+    """Viento fuerte que pone los trackers en stow horizontal → perjudica la generación FV.
+
+    Cuando el viento medio 10m o la ráfaga superan TRACKER_STOW_WIND_MS, los seguidores
+    se aplanan (POA = GHI) y se pierde la ganancia de tracking (~+18%).
+    """
+    meteo = _get_meteo_actual(parque)
+    if not meteo:
+        return
+    viento = meteo.get("wind_speed_10m") or 0
+    rafaga = meteo.get("wind_gusts_10m") or 0
+    peor = max(viento, rafaga)
+    if peor < TRACKER_STOW_WIND_MS:
+        return
+    perdida_pct = (1 - 1 / TRACKER_GAIN) * 100  # ganancia de tracking que se pierde en stow
+    gatillo = "ráfaga" if rafaga >= viento else "viento"
+    insights.append(Insight(
+        severidad="alerta",
+        parque=parque,
+        titulo="Stow de trackers por viento fuerte",
+        detalle=(
+            f"Viento 10m {viento:.1f} m/s, ráfaga {rafaga:.1f} m/s ({gatillo} ≥ "
+            f"{TRACKER_STOW_WIND_MS:.0f} m/s). Los seguidores se ponen horizontales (stow) "
+            f"→ se pierde la ganancia de tracking (~{perdida_pct:.0f}% de POA) y baja la generación."
+        ),
+        valor=peor,
+        unidad="m/s",
+        categoria="meteo",
+    ))
 
 
 def _check_camanchaca(parque: str, insights: list[Insight]) -> None:
@@ -363,6 +395,7 @@ def evaluar_insights(
         _check_desvio(p, gen_por_parque, prog_por_parque, insights)
         _check_eficiencia_solar(p, gen_por_parque, insights)
         _check_camanchaca(p, insights)
+        _check_stow_solar(p, insights)
         _check_factor_planta_alto(p, gen_por_parque, insights)
 
     # Reglas por parque eólico

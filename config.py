@@ -9,7 +9,9 @@ from zoneinfo import ZoneInfo
 #         eje Y forecast estable, multiselect Históricos meteo, glosario con clave.
 # 2.8.2 — Sesión 31: ráfaga+stow en tooltip del mapa, hora del dato en métricas
 #         Solar/Eólica y tabla resumen (aclara rezago CEN ~4-5 h vs meteo actual).
-APP_VERSION = "v2.8.2"
+# 2.9.0 — Sesión 32: alta de PFV Cristales (300 MW, id_central 2419) + BESS Cristales
+#         (370 MW). Central EN_REVISION en la API (gen=0 hasta PES). 12 parques / 6 BESS.
+APP_VERSION = "v2.9.0"
 
 # ── Timezone ───────────────────────────────────────────────────────────────────
 TZ_CHILE = ZoneInfo("America/Santiago")
@@ -38,6 +40,7 @@ ID_CENTRAL = {
     "CUR":  318,
     "STM":  2091,
     "MSM":  1758,
+    "CRI":  2419,   # PFV Cristales — alta Sesión 32 (EN_REVISION en API, gen=0 hasta PES)
 }
 
 # ── Nombres display ────────────────────────────────────────────────────────────
@@ -53,6 +56,7 @@ NOMBRE_DISPLAY = {
     "CUR":  "PE Los Cururos",
     "STM":  "PE San Matías",
     "MSM":  "PE Mesamavida",
+    "CRI":  "PFV Cristales",
 }
 
 # ── Llaves generación real CEN ────────────────────────────────────────────────
@@ -68,6 +72,7 @@ LLAVES_OPREAL = {
     "CUR":  "PE LOS CURUROS",
     "STM":  "PE SAN MATIAS",
     "MSM":  "PE MESAMÁVIDA",
+    "CRI":  "PFV Cristales",   # llave_opreal exacta del feed gen-real/v3
 }
 
 # ── Llaves generación programada PCP ──────────────────────────────────────────
@@ -83,6 +88,7 @@ LLAVES_GEN_PROG = {
     "CUR":  ["LOS_CURUROS_EO"],
     "STM":  ["SAN_MATIAS_EO"],
     "MSM":  ["MESAMAVIDA_EO"],
+    "CRI":  [],   # PFV Cristales aún sin llave PCP publicada (EN_REVISION) — se completará al PES
 }
 
 # ── Demanda programada PID por zona del SEN ───────────────────────────────────
@@ -107,6 +113,7 @@ ZONA_PARQUE = {
     "AS1":  "Norte", "AS2A": "Norte", "AS2B": "Norte",
     "AS3":  "Norte", "AS4":  "Norte", "BOL":  "Norte",
     "CUR":  "Norte",                                      # Coquimbo → zona Norte CEN
+    "CRI":  "Norte",                                      # PFV Cristales (norte)
     "CL":   "Centro Sur", "OLM": "Centro Sur",
     "STM":  "Centro Sur", "MSM": "Centro Sur",
 }
@@ -115,6 +122,7 @@ ZONA_PARQUE = {
 TECNOLOGIA = {
     "AS1":  "Solar", "AS2A": "Solar", "AS2B": "Solar",
     "AS3":  "Solar", "AS4":  "Solar", "BOL":  "Solar",
+    "CRI":  "Solar",
     "CL":   "Eólica", "OLM": "Eólica", "CUR": "Eólica",
     "STM":  "Eólica", "MSM": "Eólica",
 }
@@ -136,6 +144,7 @@ PMAX = {
     "CUR":  115.08,
     "STM":  87.5,
     "MSM":  70.56,
+    "CRI":  300.0,   # Pmax declarada en gen-real/v3 (PFV Cristales)
 }
 
 PMAX_TOTAL_SOLAR  = sum(PMAX[k] for k in PARQUES_SOLAR)
@@ -160,6 +169,8 @@ PMAX_NETA = {
     "CUR":  107.7,
     "STM":  79.43,
     "MSM":  None,        # sin Pmax neta CEN → se usa potencia instalada 67.2 MW
+    # Solar nuevo — sin carta CEN aún (EN_REVISION) → se usa PMAX (300)
+    "CRI":  None,
 }
 
 # Pmax recomendada para FACTOR DE PLANTA: neta CEN si existe, si no la configurada.
@@ -187,6 +198,8 @@ COORDENADAS = {
     "CUR":  {"lat": -31.012533, "lon": -71.637465},  # Los Cururos Sur, Coquimbo
     "STM":  {"lat": -37.434120, "lon": -72.552807},  # Los Angeles, Bio Bio
     "MSM":  {"lat": -37.489984, "lon": -72.459097},  # Los Angeles, Bio Bio
+    # PLACEHOLDER — coordenada aproximada zona norte; PENDIENTE confirmar ubicación real de PFV Cristales
+    "CRI":  {"lat": -22.600000, "lon": -69.100000},
 }
 
 # ── Colores por tecnología ─────────────────────────────────────────────────────
@@ -208,6 +221,7 @@ CMG_NODO = {
     "AS3":  "CRUCERO_______220",
     "AS4":  "CRUCERO_______220",
     "BOL":  "CRUCERO_______220",
+    "CRI":  "CRUCERO_______220",   # asignado a CRUCERO (norte) — confirmar barra real al PES
     # Eólicos del sur — CHARRUA probable, pendiente confirmar con AES Andes
     "CL":   "CHARRUA_______220",
     "OLM":  "CHARRUA_______220",
@@ -297,6 +311,12 @@ BESS = {
         "iny": ["SAE PFV Bolero (Inyección)"],
         "ret": ["SAE PFV Bolero (Retiro de central)",
                 "SAE PFV Bolero (Retiro del sistema)"],
+    },
+    "CRI_B": {
+        "nombre": "BESS Cristales", "parque": "CRI", "pmax_mw": 370.0,
+        "iny": ["SAE PFV Cristales (Inyección)"],
+        "ret": ["SAE PFV Cristales (Retiro de central)",
+                "SAE PFV Cristales (Retiro de sistema)"],
     },
 }
 
@@ -401,6 +421,7 @@ BESS_HORAS = {
     "AS3_B":  3.0,      # 171.3 MW × 3 h ≈ 514 MWh (Fluence + CATL)
     "AS4_B":  5.0,
     "BOL_B":  None,
+    "CRI_B":  None,   # energía declarada no disponible aún → se asume 4 h
 }
 
 # ── INFOTÉCNICA: ficha consolidada por parque (para la pestaña de referencia) ─────
@@ -450,6 +471,16 @@ INFOTECNICA = {
         "sscc": "No documentado", "equipos": "Sólo id/llaves/coordenadas/Pmax de config.",
         "nota": "Falta carta CEN de Pmax/mínimo técnico y P&D. Se mantiene config 161.3 MW.",
         "fuente": "CLAUDE.md",
+    },
+    "CRI": {
+        "pmax_bruta_mw": 300.0, "pmax_neta_mw": None, "pmin_neta_mw": None,
+        "sscc": "No documentado",
+        "equipos": "PFV Cristales + SAE/BESS asociado (SAE PFV Cristales, 370 MW). "
+        "Propietario/coordinado: Cristales SpA.",
+        "nota": "Alta Sesión 32. Central EN_REVISION en la API CEN (gen-real=0 hasta la "
+        "puesta en servicio). Sin carta CEN de Pmax neta → FP usa Pmax bruta 300 MW. "
+        "Coordenadas y nodo CMG (CRUCERO) PENDIENTES de confirmar.",
+        "fuente": "gen-real/v3 (id_central 2419), 2026-06-30",
     },
     # ── Eólicos ─────────────────────────────────────────────────────────────────
     "CL": {
