@@ -5,6 +5,7 @@ Extraída de app_ernc.py (Sesión 34).
 import streamlit as st
 
 from config import NOMBRE_DISPLAY, CMG_NODOS_TODOS
+from utils.db import query_cmg_programado
 
 AES_AZUL    = "#3B4CE8"
 AES_AZUL_OSC = "#2530B0"
