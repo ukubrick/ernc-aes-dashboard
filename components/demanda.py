@@ -78,6 +78,44 @@ def render_demanda_zonas(horas: int = 48, key: str = "demanda") -> None:
     )
 
 
+def render_demanda_pronostico(key: str = "demanda") -> None:
+    """Pronóstico oficial de demanda del SEN a 7 días (total sistema)."""
+    from utils.db import query_demanda_pronostico
+
+    rows = query_demanda_pronostico(dias=7)
+    if not rows:
+        return   # tabla aún no creada o sin datos — sección opcional, no avisa
+
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:18px 0 6px'>"
+        f"Pronostico de demanda del SEN — proximos 7 dias</div>",
+        unsafe_allow_html=True,
+    )
+    df = pd.DataFrame(rows)
+    df["fecha_hora"] = pd.to_datetime(df["fecha_hora"])
+    df = df.sort_values("fecha_hora")
+
+    fig = go.Figure(go.Scatter(
+        x=df["fecha_hora"], y=df["demanda_mw"], name="Demanda pronosticada",
+        line=dict(color="#9B6FD4", width=2),
+        fill="tozeroy", fillcolor="rgba(155,111,212,0.08)",
+        hovertemplate="%{y:,.0f} MW<extra>SEN</extra>",
+    ))
+    fig.update_layout(
+        template="plotly_white", paper_bgcolor=AES_BLANCO, plot_bgcolor=AES_GRIS,
+        xaxis_title=None, yaxis_title="MW", height=280,
+        margin=dict(l=0, r=0, t=10, b=0), showlegend=False,
+    )
+    fig.update_xaxes(showgrid=True, gridcolor=AES_BORDE)
+    fig.update_yaxes(showgrid=True, gridcolor=AES_BORDE, rangemode="tozero")
+    st.plotly_chart(fig, use_container_width=True, key=f"{key}_demanda_pron7d")
+    st.caption(
+        "Pronostico oficial del CEN a 7 dias (suma de todas las barras del SEN). "
+        "Demanda alta con poca ERNC esperada anticipa CMG altos — util para planificar "
+        "descargas BESS. Fuente: /pronosticos-demanda-corto-plazo/v4 (API CEN SIP)."
+    )
+
+
 def _hex_a_rgba(hex_color: str, alpha: float) -> str:
     h = hex_color.lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)

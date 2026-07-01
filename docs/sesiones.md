@@ -1717,3 +1717,66 @@ Validado: a 12 m/s, AS4 entra en stow (POA=GHI) mientras Bolero y Cristales sigu
 *Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER + scikit-learn + LightGBM + PuLP*
 
 ---
+
+## SESIÓN 34 — ENDPOINTS CEN NUEVOS, SOILING PREDICTIVO, SKILL PCP/PID, REFACTOR (2026-07-01)
+
+Sesión grande de "dejar listo todo lo propuesto" en la auditoría del 2026-07-01.
+`APP_VERSION = v2.10.0`.
+
+### 1. Paginador CEN unificado (`utils/cen_api.py`)
+Nuevo generador `_paginar_sip(path, start, end, limit, tag)` que centraliza el patrón
+"paginar todo el sistema (data+totalPages) con presupuesto de tiempo". Refactorizados
+PCP, PID, demanda PID y CMG programado (−~150 líneas duplicadas). Validado contra la
+API real: CMG programado devuelve los mismos 1.152 registros (8 nodos × 144 h).
+
+### 2. Tres endpoints CEN nuevos (validados en vivo)
+- **Pronóstico demanda 7d** `/pronosticos-demanda-corto-plazo/v4`: energía horaria POR
+  BARRA → se agrega a total SEN (192 h, ~9.6 GW, plausible). Tabla
+  `demanda_pronostico_ernc`; gráfico en vista CMG (`render_demanda_pronostico`).
+- **Instrucciones operacionales** `/instrucciones-operacionales-cmg/v4`: instrucciones
+  del CEN a los centros de control. **CRÍTICO:** usa nombres cortos PROPIOS
+  (PFV-ANDES2A, PE-CAMPOLINDO, SAE-CRCA-*) → mapeo EXACTO en
+  `config.INSTR_CENTRAL_A_PARQUE` (match parcial da falsos positivos: existen
+  PFV-MESETADELOSANDES / SOLDELOSANDES / DELOSANDES / CAMPOSDELSOL de otras empresas).
+  Incluye 3 BESS. Tabla `instrucciones_ernc`; tabla UI en Limitaciones. Es la fuente
+  para distinguir CURTAILMENT ORDENADO de soiling/falla (gap detectado en Sesión 33).
+- **SSCC programados** `/servicios-complementarios-programados-pcp/v4`: provisión MW
+  por servicio (CPF/CSF/CTF ±). MUY voluminoso (~12k páginas a limit=50 → limit=4000 y
+  ventana 1 día, ~77 páginas) → se adquiere **1×/día (13 UTC)** desde el workflow PID.
+  Filtro por `id_central`. Tabla `sscc_programado_ernc`; resumen en vista BESS
+  (segundo flujo de ingreso además del arbitraje).
+
+### 3. Soiling predictivo: precipitación + polvo (Open-Meteo)
+- `precipitation` agregada a `OPENMETEO_VARS_SOLAR` (columna `precipitation_mm`).
+- **Air Quality API** (CAMS, gratis, sin key): `dust` y `pm10` horarios por parque solar
+  (`_aq_por_hora` en `openmeteo_api.py`, columnas `dust_ugm3`/`pm10_ugm3`). Validado:
+  AS1 dust=40 µg/m³. Falla silenciosa si la API no responde (fuente secundaria).
+- `upsert_meteo` tolerante: si las columnas nuevas no existen aún en Supabase, las quita
+  y reintenta (el cron no se cae antes de ejecutar el ALTER TABLE).
+- Con historia acumulada, el soiling ratio (S28) podrá correlacionarse con polvo y
+  atribuir recuperaciones a lluvia.
+
+### 4. Skill vs PCP/PID (`tab_estadisticas._seccion_skill`)
+MAE y sesgo hora a hora del programa oficial vs gen real, por parque y por fuente
+(PCP D-1 / PID intra-día) + MAE como % de Pmax. Base del informe de cumplimiento de
+pronóstico al CEN (pendiente desde S28).
+
+### 5. Refactor app_ernc.py: 1.490 → ~735 líneas
+- CSS global (~265 líneas) → `components/estilos.py::aplicar_css()`.
+- Vista Mapa & Resumen → `components/tab_resumen.py` (con copia local de
+  `ultima_prog_por_parque` para evitar import circular).
+- Vista CMG + limitaciones + instrucciones → `components/tab_cmg.py`.
+- app_ernc importa `render_* as _render_*` → cero cambios en call sites.
+- **Verificado con `streamlit.testing.v1.AppTest`** (login + 4 vistas contra datos
+  reales, sin excepciones). Patrón útil: AppTest permite testear la app completa sin
+  browser; `at.session_state["vista"] = X; at.run()`.
+
+### Pendientes Sesión 34
+- [ ] **Ejecutar el bloque "SESIÓN 34" de schema.sql en Supabase SQL Editor** (3 tablas
+      nuevas + 3 columnas meteo). Sin él: queries degradan a [], upsert meteo reintenta
+      sin columnas nuevas, y los upserts de tablas nuevas fallarán en el cron PID.
+- [ ] tab_ml.py (1.410 líneas) sigue sin partir en package `components/ml/` — diferido
+      por riesgo/beneficio (funciona bien; partirlo es cosmético).
+- [ ] Cuando haya historia de polvo/lluvia: correlacionar soiling ratio con `dust_ugm3`
+      y marcar recuperaciones por `precipitation_mm` en la sección Soiling FV.
+- [ ] (Opcional) Usar demanda pronosticada 7d como feature del modelo ML de CMG.

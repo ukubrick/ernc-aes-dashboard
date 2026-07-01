@@ -82,15 +82,31 @@ def upsert_generacion_bess(registros: list[dict]) -> int:
 
 # ── Meteorología ───────────────────────────────────────────────────────────────
 
+# Columnas agregadas en Sesión 34 (precipitación + polvo). Si el ALTER TABLE aún no
+# se ejecutó en Supabase, el upsert las quita y reintenta para no romper el cron.
+_METEO_COLS_NUEVAS = ("precipitation_mm", "dust_ugm3", "pm10_ugm3")
+
+
 def upsert_meteo(registros: list[dict]) -> int:
     if not registros:
         return 0
     sb = get_client()
     for i in range(0, len(registros), 500):
         lote = registros[i:i + 500]
-        sb.table("meteo_ernc").upsert(
-            lote, on_conflict="parque,fecha_hora,fuente"
-        ).execute()
+        try:
+            sb.table("meteo_ernc").upsert(
+                lote, on_conflict="parque,fecha_hora,fuente"
+            ).execute()
+        except Exception as e:
+            if not any(c in str(e) for c in _METEO_COLS_NUEVAS):
+                raise
+            print(f"[METEO] Columnas nuevas ausentes en DB ({e}) — reintentando sin ellas. "
+                  "Ejecutar el bloque Sesión 34 de schema.sql en Supabase.")
+            lote_sin = [{k: v for k, v in r.items() if k not in _METEO_COLS_NUEVAS}
+                        for r in lote]
+            sb.table("meteo_ernc").upsert(
+                lote_sin, on_conflict="parque,fecha_hora,fuente"
+            ).execute()
     return len(registros)
 
 
@@ -446,6 +462,97 @@ def query_cmg_programado(horas: int = 48) -> list[dict]:
         sb = get_client()
         res = (sb.table("cmg_programado_ernc")
                  .select("nodo,cmg_usd_mwh,fecha_hora,fecha_programa")
+                 .gte("fecha_hora", desde)
+                 .order("fecha_hora", desc=False)
+                 .limit(5000)
+                 .execute())
+        return res.data or []
+    except Exception:
+        return []
+
+
+# ── Sesión 34: demanda pronóstico 7d, instrucciones operacionales, SSCC programados ──
+
+def upsert_demanda_pronostico(registros: list[dict]) -> int:
+    if not registros:
+        return 0
+    sb = get_client()
+    for i in range(0, len(registros), 500):
+        sb.table("demanda_pronostico_ernc").upsert(
+            registros[i:i + 500], on_conflict="fecha_hora"
+        ).execute()
+    return len(registros)
+
+
+def upsert_instrucciones(registros: list[dict]) -> int:
+    if not registros:
+        return 0
+    # Deduplicar por id_instruccion (el feed puede repetir la misma instrucción)
+    unicos = {r["id_instruccion"]: r for r in registros if r.get("id_instruccion")}
+    sb = get_client()
+    lote = list(unicos.values())
+    for i in range(0, len(lote), 500):
+        sb.table("instrucciones_ernc").upsert(
+            lote[i:i + 500], on_conflict="id_instruccion"
+        ).execute()
+    return len(lote)
+
+
+def upsert_sscc_programado(registros: list[dict]) -> int:
+    if not registros:
+        return 0
+    unicos = {r["id"]: r for r in registros if r.get("id")}
+    sb = get_client()
+    lote = list(unicos.values())
+    for i in range(0, len(lote), 500):
+        sb.table("sscc_programado_ernc").upsert(
+            lote[i:i + 500], on_conflict="id"
+        ).execute()
+    return len(lote)
+
+
+def query_demanda_pronostico(dias: int = 7) -> list[dict]:
+    """Pronóstico de demanda total SEN (7 días). [] si la tabla no existe aún."""
+    desde = _ahora_santiago().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        sb = get_client()
+        res = (sb.table("demanda_pronostico_ernc")
+                 .select("fecha_hora,demanda_mw")
+                 .gte("fecha_hora", desde)
+                 .order("fecha_hora", desc=False)
+                 .limit(dias * 24 + 24)
+                 .execute())
+        return res.data or []
+    except Exception:
+        return []
+
+
+def query_instrucciones_ultimas(horas: int = 72) -> list[dict]:
+    """Instrucciones operacionales CMG a parques/BESS del portfolio.
+    [] si la tabla no existe aún."""
+    from datetime import timedelta
+    desde = (_ahora_santiago() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        sb = get_client()
+        res = (sb.table("instrucciones_ernc")
+                 .select("*")
+                 .gte("fecha_hora", desde)
+                 .order("fecha_hora", desc=True)
+                 .limit(2000)
+                 .execute())
+        return res.data or []
+    except Exception:
+        return []
+
+
+def query_sscc_programado(horas: int = 48) -> list[dict]:
+    """SSCC programados (provisión MW por servicio) de las centrales del portfolio,
+    desde ahora hacia adelante. [] si la tabla no existe aún."""
+    desde = _ahora_santiago().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        sb = get_client()
+        res = (sb.table("sscc_programado_ernc")
+                 .select("parque,central,tipo_servicio,provision_mw,fecha_hora,barra")
                  .gte("fecha_hora", desde)
                  .order("fecha_hora", desc=False)
                  .limit(5000)

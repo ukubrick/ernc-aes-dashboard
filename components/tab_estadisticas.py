@@ -370,8 +370,64 @@ def render_tab_estadisticas(
         fig2.update_yaxes(showgrid=True, gridcolor=AES_BORDE, zeroline=True, zerolinecolor=AES_BORDE)
         st.plotly_chart(fig2, use_container_width=True, key="stats_bar_desvio")
 
+    # ── Skill de pronóstico vs PCP/PID ──────────────────────────────────────
+    _seccion_skill(df_gen, df_prog)
+
     # ── BESS — almacenamiento del portfolio ─────────────────────────────────
     _seccion_bess(bess_rows)
+
+
+def _seccion_skill(df_gen: pd.DataFrame, df_prog: pd.DataFrame) -> None:
+    """Calidad del programa oficial (PCP día-antes y PID intra-día) vs generación real.
+
+    MAE y sesgo hora a hora por parque. Es la base del informe de cumplimiento de
+    pronóstico: cuantifica cuánto se equivoca el programa que se declara al CEN."""
+    if df_prog.empty or "fuente" not in df_prog.columns:
+        return
+
+    st.divider()
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{AES_TEXTO};margin:4px 0 8px'>"
+        f"Skill del programa oficial (PCP / PID) vs generacion real</div>",
+        unsafe_allow_html=True,
+    )
+
+    filas = []
+    for p in PARQUES_TODOS:
+        gp = df_gen[df_gen["parque"] == p][["fecha_hora", "gen_real_mw"]]
+        if gp.empty:
+            continue
+        fila = {"Parque": NOMBRE_DISPLAY[p], "_pmax": PMAX_FP.get(p) or 1}
+        for fuente, etiqueta in (("CEN_PCP", "PCP"), ("CEN_PID", "PID")):
+            pf = df_prog[(df_prog["parque"] == p) & (df_prog["fuente"] == fuente)]
+            m = gp.merge(pf[["fecha_hora", "gen_programada_mw"]], on="fecha_hora", how="inner")
+            m = m.dropna(subset=["gen_real_mw", "gen_programada_mw"])
+            if len(m) < 12:
+                fila[f"MAE {etiqueta} (MW)"] = None
+                fila[f"Sesgo {etiqueta} (MW)"] = None
+                continue
+            err = m["gen_real_mw"] - m["gen_programada_mw"]
+            fila[f"MAE {etiqueta} (MW)"] = round(float(err.abs().mean()), 1)
+            fila[f"Sesgo {etiqueta} (MW)"] = round(float(err.mean()), 1)
+            fila[f"_horas_{etiqueta}"] = len(m)
+        filas.append(fila)
+
+    if not filas:
+        st.caption("Sin horas comunes entre generacion real y programas PCP/PID en la ventana.")
+        return
+
+    df_skill = pd.DataFrame(filas)
+    df_skill["MAE PCP (% Pmax)"] = (df_skill.get("MAE PCP (MW)") / df_skill["_pmax"] * 100).round(1)
+    cols = [c for c in ["Parque", "MAE PCP (MW)", "Sesgo PCP (MW)", "MAE PID (MW)",
+                        "Sesgo PID (MW)", "MAE PCP (% Pmax)"] if c in df_skill.columns]
+    st.dataframe(df_skill[cols], hide_index=True, use_container_width=True)
+    st.caption(
+        "MAE = error medio absoluto hora a hora del programa vs lo realmente generado "
+        "(menor es mejor). Sesgo > 0 = el parque genero MAS de lo programado (sub-declara); "
+        "< 0 = genero menos (sobre-declara, expuesto a desvios). El PID deberia tener menor "
+        "MAE que el PCP por ser intra-dia; si no, hay espacio para mejorar la declaracion. "
+        "Ventana: la misma de la seccion (168 h)."
+    )
 
 
 def _seccion_bess(bess_rows: list | None) -> None:

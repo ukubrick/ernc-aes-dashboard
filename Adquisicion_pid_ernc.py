@@ -20,11 +20,16 @@ if _missing:
     print(f"[ERROR] Variables de entorno faltantes: {', '.join(_missing)}")
     sys.exit(1)
 
-from Adquisicion_ernc import log, adquirir_gen_programada_pid, adquirir_demanda_pid
+from datetime import datetime, timezone
+
+from Adquisicion_ernc import (
+    log, adquirir_gen_programada_pid, adquirir_demanda_pid,
+    adquirir_demanda_pronostico, adquirir_instrucciones, adquirir_sscc_programado,
+)
 
 
 def main():
-    log("=== ADQUISICIÓN PROGRAMACIÓN PID (gen PID + demanda PID) ===")
+    log("=== ADQUISICIÓN PROGRAMACIÓN PID (gen PID + demanda PID + instrucciones) ===")
     errores = []
     total = 0
     try:
@@ -37,6 +42,23 @@ def main():
     except Exception as e:
         log(f"[ERROR] demanda PID: {e}")
         errores.append(f"demanda_pid: {e}")
+    try:
+        total += adquirir_instrucciones()
+    except Exception as e:
+        log(f"[ERROR] instrucciones: {e}")
+        errores.append(f"instrucciones: {e}")
+    try:
+        total += adquirir_demanda_pronostico()
+    except Exception as e:
+        log(f"[ERROR] demanda pronóstico 7d: {e}")
+        errores.append(f"demanda_7d: {e}")
+    # SSCC programados: MUY voluminoso (~77 páginas/día) → solo 1 vez al día (13 UTC)
+    if datetime.now(timezone.utc).hour == 13:
+        try:
+            total += adquirir_sscc_programado()
+        except Exception as e:
+            log(f"[ERROR] SSCC programados: {e}")
+            errores.append(f"sscc_prog: {e}")
 
     log(f"RESUMEN PID: {total} registros procesados.")
     if errores:

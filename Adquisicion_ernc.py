@@ -119,6 +119,45 @@ def adquirir_demanda_pid() -> int:
     return len(registros)
 
 
+def adquirir_demanda_pronostico() -> int:
+    log("=== PRONÓSTICO DEMANDA SEN 7 DÍAS ===")
+    from utils.cen_api import fetch_demanda_pronostico
+    from utils.db import upsert_demanda_pronostico
+    registros = fetch_demanda_pronostico(dias=7)
+    if not registros:
+        log("Sin pronóstico de demanda.")
+        return 0
+    upsert_demanda_pronostico(registros)
+    log(f"Upsert pronóstico demanda: {len(registros)} horas.")
+    return len(registros)
+
+
+def adquirir_instrucciones() -> int:
+    log("=== INSTRUCCIONES OPERACIONALES CMG (parques/BESS del portfolio) ===")
+    from utils.cen_api import fetch_instrucciones_cmg
+    from utils.db import upsert_instrucciones
+    registros = fetch_instrucciones_cmg()
+    if not registros:
+        log("Sin instrucciones para nuestras centrales en la ventana.")
+        return 0
+    n = upsert_instrucciones(registros)
+    log(f"Upsert instrucciones: {n} registros.")
+    return n
+
+
+def adquirir_sscc_programado() -> int:
+    log("=== SSCC PROGRAMADOS PCP (provisión MW por servicio) ===")
+    from utils.cen_api import fetch_sscc_programado
+    from utils.db import upsert_sscc_programado
+    registros = fetch_sscc_programado()
+    if not registros:
+        log("Sin SSCC programados para nuestras centrales.")
+        return 0
+    n = upsert_sscc_programado(registros)
+    log(f"Upsert SSCC programados: {n} registros.")
+    return n
+
+
 def adquirir_cmg() -> int:
     log("=== CMG (COSTO MARGINAL) ===")
     try:

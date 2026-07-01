@@ -1,7 +1,7 @@
 # CLAUDE.md — Dashboard ERNC AES Andes
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-07-01 (Sesión 33 — v2.9.2).
+> Última actualización: 2026-07-01 (Sesión 34 — v2.10.0).
 >
 > REGLA DE MANTENIMIENTO: la cabecera (todo lo anterior al historial de sesiones) es la
 > ÚNICA fuente de verdad del estado actual; `config.py` manda sobre este markdown.
@@ -12,7 +12,7 @@
 
 ## DESCRIPCIÓN DEL PROYECTO
 
-Dashboard operacional **"Pulsar"** (v2.9.2) para **12 parques de energías renovables (ERNC) de AES Andes** en Chile:
+Dashboard operacional **"Pulsar"** (v2.10.0) para **12 parques de energías renovables (ERNC) de AES Andes** en Chile:
 - 7 parques solares FV (norte, Atacama/Antofagasta) — incluye PFV Cristales (EN_REVISION, gen=0)
 - 5 parques eólicos (sur, Biobío/Coquimbo)
 - 7 BESS asociados (incluye SAE Cristales 370 MW y BESS Arenales 315 MW)
@@ -197,6 +197,9 @@ ernc-aes-dashboard/
 │   ├── recomendaciones.py           ← recomendaciones operativas
 │   └── pdf_report.py                ← reporte PDF (ReportLab)
 ├── components/
+│   ├── estilos.py                   ← CSS global (S34, extraído de app_ernc)
+│   ├── tab_resumen.py               ← vista Mapa & Resumen (S34, extraída de app_ernc)
+│   ├── tab_cmg.py                   ← vista CMG + limitaciones + instrucciones (S34)
 │   ├── mapa_ernc.py                 ← mapa satelital folium (nubes OWM, viento actual, stow)
 │   ├── kpis_generales.py            ← cards KPI HTML
 │   ├── tab_solar.py / tab_eolica.py ← detalle por parque (vista fusionada "Parques")
@@ -264,15 +267,18 @@ Detalle completo (endpoints, params, quirks, estructura S3): ver @docs/api_cen.m
 - Auth por `user_key` en query string: plan SIP (`sipub.api.coordinador.cl`) y
   Operaciones (`operacion.api.coordinador.cl`). Rate limit 429 → `_get_with_retry()`.
 - Endpoints en uso: gen-real v3, PCP v4, PID v4, demanda PID v4, CMG S3 (+respaldo 8b),
-  CMG programado v4, limitaciones v4, SSCC v1.
+  CMG programado v4, limitaciones v4, SSCC v1, pronóstico demanda 7d v4,
+  instrucciones operacionales v4, SSCC programados v4 (S34).
+- Paginador unificado `_paginar_sip()` para todo endpoint que pagina el sistema completo.
 
 ## BASE DE DATOS SUPABASE — RESUMEN
 
 Detalle completo (tablas, vistas, RLS): ver @docs/db.md
 - Proyecto `ernc-aes` (ref `ozeubcqoxsihmmfpswoa`). Acceso SOLO por REST (supabase-py).
 - Tablas: generacion_real_ernc, generacion_programada_ernc (PCP+PID por `fuente`),
-  generacion_bess_ernc, meteo_ernc, cmg_ernc, cmg_programado_ernc, demanda_ernc,
-  limitaciones_ernc, sscc_ernc.
+  generacion_bess_ernc, meteo_ernc (+precipitation_mm/dust_ugm3/pm10_ugm3 S34),
+  cmg_ernc, cmg_programado_ernc, demanda_ernc, demanda_pronostico_ernc (S34),
+  instrucciones_ernc (S34), sscc_programado_ernc (S34), limitaciones_ernc, sscc_ernc.
 - `fecha_hora` siempre "YYYY-MM-DD HH:MM:SS" 0-based en America/Santiago.
 - Tabla nueva ⇒ política `anon_select` ANTES de consultarla desde el dashboard.
 
@@ -366,6 +372,12 @@ gh workflow run programacion_pid_ernc.yml
 ---
 ## PENDIENTES VIVOS (lista única — actualizar aquí, no en los logs de sesión)
 
+- [ ] **Ejecutar el bloque "SESIÓN 34" de schema.sql en Supabase SQL Editor** — 3 tablas
+      nuevas (demanda_pronostico, instrucciones, sscc_programado) + 3 columnas meteo (S34)
+- [ ] Correlacionar soiling ratio con dust_ugm3 y marcar recuperaciones por lluvia cuando
+      haya historia acumulada (S34)
+- [ ] (Opcional) Partir tab_ml.py (1.410 líneas) en package components/ml/ (S34)
+- [ ] (Opcional) Demanda pronosticada 7d como feature del modelo ML de CMG (S34)
 - [ ] Llave PCP de PFV Cristales cuando el CEN la publique → `LLAVES_GEN_PROG["CRI"]` (S32)
 - [ ] Confirmar barra/nodo CMG real de Cristales (asignado CRUCERO_______220 por defecto) → `CMG_NODO["CRI"]` (S32)
 - [ ] Confirmar Pmax neta CEN de Cristales cuando exista carta → `PMAX_NETA["CRI"]` (S32)
@@ -373,8 +385,6 @@ gh workflow run programacion_pid_ernc.yml
 - [ ] (Opcional) Backfill de meteo para recalcular `p_fv_estimada_mw` histórico con los umbrales de stow por parque — el cron lo corrige hacia adelante (S33)
 - [ ] (Opcional) Anclar la ventana del comparador NASA a la última fecha de NASA en vez del fijo 120 d (S24/S29)
 - [ ] **Ventana PCP**: si la query PCP de 5 días se degrada en la API CEN, bajar la ventana PCP a 1-2 días (S15)
-- [ ] (Opcional) Precipitación en `meteo_ernc` (schema + adquisición) para atribuir lavados de soiling a lluvia (S28)
-- [ ] (Opcional) Informe de cumplimiento de pronóstico al CEN / skill vs PCP-PID (S28)
 - [ ] Confirmación formal del nodo CMG de eólicos sur — CHARRUA_______220 en uso desde S5, sin confirmación de AES
 
 Resueltos (histórico): logo sidebar (S16), satélite en mapa (S17/S26), gráficos comprimidos
@@ -459,8 +469,9 @@ Al terminar cada sesión de trabajo, antes del commit final:
 - SESIÓN 31 — RÁFAGA+STOW EN EL MAPA + HORA DEL DATO EN MÉTRICAS (2026-06-30)
 - SESIÓN 32 — ALTA DE PFV CRISTALES (PARQUE FV + BESS) (2026-06-30)
 - SESIÓN 33 — BESS ARENALES (BACKFILL + NAV), FIX FORECAST PROB, STOW EN ANOMALÍAS, UMBRAL STOW POR PARQUE (2026-07-01)
+- SESIÓN 34 — ENDPOINTS CEN NUEVOS (DEMANDA 7D, INSTRUCCIONES, SSCC PROG), SOILING PREDICTIVO, SKILL PCP/PID, REFACTOR APP (2026-07-01)
 
 ---
 
-*Actualizado 2026-07-01 — Sesiones 1–33 (v2.9.2). Historial completo en docs/sesiones.md.*
+*Actualizado 2026-07-01 — Sesiones 1–34 (v2.10.0). Historial completo en docs/sesiones.md.*
 *Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER + scikit-learn + LightGBM + PuLP*

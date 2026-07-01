@@ -74,7 +74,45 @@ _CAMPO_MAP = {
     "surface_pressure":         "surface_pressure",
     "relativehumidity_2m":      "humidity_2m",
     "boundary_layer_height":    "boundary_layer_height",
+    "precipitation":            "precipitation_mm",
 }
+
+
+def _aq_por_hora(lat: float, lon: float, start: str, end: str) -> dict[str, dict]:
+    """Polvo/PM10 horario desde la Air Quality API (CAMS) para soiling predictivo.
+
+    Devuelve {fecha_hora: {"dust_ugm3": x, "pm10_ugm3": y}}; {} si la API falla
+    (la adquisición meteo no debe caerse por esta fuente secundaria).
+    """
+    from config import OPENMETEO_AQ_URL, OPENMETEO_VARS_AQ
+    import pandas as pd
+    try:
+        responses = _client.weather_api(OPENMETEO_AQ_URL, params={
+            "latitude": lat, "longitude": lon,
+            "hourly": OPENMETEO_VARS_AQ,
+            "start_date": start, "end_date": end,
+            "timezone": "America/Santiago",
+        })
+        datos = responses[0].Hourly()
+        fechas = pd.date_range(
+            start=pd.Timestamp(datos.Time(), unit="s", tz="UTC"),
+            end=pd.Timestamp(datos.TimeEnd(), unit="s", tz="UTC"),
+            freq=pd.Timedelta(seconds=datos.Interval()),
+            inclusive="left",
+        ).tz_convert("America/Santiago")
+        dust = datos.Variables(0).ValuesAsNumpy().tolist()
+        pm10 = datos.Variables(1).ValuesAsNumpy().tolist()
+        out = {}
+        for j, ts in enumerate(fechas):
+            d, p = dust[j], pm10[j]
+            out[ts.strftime("%Y-%m-%d %H:%M:%S")] = {
+                "dust_ugm3": None if d != d else round(float(d), 2),
+                "pm10_ugm3": None if p != p else round(float(p), 2),
+            }
+        return out
+    except Exception as exc:
+        logger.warning(f"Air Quality API no disponible: {exc}")
+        return {}
 
 
 def _response_to_registros(response, parque: str, variables: list[str]) -> list[dict]:
@@ -195,6 +233,11 @@ def obtener_meteo_parque(
     try:
         responses = _client.weather_api(OPENMETEO_URL, params=params)
         registros = _response_to_registros(responses[0], parque, variables)
+        # Polvo/PM10 (soiling) solo en solares — grilla CAMS, endpoint aparte
+        if tecnologia == "Solar":
+            aq = _aq_por_hora(coord["lat"], coord["lon"], start, end)
+            for row in registros:
+                row.update(aq.get(row["fecha_hora"], {}))
         logger.info(f"[{parque}] {len(registros)} registros meteorológicos")
         time.sleep(pausa_seg)
         return registros

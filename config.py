@@ -13,7 +13,10 @@ from zoneinfo import ZoneInfo
 #         (370 MW). Central EN_REVISION en la API (gen=0 hasta PES). 12 parques / 6 BESS.
 # 2.9.1 — Sesión 33: alta de BESS Arenales (315 MW, standalone, sin FV asociado).
 #         Confirmado en gen-real/v3. 7 BESS.
-APP_VERSION = "v2.9.2"
+# 2.10.0 — Sesión 34: 3 endpoints CEN nuevos (demanda 7d, instrucciones operacionales,
+#         SSCC programados), precipitación+polvo (soiling predictivo), skill vs PCP/PID,
+#         paginador CEN unificado, app_ernc partida en components/ (estilos, resumen, cmg).
+APP_VERSION = "v2.10.0"
 
 # ── Timezone ───────────────────────────────────────────────────────────────────
 TZ_CHILE = ZoneInfo("America/Santiago")
@@ -280,6 +283,30 @@ LLAVES_SSCC = {
     "PE-SANMATIAS": "STM",
 }
 
+# ── Instrucciones operacionales CMG: central API → código interno (Sesión 34) ───
+# El endpoint /instrucciones-operacionales-cmg/v4 usa nombres cortos PROPIOS
+# (distintos de llave_opreal). Mapeo EXACTO validado contra la API el 2026-07-01.
+# NO usar match parcial: existen "PFV-MESETADELOSANDES", "PFV-SOLDELOSANDES",
+# "PFV-DELOSANDES" y "PFV-CAMPOSDELSOL" de OTRAS empresas.
+INSTR_CENTRAL_A_PARQUE = {
+    "PFV-ANDES":            "AS1",
+    "PFV-ANDES2A":          "AS2A",
+    "PFV ANDES SOLAR II":   "AS2A",   # variante con espacio observada en el feed
+    "PFV-ANDES2B":          "AS2B",
+    "PFV-ANDES3":           "AS3",
+    "PFV-ANDES4":           "AS4",
+    "PFV-BOLERO-1":         "BOL",
+    "PE-CAMPOLINDO":        "CL",
+    "PE-LOSOLMOS":          "OLM",
+    "PE-LOSCURUROS":        "CUR",
+    "PE-SANMATIAS":         "STM",
+    "PE-MESAMAVIDA":        "MSM",
+    # BESS (instrucciones al almacenamiento)
+    "SAE-CRCA-PFV-ANDES2A": "AS2A_B",
+    "SAE-CRCA-PFV-ANDES4":  "AS4_B",
+    "SAE-CRCA-PFV-BOLERO":  "BOL_B",
+}
+
 # ── BESS (sistemas de almacenamiento) de AES Andes ─────────────────────────────
 # Aparecen en gen-real/v3 como centrales separadas (id_central=None, tipo='BESS')
 # con llaves de (Inyección)=descarga y (Retiro)=carga, ambas en magnitud positiva.
@@ -353,6 +380,15 @@ OPENMETEO_VARS_SOLAR = [
     "is_day",                       # 1=día, 0=noche
     "surface_pressure",             # hPa
     "relativehumidity_2m",          # %
+    "precipitation",                # mm — lavados de soiling
+]
+
+# Air Quality API (Open-Meteo, CAMS): polvo para soiling predictivo en Atacama.
+# Endpoint distinto al de meteo — grilla propia, sin key. (Sesión 34)
+OPENMETEO_AQ_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+OPENMETEO_VARS_AQ = [
+    "dust",                         # µg/m³ — polvo mineral (driver del soiling)
+    "pm10",                         # µg/m³ — particulado grueso
 ]
 
 OPENMETEO_VARS_EOLICA = [

@@ -220,3 +220,58 @@ CREATE TABLE IF NOT EXISTS demanda_ernc (
 ALTER TABLE demanda_ernc ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "anon_select" ON demanda_ernc FOR SELECT USING (true);
 CREATE INDEX IF NOT EXISTS idx_demanda_fecha ON demanda_ernc (fecha_hora DESC);
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- SESIÓN 34 (2026-07-01) — ejecutar este bloque en Supabase SQL Editor
+-- ══════════════════════════════════════════════════════════════════════════════
+
+-- Precipitación + polvo (Air Quality CAMS) en meteo — soiling predictivo
+ALTER TABLE meteo_ernc ADD COLUMN IF NOT EXISTS precipitation_mm REAL;
+ALTER TABLE meteo_ernc ADD COLUMN IF NOT EXISTS dust_ugm3 REAL;
+ALTER TABLE meteo_ernc ADD COLUMN IF NOT EXISTS pm10_ugm3 REAL;
+
+-- Pronóstico de demanda del SEN a 7 días (total sistema por hora)
+-- Fuente: /pronosticos-demanda-corto-plazo/v4 (SIP), suma de todas las barras.
+CREATE TABLE IF NOT EXISTS demanda_pronostico_ernc (
+    fecha_hora  TEXT PRIMARY KEY,
+    demanda_mw  NUMERIC
+);
+ALTER TABLE demanda_pronostico_ernc ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_select" ON demanda_pronostico_ernc FOR SELECT USING (true);
+
+-- Instrucciones operacionales CMG a parques/BESS del portfolio
+-- Fuente: /instrucciones-operacionales-cmg/v4 (SIP). Curtailment ordenado, consignas.
+CREATE TABLE IF NOT EXISTS instrucciones_ernc (
+    id_instruccion  BIGINT PRIMARY KEY,
+    parque          TEXT NOT NULL,
+    central         TEXT,
+    configuracion   TEXT,
+    fecha_hora      TEXT NOT NULL,
+    despacho_mw     REAL,
+    consigna        TEXT,
+    instruccion_cmg TEXT,
+    estado          TEXT,
+    motivo          TEXT
+);
+ALTER TABLE instrucciones_ernc ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_select" ON instrucciones_ernc FOR SELECT USING (true);
+CREATE INDEX IF NOT EXISTS idx_instr_parque_fecha
+    ON instrucciones_ernc (parque, fecha_hora DESC);
+
+-- SSCC programados PCP (provisión MW por servicio y hora, centrales del portfolio)
+-- Fuente: /servicios-complementarios-programados-pcp/v4 (SIP). Adquirir 1×/día.
+CREATE TABLE IF NOT EXISTS sscc_programado_ernc (
+    id             BIGINT PRIMARY KEY,
+    parque         TEXT,
+    central        TEXT,
+    llave_sscc     TEXT,
+    tipo_servicio  TEXT,
+    provision_mw   REAL,
+    fecha_hora     TEXT NOT NULL,
+    fecha_programa TEXT,
+    barra          TEXT
+);
+ALTER TABLE sscc_programado_ernc ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_select" ON sscc_programado_ernc FOR SELECT USING (true);
+CREATE INDEX IF NOT EXISTS idx_ssccprog_parque_fecha
+    ON sscc_programado_ernc (parque, fecha_hora DESC);

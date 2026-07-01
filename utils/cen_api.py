@@ -77,6 +77,41 @@ def _ventana_fechas(dias: int = DIAS_VENTANA) -> tuple[str, str]:
     return (hoy - timedelta(days=dias - 1)).isoformat(), (hoy + timedelta(days=1)).isoformat()
 
 
+def _paginar_sip(path: str, start_date: str, end_date: str, limit: int = 5000,
+                 tag: str = "CEN", timeout: int = 90, max_seg: int = PAGINADO_MAX_SEG):
+    """Generador que pagina un endpoint v4 del SIP completo (campo `data` + `totalPages`).
+
+    Centraliza el patrón "paginar todo el sistema y filtrar local" que comparten
+    PCP, PID, demanda, CMG programado, instrucciones y SSCC programados. Respeta el
+    presupuesto de tiempo: si la API se degrada, corta y el caller queda con datos
+    parciales (el upsert de ventana móvil se auto-corrige en la corrida siguiente).
+    Yields: cada item del feed.
+    """
+    key_sip, _ = _get_keys()
+    url = f"{API_BASE_SIP}{path}"
+    page = 1
+    _t0 = time.monotonic()
+    while True:
+        if time.monotonic() - _t0 > max_seg:
+            print(f"[{tag}] Presupuesto de tiempo agotado en página {page} — parcial.")
+            return
+        params = {
+            "startDate": start_date, "endDate": end_date,
+            "limit": limit, "page": page, "user_key": key_sip,
+        }
+        data = _get_with_retry(url, params, timeout=timeout)
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items:
+            return
+        yield from items
+        total_pages = data.get("totalPages") if isinstance(data, dict) else None
+        if total_pages is None or page >= int(total_pages):
+            return
+        page += 1
+        if page % 10 == 0:
+            print(f"[{tag}] Página {page}/{total_pages}...")
+
+
 def _hora_cen_a_dt(fecha_hora_str: str, hora_cen: int) -> str:
     """
     Convierte fecha_hora CEN y hora (1-24) a string 'YYYY-MM-DD HH:MM:SS' (hora 0-based).
@@ -252,7 +287,6 @@ def fetch_gen_programada(start_date: str = None, end_date: str = None) -> list[d
     Descarga generación programada PCP para todos los parques.
     La API NO filtra por idCentral — se descarga todo y filtra local por LLAVES_GEN_PROG.
     """
-    key_sip, _ = _get_keys()
     if start_date is None or end_date is None:
         start_date, end_date = _ventana_fechas()
 
@@ -262,59 +296,31 @@ def fetch_gen_programada(start_date: str = None, end_date: str = None) -> list[d
         for llave in llaves:
             llave_a_parque[llave] = parque
 
-    url = f"{API_BASE_SIP}/generacion-programada-pcp/v4/findByDate"
     registros = []
-    page = 1
-    _t0 = time.monotonic()
+    for item in _paginar_sip("/generacion-programada-pcp/v4/findByDate",
+                             start_date, end_date, tag="PCP"):
+        # Campo confirmado en API v4: "llave_gen"
+        llave = item.get("llave_gen", "")
+        parque = llave_a_parque.get(llave)
+        if parque is None:
+            continue
 
-    while True:
-        if time.monotonic() - _t0 > PAGINADO_MAX_SEG:
-            print(f"[PCP] Presupuesto de tiempo agotado en página {page} — "
-                  f"se devuelven {len(registros)} registros parciales.")
-            break
-        params = {
-            "startDate": start_date,
-            "endDate":   end_date,
-            "limit":     5000,
-            "page":      page,
-            "user_key":  key_sip,
-        }
-        data = _get_with_retry(url, params)
-        items = data.get("data", data) if isinstance(data, dict) else data
+        # PCP v4: fecha_hora viene como "YYYY-MM-DD HH:MM:SS" ya en 0-based
+        fecha_hora_raw = item.get("fecha_hora", "")
+        fecha_hora = fecha_hora_raw[:19] if fecha_hora_raw else ""
+        hora_0 = int(fecha_hora[11:13]) if len(fecha_hora) >= 13 else 0
 
-        if not items:
-            break
-
-        for item in items:
-            # Campo confirmado en API v4: "llave_gen"
-            llave = item.get("llave_gen", "")
-            parque = llave_a_parque.get(llave)
-            if parque is None:
-                continue
-
-            # PCP v4: fecha_hora viene como "YYYY-MM-DD HH:MM:SS" ya en 0-based
-            fecha_hora_raw = item.get("fecha_hora", "")
-            fecha_hora = fecha_hora_raw[:19] if fecha_hora_raw else ""
-            hora_0 = int(fecha_hora[11:13]) if len(fecha_hora) >= 13 else 0
-
-            registros.append({
-                "parque":                   parque,
-                "llave_gen":                llave,
-                "gen_programada_mw":        item.get("gen_programada_mw"),
-                "capacidad_disponible_mw":  item.get("capacidad_disponible_mw"),
-                "costo_generacion_usd":     item.get("costo_generacion_usd"),
-                "fecha_hora":               fecha_hora,
-                "hora":                     hora_0,
-                "fecha_programa":           item.get("fecha_programa"),
-                "fuente":                   "CEN_PCP",
-            })
-
-        # API v4 usa "totalPages" (no "total") — controlar paginación con eso
-        total_pages = data.get("totalPages", 1) if isinstance(data, dict) else 1
-        if page >= total_pages:
-            break
-        page += 1
-        print(f"[PCP] Página {page - 1}/{total_pages} procesada — {len(registros)} registros acumulados")
+        registros.append({
+            "parque":                   parque,
+            "llave_gen":                llave,
+            "gen_programada_mw":        item.get("gen_programada_mw"),
+            "capacidad_disponible_mw":  item.get("capacidad_disponible_mw"),
+            "costo_generacion_usd":     item.get("costo_generacion_usd"),
+            "fecha_hora":               fecha_hora,
+            "hora":                     hora_0,
+            "fecha_programa":           item.get("fecha_programa"),
+            "fuente":                   "CEN_PCP",
+        })
 
     return registros
 
@@ -331,7 +337,6 @@ def fetch_gen_programada_pid(start_date: str = None, end_date: str = None) -> li
     el programa más reciente (mayor `fecha_programa`) por (parque, fecha_hora).
     Va a la misma tabla generacion_programada_ernc con fuente='CEN_PID'.
     """
-    key_sip, _ = _get_keys()
     if start_date is None or end_date is None:
         start_date, end_date = _ventana_fechas(DIAS_VENTANA_PID)
 
@@ -340,52 +345,30 @@ def fetch_gen_programada_pid(start_date: str = None, end_date: str = None) -> li
         for llave in llaves:
             llave_a_parque[llave] = parque
 
-    url = f"{API_BASE_SIP}/generacion-programada-pid/v4/findByDate"
     mejor: dict[tuple[str, str], dict] = {}   # (parque, fecha_hora) → registro
-    page = 1
-    _t0 = time.monotonic()
-
-    while True:
-        if time.monotonic() - _t0 > PAGINADO_MAX_SEG:
-            print(f"[PID] Presupuesto de tiempo agotado en página {page} — parcial.")
-            break
-        params = {
-            "startDate": start_date, "endDate": end_date,
-            "limit": 5000, "page": page, "user_key": key_sip,
-        }
-        data = _get_with_retry(url, params, timeout=90)
-        items = data.get("data", []) if isinstance(data, dict) else []
-        if not items:
-            break
-
-        for item in items:
-            parque = llave_a_parque.get(item.get("llave_gen", ""))
-            if parque is None:
-                continue
-            fh = (item.get("fecha_hora") or "")[:19]
-            if not fh:
-                continue
-            fprog = item.get("fecha_programa") or ""
-            clave = (parque, fh)
-            anterior = mejor.get(clave)
-            if anterior is None or fprog >= anterior["fecha_programa"]:
-                mejor[clave] = {
-                    "parque":                  parque,
-                    "llave_gen":               item.get("llave_gen", ""),
-                    "gen_programada_mw":       item.get("gen_programada_mw"),
-                    "capacidad_disponible_mw": item.get("capacidad_disponible_mw"),
-                    "costo_generacion_usd":    item.get("costo_generacion_usd"),
-                    "fecha_hora":              fh,
-                    "hora":                    int(fh[11:13]) if len(fh) >= 13 else 0,
-                    "fecha_programa":          fprog,
-                    "fuente":                  "CEN_PID",
-                }
-
-        total_pages = data.get("totalPages", 1) if isinstance(data, dict) else 1
-        if page >= total_pages:
-            break
-        page += 1
-        print(f"[PID] Página {page - 1}/{total_pages} procesada — {len(mejor)} registros acumulados")
+    for item in _paginar_sip("/generacion-programada-pid/v4/findByDate",
+                             start_date, end_date, tag="PID"):
+        parque = llave_a_parque.get(item.get("llave_gen", ""))
+        if parque is None:
+            continue
+        fh = (item.get("fecha_hora") or "")[:19]
+        if not fh:
+            continue
+        fprog = item.get("fecha_programa") or ""
+        clave = (parque, fh)
+        anterior = mejor.get(clave)
+        if anterior is None or fprog >= anterior["fecha_programa"]:
+            mejor[clave] = {
+                "parque":                  parque,
+                "llave_gen":               item.get("llave_gen", ""),
+                "gen_programada_mw":       item.get("gen_programada_mw"),
+                "capacidad_disponible_mw": item.get("capacidad_disponible_mw"),
+                "costo_generacion_usd":    item.get("costo_generacion_usd"),
+                "fecha_hora":              fh,
+                "hora":                    int(fh[11:13]) if len(fh) >= 13 else 0,
+                "fecha_programa":          fprog,
+                "fuente":                  "CEN_PID",
+            }
 
     return list(mejor.values())
 
@@ -402,51 +385,28 @@ def fetch_demanda_pid(start_date: str = None, end_date: str = None) -> list[dict
     reciente (mayor `fecha_programa`) por (zona, fecha_hora).
     Retorna registros para upsert_demanda().
     """
-    key_sip, _ = _get_keys()
     if start_date is None or end_date is None:
         start_date, end_date = _ventana_fechas(DIAS_VENTANA_PID)
 
-    url = f"{API_BASE_SIP}/demanda-programada-pid/v4/findByDate"
     # (zona, fecha_hora) → {"mw": suma, "fecha_programa": max}
     acum: dict[tuple[str, str], dict] = {}
-    page = 1
-    _t0 = time.monotonic()
-
-    while True:
-        if time.monotonic() - _t0 > PAGINADO_MAX_SEG:
-            print(f"[DEMANDA] Presupuesto de tiempo agotado en página {page} — parcial.")
-            break
-        params = {
-            "startDate": start_date, "endDate": end_date,
-            "limit": 4000, "page": page, "user_key": key_sip,
-        }
-        data = _get_with_retry(url, params, timeout=90)
-        items = data.get("data", []) if isinstance(data, dict) else []
-        if not items:
-            break
-
-        for item in items:
-            zona = item.get("zona")
-            if zona in DEMANDA_ZONAS_EXCLUIR:
-                continue
-            fh = (item.get("fecha_hora") or "")[:19]
-            if not fh:
-                continue
-            mw = item.get("demanda_prog_mw") or 0.0
-            fprog = item.get("fecha_programa") or ""
-            clave = (zona, fh)
-            cur = acum.get(clave)
-            # Si llega un programa más nuevo, se reinicia la suma de esa hora
-            if cur is None or fprog > cur["fecha_programa"]:
-                acum[clave] = {"mw": float(mw), "fecha_programa": fprog}
-            elif fprog == cur["fecha_programa"]:
-                cur["mw"] += float(mw)
-
-        total_pages = data.get("totalPages", 1) if isinstance(data, dict) else 1
-        if page >= total_pages:
-            break
-        page += 1
-        print(f"[DEM] Página {page - 1}/{total_pages} procesada — {len(acum)} (zona,hora) acumuladas")
+    for item in _paginar_sip("/demanda-programada-pid/v4/findByDate",
+                             start_date, end_date, limit=4000, tag="DEMANDA"):
+        zona = item.get("zona")
+        if zona in DEMANDA_ZONAS_EXCLUIR:
+            continue
+        fh = (item.get("fecha_hora") or "")[:19]
+        if not fh:
+            continue
+        mw = item.get("demanda_prog_mw") or 0.0
+        fprog = item.get("fecha_programa") or ""
+        clave = (zona, fh)
+        cur = acum.get(clave)
+        # Si llega un programa más nuevo, se reinicia la suma de esa hora
+        if cur is None or fprog > cur["fecha_programa"]:
+            acum[clave] = {"mw": float(mw), "fecha_programa": fprog}
+        elif fprog == cur["fecha_programa"]:
+            cur["mw"] += float(mw)
 
     registros = []
     for (zona, fh), v in acum.items():
@@ -524,51 +484,28 @@ def fetch_cmg_programado(start_date: str = None, end_date: str = None) -> list[d
     - Se conserva el programa más reciente (mayor `fecha_programa`) por (nodo, fecha_hora).
     Retorna registros para upsert_cmg_programado().
     """
-    key_sip, _ = _get_keys()
     if start_date is None or end_date is None:
         start_date, end_date = _ventana_fechas()
 
-    url = f"{API_BASE_SIP}/cmg-programado-pcp/v4/findByDate"
     mejor: dict[tuple[str, str], dict] = {}   # (nodo, fecha_hora) → registro
-    page = 1
-    _LIMIT = 4000
-    _t0 = time.monotonic()
-
-    while True:
-        if time.monotonic() - _t0 > PAGINADO_MAX_SEG:
-            print(f"[CMG-PROG] Presupuesto de tiempo agotado en página {page} — parcial.")
-            break
-        params = {
-            "startDate": start_date, "endDate": end_date,
-            "limit": _LIMIT, "page": page, "user_key": key_sip,
-        }
-        data = _get_with_retry(url, params, timeout=90)
-        items = data.get("data", []) if isinstance(data, dict) else []
-        if not items:
-            break
-
-        for item in items:
-            nodo = CMG_PROG_LLAVE_A_NODO.get(item.get("llave_cmg"))
-            if nodo is None:
-                continue
-            fh = (item.get("fecha_hora") or "").replace("T", " ")[:19]
-            if not fh:
-                continue
-            fprog = item.get("fecha_programa") or ""
-            clave = (nodo, fh)
-            anterior = mejor.get(clave)
-            if anterior is None or fprog >= anterior["fecha_programa"]:
-                mejor[clave] = {
-                    "nodo":           nodo,
-                    "fecha_hora":     fh,
-                    "cmg_usd_mwh":    round(float(item.get("cmg_usd_mwh") or 0.0), 4),
-                    "fecha_programa": fprog,
-                }
-
-        total_pages = data.get("totalPages") if isinstance(data, dict) else None
-        if total_pages is None or page >= int(total_pages):
-            break
-        page += 1
+    for item in _paginar_sip("/cmg-programado-pcp/v4/findByDate",
+                             start_date, end_date, limit=4000, tag="CMG-PROG"):
+        nodo = CMG_PROG_LLAVE_A_NODO.get(item.get("llave_cmg"))
+        if nodo is None:
+            continue
+        fh = (item.get("fecha_hora") or "").replace("T", " ")[:19]
+        if not fh:
+            continue
+        fprog = item.get("fecha_programa") or ""
+        clave = (nodo, fh)
+        anterior = mejor.get(clave)
+        if anterior is None or fprog >= anterior["fecha_programa"]:
+            mejor[clave] = {
+                "nodo":           nodo,
+                "fecha_hora":     fh,
+                "cmg_usd_mwh":    round(float(item.get("cmg_usd_mwh") or 0.0), 4),
+                "fecha_programa": fprog,
+            }
 
     return list(mejor.values())
 
@@ -749,4 +686,114 @@ def fetch_sscc(start_date: str = None, end_date: str = None) -> list[dict]:
             "unidad_medida":   item.get("unidadMedida"),
         })
 
+    return registros
+
+
+# ── Pronóstico de demanda del SEN a 7 días (Sesión 34) ───────────────────────────
+
+def fetch_demanda_pronostico(dias: int = 7) -> list[dict]:
+    """
+    Descarga el pronóstico de demanda de corto plazo (7 días) del SEN y lo agrega
+    a total sistema por hora.
+
+    Endpoint: /pronosticos-demanda-corto-plazo/v4/findByDate (SIP). Publica
+    energía horaria (MWh/h ≈ MW medio) POR BARRA — se suma todo por fecha_hora.
+    `fecha_hora` ya viene 0-based ("YYYY-MM-DD HH:MM:SS"); el campo `hora` 1-24
+    se ignora. Retorna registros para upsert_demanda_pronostico().
+    """
+    hoy = datetime.now(TZ_CHILE).date()
+    start_date = hoy.isoformat()
+    end_date = (hoy + timedelta(days=dias)).isoformat()
+
+    acum: dict[str, float] = {}   # fecha_hora → MW total SEN
+    for item in _paginar_sip("/pronosticos-demanda-corto-plazo/v4/findByDate",
+                             start_date, end_date, limit=4000, tag="DEM-7D"):
+        fh = (item.get("fecha_hora") or "")[:19]
+        mw = item.get("energia_mwh")
+        if not fh or mw is None:
+            continue
+        acum[fh] = acum.get(fh, 0.0) + float(mw)
+
+    return [{"fecha_hora": fh, "demanda_mw": round(mw, 2)}
+            for fh, mw in acum.items()]
+
+
+# ── Instrucciones operacionales CMG (curtailment ordenado) — Sesión 34 ───────────
+
+def fetch_instrucciones_cmg(start_date: str = None, end_date: str = None) -> list[dict]:
+    """
+    Descarga las instrucciones operacionales del CEN a los centros de control y
+    filtra las de los parques/BESS del portfolio.
+
+    Endpoint: /instrucciones-operacionales-cmg/v4/findByDate (SIP). Los nombres de
+    central usan formato corto propio (PFV-ANDES2A, PE-CAMPOLINDO, SAE-CRCA-*) →
+    mapeo EXACTO en config.INSTR_CENTRAL_A_PARQUE (match parcial da falsos positivos
+    tipo "PFV-MESETADELOSANDES"). Es la fuente para distinguir curtailment ordenado
+    de soiling/falla. Retorna registros para upsert_instrucciones().
+    """
+    from config import INSTR_CENTRAL_A_PARQUE
+    if start_date is None or end_date is None:
+        start_date, end_date = _ventana_fechas(2)
+
+    registros = []
+    for item in _paginar_sip("/instrucciones-operacionales-cmg/v4/findByDate",
+                             start_date, end_date, limit=4000, tag="INSTR"):
+        parque = INSTR_CENTRAL_A_PARQUE.get(item.get("central") or "")
+        if parque is None:
+            continue
+        fecha = (item.get("fecha") or "")[:10]
+        hora = (item.get("hora") or "00:00:00")[:8]
+        if not fecha:
+            continue
+        registros.append({
+            "id_instruccion":  item.get("id_instruccion"),
+            "parque":          parque,
+            "central":         item.get("central"),
+            "configuracion":   item.get("configuracion"),
+            "fecha_hora":      f"{fecha} {hora}",
+            "despacho_mw":     item.get("despacho"),
+            "consigna":        item.get("consigna"),
+            "instruccion_cmg": item.get("instruccion_cmg"),
+            "estado":          item.get("estado"),
+            "motivo":          item.get("motivo"),
+        })
+    return registros
+
+
+# ── SSCC programados PCP (MW y servicio por central) — Sesión 34 ─────────────────
+
+def fetch_sscc_programado(start_date: str = None, end_date: str = None) -> list[dict]:
+    """
+    Descarga los servicios complementarios PROGRAMADOS (PCP) de las centrales del
+    portfolio: MW de provisión por tipo de servicio (CPF/CSF/CTF ±) y hora.
+
+    Endpoint: /servicios-complementarios-programados-pcp/v4/findByDate (SIP).
+    MUY voluminoso (~300k filas/día del sistema completo) → ventana 1 día y
+    limit=4000 (~77 páginas). Correr 1 vez/día, NO en el cron horario. Se filtra
+    local por `id_central` ∈ ID_CENTRAL del portfolio.
+    Retorna registros para upsert_sscc_programado().
+    """
+    if start_date is None or end_date is None:
+        hoy = datetime.now(TZ_CHILE).date()
+        start_date = hoy.isoformat()
+        end_date = (hoy + timedelta(days=1)).isoformat()
+
+    ids_portfolio = {v for v in ID_CENTRAL.values() if v is not None}
+    registros = []
+    for item in _paginar_sip("/servicios-complementarios-programados-pcp/v4/findByDate",
+                             start_date, end_date, limit=4000, tag="SSCC-PCP"):
+        if item.get("id_central") not in ids_portfolio:
+            continue
+        id_a_parque = {v: k for k, v in ID_CENTRAL.items()}
+        registros.append({
+            "id":             item.get("id"),
+            "parque":         id_a_parque.get(item.get("id_central")),
+            "central":        item.get("central"),
+            "llave_sscc":     item.get("llave_sscc"),
+            "tipo_servicio":  item.get("tipo_servicio"),
+            "provision_mw":   item.get("provision_mw"),
+            "fecha_hora":     (item.get("fecha_hora") or "")[:19],
+            "fecha_programa": item.get("fecha_programa"),
+            "barra":          item.get("barra"),
+        })
     return registros
