@@ -67,8 +67,8 @@ La conexión TCP directa a Supabase (puerto 5432 y 6543) falla desde redes local
 ## CREDENCIALES Y VARIABLES DE ENTORNO
 
 ```env
-# API CEN
-CEN_USER_KEY=<ver .env / GitHub Secrets>    # SIP (pública)
+# API CEN — valores reales SOLO en .env local y GitHub Actions Secrets (NUNCA en archivos commiteados)
+CEN_USER_KEY=<ver .env / GitHub Secrets>    # SIP (plan público)
 CEN_OPS_KEY=<ver .env / GitHub Secrets>     # Operaciones
 
 # Supabase — proyecto ernc-aes
