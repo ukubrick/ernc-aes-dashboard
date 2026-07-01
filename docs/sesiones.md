@@ -1,0 +1,1719 @@
+# Historial de sesiones — Pulsar (ernc-aes-dashboard)
+
+> Historia inmutable del proyecto, movida verbatim desde CLAUDE.md (2026-07-01).
+> El estado ACTUAL vive en la cabecera de CLAUDE.md — este archivo es solo referencia.
+
+## OPEN-METEO — DETALLES IMPLEMENTACIÓN (Sesión 3)
+
+- Wrapper en `utils/openmeteo_api.py`: usa `openmeteo-requests` + `requests-cache` (TTL 30min) + retry.
+- Las variables Open-Meteo se mapean a columnas DB en `_CAMPO_MAP` dentro del mismo archivo.
+- Los calculados (temp_celda, p_fv_estimada, v100m, alpha, densidad_aire) se calculan en `_response_to_registros` usando `utils/calculos.py`.
+- `es_forecast=True` cuando `fecha_hora >= ahora` al momento de la adquisición.
+- Pausa 1.5s entre parques para no saturar la API gratuita.
+- El workflow corre `Adquisicion_meteo_ernc.py` justo después de `Adquisicion_ernc.py` en el mismo job.
+
+---
+
+---
+
+---
+
+## APP PRINCIPAL — NOTAS SESIÓN 4
+
+- `app_ernc.py`: layout wide, dark theme (#0f172a), autorefresh 1h, caché datos 5 min.
+- Sidebar: lista parques por tipo con gen. actual inline. Botón "Forzar actualización" limpia caché.
+- `components/kpis_generales.py`: 6 métricas (Gen total, Solar, Eólica, Desvío PCP, CMG, Limitaciones). Semáforo desvío con CSS inline.
+- `components/mapa_ernc.py`: TerrainLayer (tiles Terrarium) + ColumnLayer (altura = gen × 200) + ScatterplotLayer. Tooltip con nombre, gen, factor planta. Vista inicial zoom=4.5, pitch=45.
+- Tab "Mapa & Resumen": mapa izq + tabla estado der + gráfico tendencia 24h (real vs programada).
+- Tab "CMG": métrica última hora + gráfico histórico 48h (solo nodo CRUCERO_______220).
+- Tab "Limitaciones": tabla filas activas (`fecha_efectiva_retorno IS NULL`).
+- Tabs Solar y Eólica: placeholder "Sesión 5 pendiente".
+
+---
+
+---
+
+## CAMBIOS SESIÓN 5 (2026-06-19)
+
+- **CMG multi-nodo:** `config.py` agrega `CMG_NODOS_TODOS` (8 nodos: CRUCERO, CHARRUA, QUILLOTA, PAN_DE_AZUCAR, CARDONES, NOGALES, ANCOA, POLPAICO). Adquisición ahora guarda todos. Tab CMG muestra métricas CRUCERO+CHARRUA + tabla todos + gráfico multi-línea 48h.
+- **Mapa rediseñado:** estilo Carto Dark Matter, capas halo+glow+columna+dot+texto. Sin TerrainLayer (conflicto con fondo oscuro). Columnas más gruesas y brillantes, tooltip mejorado con CSS inline.
+- **Tab Solar:** KPIs por parque, selector, gráfico 48h (real+PCP+modelo), GHI+nubosidad baja, panel lateral con métricas y semáforo.
+- **Tab Eólica:** KPIs por parque, selector, gráfico 48h (real+PCP+modelo eólico), viento 10m/100m+ráfagas+shear, panel lateral.
+- Eólicos sur mapeados a `CHARRUA_______220` (pendiente confirmar con AES Andes).
+
+---
+
+---
+
+## INSIGHTS — REGLAS IMPLEMENTADAS (Sesión 6)
+
+| # | Regla | Severidad | Parque |
+|---|-------|-----------|--------|
+| 1 | Desvío real vs PCP > ±25% | crítico | por parque |
+| 2 | Desvío real vs PCP > ±15% | alerta | por parque |
+| 3 | GHI > 400 W/m² pero eficiencia < 75% del modelo | alerta | solar |
+| 4 | Eficiencia > 95% del modelo | positivo | solar |
+| 5 | Nubosidad baja > 60% con total < 35% (camanchaca) | alerta | solar |
+| 6 | Ráfagas > 20 m/s (sobre cut-out) | crítico | eólico |
+| 7 | Ráfagas > 16 m/s (acercándose al cut-out) | alerta | eólico |
+| 8 | Wind shear α > 0.30 | alerta | eólico |
+| 9 | Factor de planta > 90% | positivo | por parque |
+| 10 | CMG < 5 USD/MWh | alerta | global |
+| 11 | CMG > 200 USD/MWh | positivo | global |
+| 12 | Limitación de transmisión activa | crítico | por parque |
+
+---
+
+## FORECAST — NOTAS (Sesión 6)
+
+- Usa datos `es_forecast=True` de `meteo_ernc` — requiere `Adquisicion_meteo_ernc.py` ejecutado.
+- Potencia estimada: `p_fv_estimada_mw` (solar) y `p_eolica_estimada_mw` (eólico), calculados en openmeteo_api.py.
+- Agrega por hora → MWh directo (1 fila = 1 hora).
+- Caché 30 min en `_cargar_forecast()`.
+
+---
+
+---
+
+## DEPLOY STREAMLIT CLOUD (Sesión 7)
+
+### Pasos para publicar
+1. Hacer push del repo a GitHub (rama `main`)
+2. Ir a [share.streamlit.io](https://share.streamlit.io) → New app
+3. Repo: el del proyecto | Branch: `main` | Main file: `app_ernc.py`
+4. **Settings → Secrets** → pegar:
+   ```toml
+   SUPABASE_URL = "https://ozeubcqoxsihmmfpswoa.supabase.co"
+   SUPABASE_KEY = "sb_publishable_..."   # ← anon key, NO el service_role
+   ```
+5. Deploy → URL pública lista
+
+### Notas
+- `db.py` lee `st.secrets` primero, luego `os.environ` — funciona en cloud y local sin cambios.
+- Los scripts de adquisición (`Adquisicion_ernc.py`, `Adquisicion_meteo_ernc.py`) siguen corriendo en GitHub Actions con el `service_role` key — **no** se exponen en el frontend.
+- `.streamlit/secrets.toml` está en `.gitignore` — solo usar el panel de Streamlit Cloud para configurarlos.
+- El `anon key` de Supabase solo tiene permisos SELECT (RLS) — seguro para frontend público.
+
+---
+
+## PDF REPORTE (Sesión 7)
+
+- `utils/pdf_report.py`: portada, KPIs globales, tabla por parque (gen, FP, desvío, ingreso estimado), insights automáticos con severidad coloreada.
+- Botón "Generar reporte PDF" en sidebar → genera en memoria → botón de descarga aparece debajo.
+- No requiere escribir archivos en disco — usa `io.BytesIO`.
+
+---
+
+---
+
+## DEPLOY EN PRODUCCIÓN (2026-06-19)
+
+### GitHub
+- Repo: `https://github.com/ukubrick/ernc-aes-dashboard` (público)
+- Push inicial: `git init` → `git add .` → `git commit` → `git push` ✅
+- Credenciales guardadas en Keychain Mac — no pidió token personal
+
+### Streamlit Cloud
+- Conectado con cuenta GitHub ukubrick
+- Main file: `app_ernc.py` | Branch: `main`
+- Secrets configurados en Settings → Secrets (SUPABASE_URL + anon SUPABASE_KEY) ✅
+- El repo debe ser público para Streamlit Cloud free tier
+
+### GitHub Actions ✅
+- Archivo: `.github/workflows/adquisicion_ernc.yml`
+- Cron: `"10 * * * *"` (minuto :10 de cada hora UTC)
+- Step 1: `python Adquisicion_ernc.py` | Step 2: `python Adquisicion_meteo_ernc.py`
+- 4 secrets configurados en repo → Settings → Secrets and variables → Actions
+
+### Para correr localmente
+```bash
+cd "/Users/erickosvaldoherrerakerr/Desktop/ML DATA/Dashboard ERNC/ernc-aes-dashboard"
+source .venv/bin/activate
+streamlit run app_ernc.py
+# Si el puerto está ocupado: kill $(lsof -ti:8501)
+```
+
+---
+
+---
+
+## BUGS CONOCIDOS Y RESUELTOS (Sesión 8 — 2026-06-19)
+
+### Bug 1: StreamlitDuplicateElementId en st.plotly_chart
+- **Síntoma:** App crasheaba al navegar entre tabs con error `StreamlitDuplicateElementId`.
+- **Causa:** Todos los `st.plotly_chart()` carecían de `key=` explícito. Streamlit genera IDs automáticos que colisionan al re-renderizar dentro de tabs/columnas.
+- **Fix:** Agregar `key=` único a cada llamada. Convención usada:
+  - `key="solar_grafico_gen"`, `key="solar_grafico_ghi"`
+  - `key="eolica_grafico_gen"`, `key="eolica_grafico_viento"`
+  - `key="forecast_grafico_portfolio"`, `key=f"forecast_grafico_parque_{parque}"`
+  - `key="mapa_grafico_tendencia"`, `key="cmg_grafico_historico"`
+- **Regla:** Todo `st.plotly_chart` nuevo debe tener `key=` único. Si el gráfico depende de un selector (ej. parque), incluirlo en el key: `key=f"nombre_{variable}"`.
+
+### Bug 2: Queries retornaban vacío por timezone incorrecto
+- **Síntoma:** Dashboard mostraba 0.0 MW y `—` en todos los KPIs pese a haber datos en Supabase.
+- **Causa:** Las queries en `utils/db.py`, `tab_eolica.py`, `tab_solar.py` y `tab_forecast.py` usaban `datetime.now(timezone.utc)` para el filtro `gte("fecha_hora", desde)`. Los `fecha_hora` en DB están en hora local de Santiago (UTC-3), por lo que el filtro buscaba 3 horas hacia el futuro y no encontraba registros.
+- **Fix:** Reemplazar `datetime.now(timezone.utc)` por `_ahora_santiago()` definida en `utils/db.py`:
+  ```python
+  def _ahora_santiago():
+      from datetime import datetime, timezone, timedelta
+      return datetime.now(timezone(timedelta(hours=-3)))
+  ```
+- **Regla:** NUNCA usar `timezone.utc` para filtrar `fecha_hora` en este proyecto. Siempre `_ahora_santiago()`.
+
+### Bug 3: RLS bloqueaba lectura con anon key (dashboard sin datos)
+- **Síntoma:** Idéntico al Bug 2 — todos los valores `—` y `0.0 MW`. Se detectó después de corregir el Bug 2.
+- **Causa:** Supabase habilita RLS por defecto en todas las tablas. Sin políticas `SELECT` explícitas para `anon`, las queries retornan `[]` silenciosamente (sin error). El `anon key` del frontend no podía leer ninguna tabla.
+- **Fix:** Ejecutar en Supabase SQL Editor:
+  ```sql
+  CREATE POLICY "anon_select" ON generacion_real_ernc       FOR SELECT USING (true);
+  CREATE POLICY "anon_select" ON generacion_programada_ernc  FOR SELECT USING (true);
+  CREATE POLICY "anon_select" ON meteo_ernc                  FOR SELECT USING (true);
+  CREATE POLICY "anon_select" ON cmg_ernc                    FOR SELECT USING (true);
+  CREATE POLICY "anon_select" ON limitaciones_ernc           FOR SELECT USING (true);
+  CREATE POLICY "anon_select" ON sscc_ernc                   FOR SELECT USING (true);
+  ```
+- **Regla:** Al crear tabla nueva → agregar política antes de usar en el dashboard.
+
+---
+
+---
+
+## SESIÓN 9 — MEJORAS VISUALES Y FIXES (2026-06-19)
+
+### Fixes
+1. **Forecast eólica = 0**: `openmeteo_api.py` nunca llamaba a `calcular_potencia_eolica_estimada()` en el bloque eólico. Fix: agregar llamada con `(v100m, rho, pmax)` al final del bloque `else`. Requiere re-ejecutar el workflow para repoblar `p_eolica_estimada_mw` en DB.
+
+2. **PCP en forecast**: nueva función `_cargar_pcp_forecast()` en `tab_forecast.py` que carga `generacion_programada_ernc` desde ahora hasta `+2 días`. Se muestra como línea amber dash en gráfico portfolio y por parque. No requiere datos adicionales — usa tabla ya existente.
+
+### Nuevas funcionalidades
+3. **Sidebar — fuentes de datos**: nueva función `query_ultimas_actualizaciones()` en `utils/db.py` que consulta el `MAX(fecha_hora)` de las 4 tablas principales. Se muestra en el sidebar con hora en formato `DD/MM HH:MM`.
+
+4. **Sidebar — firma**: "Dashboard creado por Erick Herrera" al pie, con separador y estilo sutil.
+
+5. **Pestaña Estadísticas** (`components/tab_estadisticas.py`): MWh acumulado, FP ranking, desvío vs PCP, ingreso USD estimado.
+
+6. **Mapa auto-center**: `render_mapa(gen_por_parque, parque_activo)` centra en el parque seleccionado desde sidebar (zoom 8.5 vs 4.6 en vista general Chile).
+
+7. **KPIs duales CMG**: 7 columnas — CRUCERO 220 (solar norte) + CHARRUA 220 (eólica sur), ingreso separado por tecnología.
+
+### Rediseño visual completo
+- Sidebar con gradiente oscuro AES, botones con efecto hover translateX, activo en cyan
+- KPI cards con borde-top de color diferente por tipo, hover lift
+- Tabs con gradiente azul en activa, fadeInUp en contenido
+- Gráficos con `transition 500ms`, border-radius, shadow y hover glow
+- Insights con fadeInLeft escalonado, dot-pulse en críticos, badge coloreado
+- Título principal agrandado a 30px/800
+- Título sidebar "AES Andes ERNC" a 22px/800, sin ícono
+
+---
+
+---
+
+## SESIÓN 10 — FIX PAGINACIÓN PCP Y VENTANA 5 DÍAS (2026-06-20)
+
+### Bug crítico corregido: paginación PCP v4 cortaba en página 1
+
+**Síntoma:** Solo ~33 registros en `generacion_programada_ernc` (1 hora por parque) pese a haber datos en la API.
+
+**Causa:** En `utils/cen_api.py`, función `fetch_gen_programada()`, la lógica de corte del loop usaba:
+```python
+total = data.get("total", len(items))   # "total" no existe en la respuesta v4
+if page * 5000 >= total:                # fallback a 5000 → 1*5000 >= 5000 → True → corta en pag 1
+    break
+```
+La API PCP v4 devuelve `totalPages` (no `total`). Como `total` era `None`, el fallback `len(items) = 5000` hacía que la condición se cumpliera siempre en la primera página.
+
+**Fix aplicado** (`utils/cen_api.py:195`):
+```python
+total_pages = data.get("totalPages", 1) if isinstance(data, dict) else 1
+if page >= total_pages:
+    break
+```
+
+**Estructura real de respuesta PCP v4:**
+```json
+{ "data": [...], "totalPages": 63, "page": 1, "limit": 5000 }
+```
+- Cada página = una hora del sistema completo (~5000 generadores)
+- Ventana 2 días = ~63 páginas | Ventana 5 días = ~244 páginas
+- ~5s por página → 2 días ≈ 5 min | 5 días ≈ 19 min
+
+### Ampliación de ventana
+
+- `DIAS_VENTANA` cambiado de `2` a `5` en `config.py` — aplica a gen-real, PCP, meteo y SSCC
+- `timeout-minutes` del workflow subido de `40` a `60` para cubrir los ~19 min de PCP
+
+### Commits
+- `5c92280` fix: corregir paginación PCP v4 — usar totalPages en vez de total
+- `0e6e51d` config: ampliar ventana adquisición PCP a 5 días, timeout workflow a 60 min
+
+---
+
+---
+
+## SESIÓN 11 — MEJORAS UX MÚLTIPLES (2026-06-20)
+
+### Cambios implementados
+
+1. **Mapa — zoom inicial reducido**: de `zoom=4.6` a `zoom=3.9`, centrado en lat=-32.0 para que los 6 parques solares del norte (Atacama) y los 5 eólicos del sur (Biobío) no se solapen al cargar.
+
+2. **Keep-alive Streamlit Cloud**: el workflow de GitHub Actions hace un `curl` a la URL de producción al final de cada ejecución horaria, evitando la hibernación por inactividad.
+
+3. **Filtrado valores negativos gen bruta**: en `tab_solar.py` y `tab_eolica.py` se filtran `gen_real_mw < 0` antes de graficar (pueden aparecer por despacho negativo del BESS asociado).
+
+4. **Modelo FV — ceros nocturnos excluidos**: el trazado "Modelo FV" solo muestra horas donde `is_day=True`, eliminando la línea plana en 0 que contaminaba el gráfico nocturno.
+
+5. **Ventana configurable en Solar y Eólica**: selector de 24/48/72/120 horas para ambos tabs (key `solar_ventana_horas` / `eolica_ventana_horas`).
+
+6. **Layout Solar y Eólica refactorizado**:
+   - Gráfico de generación a ancho completo (sin columna lateral)
+   - Fila de 6 métricas horizontales debajo del gráfico (gen, cap, FP, desvío, GHI/viento, temp/shear)
+   - Expander "Variables y fórmulas del modelo FV/eólico" con tabla de series y explicación matemática
+   - GHI/viento en gráficos separados debajo
+
+7. **Tab Eólica — shear en gráfico propio**: `wind_shear_alpha` en subgráfico de 160px separado con línea de umbral α=0.30, en lugar de eje secundario mezclado con velocidades.
+
+8. **Tab Insights — subtab meteorológico**: nueva pestaña "Condiciones meteorológicas" con tabla de parámetros actuales Solar (GHI, Tc, nubosidad) y Eólica (v10m, v100m, ráfagas, shear) para todos los parques. Alertas marcadas con `!` y `~`.
+
+9. **Forecast — gráficos más altos**: portfolio 380px, parque 320px (antes 320/260). Columnas del selector tipo/parque ampliadas a [1,3].
+
+10. **Limitaciones — query ampliada**: `query_limitaciones_activas()` ahora devuelve también limitaciones con retorno registrado en los últimos 30 días. El tab muestra tabla separada activas vs históricas.
+
+### Keys de plotly_chart actualizados
+Ahora incluyen el parque en el key para evitar StreamlitDuplicateElementId al cambiar parques:
+- `solar_grafico_gen_{parque}`, `solar_grafico_ghi_{parque}`
+- `eolica_grafico_gen_{parque}`, `eolica_grafico_viento_{parque}`, `eolica_grafico_shear_{parque}`
+
+---
+
+---
+
+## SESIÓN 12 — FIXES NAVEGACIÓN Y EJE X (2026-06-21)
+
+### Bug: gráficos comprimidos en primer render de tab
+
+**Síntoma:** Al abrir por primera vez una pestaña (Solar FV, Eólica, Forecast, Estadísticas), los datos del gráfico aparecen apilados hacia la derecha (o izquierda) con espacio vacío.
+
+**Causa investigada:** Se descartó que fuera un problema de ancho SVG (Streamlit 1.58.0 mide 940px correctamente desde el primer render). La causa real son **dos fuentes de espacio vacío en el eje X**:
+1. **Lado derecho:** `xaxis=dict(range=[corte, None])` — `None` hace que Plotly extienda el eje hasta el tiempo actual del sistema. Si los datos tienen lag (ej. datos hasta las 20:00 pero son las 03:00 del día siguiente), el eje muestra 7 horas vacías a la derecha.
+2. **Lado izquierdo:** `corte = ahora - ventana` puede ser anterior al primer dato en DB (ej. ventana=7d pero datos desde hace 5d), dejando 2 días vacíos al inicio.
+
+**Fix aplicado en `tab_solar.py` y `tab_eolica.py`:**
+```python
+# Calcular x_min y x_max desde los datos reales — no desde la ventana teórica
+_xmins, _xmaxs = [], []
+if not df_gen.empty:
+    _xmins.append(df_gen["fecha_hora"].min())
+    _xmaxs.append(df_gen["fecha_hora"].max())
+if not df_prog.empty:
+    _xmins.append(df_prog["fecha_hora"].min())
+    _xmaxs.append(df_prog["fecha_hora"].max())
+x_min = min(_xmins) if _xmins else corte
+x_max = max(_xmaxs) if _xmaxs else None
+# ...
+xaxis=dict(range=[x_min, x_max])  # reemplaza range=[corte, None]
+```
+El mismo patrón aplica a `_grafico_ghi()`, `_grafico_viento()` y `_grafico_shear()`.
+
+**Estado:** El fix reduce el problema pero no lo elimina completamente en producción (datos en DB con lag > 1 día pueden seguir causando compresión visual al primer render). Queda pendiente investigación adicional.
+
+### Bug: navegación sidebar rota
+
+**Síntoma:** Botones del sidebar no cambiaban de tab activo.
+
+**Causa:** `st.session_state["main_tabs"] = valor` es ignorado silenciosamente por Streamlit cuando la key ya está asociada a un widget activo. No se puede escribir sobre el state de un widget vivo.
+
+**Fix aplicado en `app_ernc.py`:**
+```python
+# Estrategia: key dinámica por destino fuerza recreación del componente con default= correcto
+if tab_forzado and tab_forzado in _tab_map:
+    _key = f"tabs_{tab_forzado}_{parque_activo}"   # key nueva → Streamlit recrea st.tabs
+    st.session_state["_tabs_key"] = _key
+    _default = _tab_map[tab_forzado]               # default= activa el tab correcto
+else:
+    _key = st.session_state.get("_tabs_key", "tabs_default")  # reutiliza key actual
+    _default = None                                 # sin default → mantiene posición actual
+
+tab_resumen, tab_solar, ... = st.tabs(tab_labels, key=_key, default=_default)
+```
+
+**Por qué funciona:** Al cambiar el key, Streamlit crea un componente nuevo y respeta `default=`. En reruns siguientes (cambio de ventana, parque), la key no cambia → el tab activo se preserva. El `tab_forzado` se consume con `pop()` en cada rerun.
+
+**Regla:** Para navegar programáticamente entre tabs en Streamlit, NUNCA escribir en `session_state[tab_key]` directamente. Usar key dinámica + `default=`.
+
+### Commits sesión 12
+- `843289a` fix: rango X calculado desde datos reales (x_min/x_max) en tab_solar y tab_eolica
+- `d5fa6d7` fix: navegación sidebar restaurada — key dinámico con default= al tab correcto
+
+---
+
+## SESIÓN 13 — FIX DEFINITIVO COMPRESIÓN GRÁFICOS + NAVEGACIÓN (2026-06-21)
+
+### Bug raíz: gráficos Plotly comprimidos al abrir un tab por primera vez
+
+**Causa confirmada:** `st.tabs` renderiza TODOS los paneles en el DOM simultáneamente
+y oculta los inactivos con `display:none`. Un `st.plotly_chart(use_container_width=True)`
+dentro de un panel oculto se inicializa midiendo el ancho del contenedor como ~0px →
+el gráfico queda comprimido. Al cambiar el selectbox/parque/fecha se dispara un rerun
+que re-renderiza el gráfico con el tab ya visible → recién ahí mide bien. El fix de
+`range=[x_min,x_max]` (Sesión 12) atacaba el espacio vacío del eje, NO este problema de ancho.
+
+**Fix definitivo — navegación de vista única:** se eliminó `st.tabs` del layout principal.
+- `app_ernc.py`: nueva `_navegacion()` + estado `st.session_state["vista"]` (variable normal,
+  no key de widget) + barra de botones (`type="primary"` = activo). Se renderiza SOLO la vista
+  activa. El gráfico siempre se monta en un contenedor visible y a ancho real → nunca se comprime.
+- Se eliminó el hack frágil de `key` dinámico + `default=` en `st.tabs` (`tab_forzado`,
+  `_tabs_key`, `_tab_map`) que además rompía la navegación del sidebar.
+
+**Regla:** NUNCA poner `st.plotly_chart` en paneles de `st.tabs` inactivos. Para vistas
+con gráficos, usar navegación de vista única (renderizar solo la activa).
+
+### Bug: navegación del sidebar no cambiaba de central
+Resuelto por el mismo cambio: el sidebar escribe `st.session_state["vista"]` directamente
+(variable normal, no widget) → navegación 100% fiable.
+
+### Selección de parque (one-shot)
+El sidebar fuerza el selectbox de Solar/Eólica una sola vez vía `st.session_state["_sync_parque"]`,
+consumido con `pop()` en el tab. Después el desplegable es dueño de su estado y el usuario puede
+cambiar la central libremente sin que se revierta. Antes la lógica forzaba el selectbox en cada
+rerun, revirtiendo la elección manual.
+
+### Refactor / limpieza
+- Eliminado helper `_xmin()` sin uso en `tab_solar.py` y `tab_eolica.py`.
+- Eliminado CSS muerto de `.stTabs`; reemplazado por estilo de botones de navegación
+  (`.block-container .stButton button[kind=primary|secondary]`).
+- `tab_insights.py` conserva `st.tabs` interno (solo tablas/métricas, sin Plotly → no sufre el bug).
+
+---
+
+---
+
+## SESIÓN 14 — FÓRMULAS, MODELOS CORREGIDOS, CMG Y PESTAÑA ML (2026-06-21)
+
+### Correcciones de fórmulas / adquisición
+- **Viento en m/s (bug crítico):** Open-Meteo entrega viento en **km/h** por defecto. Se trataba
+  como m/s → el modelo eólico sobreestimaba (mostraba Pmax casi siempre). Fix: `wind_speed_unit:"ms"`
+  en `_params_solar` y `_params_eolica` (`openmeteo_api.py`). **Requiere re-correr adquisición meteo.**
+- **Curva de potencia eólica realista:** `calcular_potencia_eolica_estimada` ahora usa cut-in (3 m/s),
+  rampa cúbica hasta rated (12 m/s), meseta a Pmax hasta cut-out (25 m/s) y **0 sobre cut-out**.
+  Constantes nuevas en `config.py`: `TURBINA_V_CUTIN/RATED/CUTOUT`.
+- **Wind shear α acotado:** se limita a `[-0.10, 0.60]` (`SHEAR_ALPHA_MIN/MAX`) y se ignora con vientos
+  <1.5 m/s (antes daba α>2 absurdos). `interpolar_viento_100m` corregido.
+- **Modelo FV de noche:** en `tab_solar._grafico_gen` la noche se marca NaN con `connectgaps=False`,
+  eliminando la diagonal falsa. Ya NO se filtran los puntos nocturnos (eso causaba el artefacto).
+- **Saneamiento gen real:** `cen_api.fetch_gen_real` descarta valores > 110% Pmax (físicamente
+  imposibles). El resto se auto-corrige con el upsert horario de ventana 5 días (sistema tipo CTM).
+
+### CMG — nodos reales del feed S3
+Los nombres en `CMG_NODOS_TODOS` no calzaban con el feed (n.º de guiones bajos). Solo CRUCERO y
+CHARRUA matcheaban. Nombres reales confirmados (8): `CRUCERO/ATACAMA/TARAPACA/CARDONES/P.AZUCAR/
+QUILLOTA/CHARRUA/P.MONTT` + `______220`. `query_cmg_ultimo` ahora usa `limit(400)` para que todos
+aparezcan. **Los nodos nuevos se poblarán al correr la adquisición CMG.**
+
+### Leyendas y hovers
+- Fórmulas movidas a expander "Fórmulas del modelo" con `st.latex` (tipografía científica elegante).
+- Hovers de las series simplificados a solo valor + nombre corto (antes la fórmula tapaba el valor).
+
+### Nueva pestaña ML Analysis (`components/tab_ml.py`)
+Sub-navegación con `st.radio` (no `st.tabs`, para no reintroducir el bug de compresión). Modelos
+entrenados en vivo con histórico de Supabase. Requiere `scikit-learn>=1.4.0` (agregado a requirements):
+1. **Forecast de generación** — RandomForest meteo→gen por parque; R²/MAE, comparación con modelo
+   físico, importancia de variables y pronóstico aplicado al forecast meteo. (Solar AS1: R²≈0.95.)
+2. **Detección de anomalías** — residuos del modelo (z-score>3) + IsolationForest; marca horas raras.
+3. **Predicción de CMG** — RandomForest con rezagos por nodo + pronóstico recursivo 12h.
+4. **Análisis de eficiencia** — performance ratio real/teórico por parque + clustering KMeans.
+Todas las secciones degradan con mensaje claro si faltan datos (umbral ≥48 registros).
+
+### Pendiente operativo
+Correr `Adquisicion_meteo_ernc.py` y `Adquisicion_ernc.py` (o esperar el cron) para repoblar la DB
+con viento en m/s, nodos CMG nuevos y más histórico para los modelos ML.
+
+---
+
+---
+
+## SESIÓN 15 — INSIGHTS, MAPA, ESTADÍSTICAS, METEO/SISTEMA Y FIX ADQUISICIÓN (2026-06-21)
+
+### Fix crítico: paginación de limitaciones (mismo bug que PCP v4)
+`fetch_limitaciones` usaba `data.get("total", len(items))` y cortaba en la página 1 → solo
+aparecía 1 limitación. La API v4 publica `totalPages`, no `total`. Corregido en `utils/cen_api.py`
+con paginación robusta (totalPages → total → página incompleta) y page size 500. **Validado
+contra la API real: pasó de 1 → 4 limitaciones** (Campo Lindo, Los Olmos, Bolero, Mesamávida).
+Mismo patrón aplicado a `fetch_gen_real`. El matching de nombres ahora normaliza tildes.
+
+### Adquisición más confiable (`_get_with_retry`)
+Sesión HTTP reutilizable, reintenta en 429/5xx además de red, respeta `Retry-After`, backoff
+exponencial con jitter. **OJO PCP:** la query de 5 días del sistema completo puede degradarse en
+la API (se observó page 1 colgada >25 min). El cron se auto-corrige; evaluar bajar la ventana PCP
+a 1-2 días si reincide.
+
+### Insights nuevos (`utils/insights.py`)
+CMG negativo (vertimiento forzado, crítico), parque FV caído con buen GHI (ratio<25%, crítico),
+generación eólica baja con buen viento (curtailment/falla), y "sin telemetría reciente".
+
+### Botones de central clicables + reorden (puntos 4 y 5)
+Las tarjetas KPI de Solar/Eólica eran markdown con `cursor:pointer` falso → ahora son `st.button`
+reales que setean el selectbox (escribir la key antes de crear el widget + rerun). Reordenado:
+series de tiempo primero, leyenda + fórmulas al final.
+
+### Sidebar (punto 9)
+Bloque "Fuentes de datos" movido arriba (bajo el título) con semáforo de conexión palpitante
+(`pulse-green`/`pulse-red`) y estado global Conectado/Parcial/Sin conexión. Helper
+`_estado_fuente(ts, horas_max)`.
+
+### Estadísticas (punto 6)
+Donut de mix solar/eólica, área apilada por tecnología en el tiempo, heatmap de FP por hora del día.
+
+### Nueva pestaña Meteo & Sistema (`components/tab_meteo_sistema.py`)
+Alertas meteo anticipadas (forecast 48h), heatmaps de nubosidad y viento hub pronosticados, y
+contexto de mercado CMG nacional (spread Norte-Sur + ranking). Reutiliza `meteo_ernc`/`cmg_ernc` —
+sin tablas nuevas.
+
+### Mapa (`components/mapa_ernc.py`)
+Selector **Claro / Detallado** (Voyager) + ciudades de referencia. **Satélite descartado:** pydeck
+no renderiza TileLayer raster (necesita callback JS) y el map_style raster exige token Mapbox. El
+style ESRI quedó dormido por si se agrega un token gratuito a futuro.
+
+### Demanda CEN: NO disponible en el plan SIP
+Todas las variantes (`demanda-real`, `demanda`, v1-v5) dan 404. `costo-marginal-real/v4` existe
+pero publica con días de rezago y son ~260k páginas. No usable en tiempo real.
+
+---
+
+---
+
+## SESIÓN 16 — REBRANDING A "PULSAR" + LOGO EN SIDEBAR (2026-06-21)
+
+El dashboard pasa a llamarse **Pulsar** (enfoque en predicción). Cambios en `app_ernc.py`:
+
+- **Nombre:** "Dashboard ERNC — AES Andes" → **"Pulsar — AES Andes"** en `page_title`,
+  `page_icon` (`assets/logo_pulsar.png`) y header principal (`<h1>`).
+- **Logo en sidebar:** `assets/logo_pulsar.png` reemplaza el título de texto. Debajo va
+  "Creado por **Erick Herrera**". Se eliminó el título "AES Andes ERNC" del top y la firma
+  "Dashboard creado por…" del pie del sidebar.
+
+### Keying del logo (importante)
+El PNG entregado venía **flatten en RGB con el patrón de transparencia (checkerboard)
+horneado como píxeles reales**: fondo 242–249, logo blanco 251–255. Por eso `st.image()`
+y los filtros CSS (`brightness/invert/mix-blend-mode`) dejaban un recuadro gris.
+**Solución (PIL + numpy en `render_sidebar`):** key por luminancia con corte en **251**
+(justo encima del máximo del checkerboard) → `alpha = clip((bright-251)*80)`, color forzado
+a blanco puro, reescalado a 320px con LANCZOS, embebido como base64 en `<img>`. Resultado:
+fondo 100% transparente, logo blanco nítido sobre el gradiente azul del sidebar.
+
+**Regla:** si se reemplaza el logo, usar un PNG con transparencia real (no flatten). Si trae
+checkerboard horneado, ajustar el umbral del key al máximo del fondo (~251 en este archivo).
+
+---
+
+---
+
+## SESIÓN 17 — SECCIÓN PRINCIPAL, FIXES SOLAR/EÓLICA, CMG, MAPA SATELITAL Y BESS (2026-06-22)
+
+### Sección principal (KPIs) — `components/kpis_generales.py`
+- Reemplazados los `st.metric` (con tooltip `?`) por **cards HTML** en grid `kpi-grid`
+  (6 columnas → 3 → 2 responsive). Cada card lleva borde-top de color, valor, delta y
+  una **nota inline** con la explicación del cálculo + la **última hora** del dato.
+- **CMG ahora es un promedio** ("CMG Promedio") de los nodos del SEN **excluyendo
+  `P.MONTT_______220`** (otro sistema). El ingreso estimado se calcula sobre ese promedio.
+  Se pasó de 7 a 6 cards.
+- Eliminado el header "Ultima lectura: HH:MM" (ya está en el sidebar) y el **punto rojo
+  suelto** bajo Desvío vs PCP.
+
+### Navegación — `app_ernc.py`
+- Botones de sección repartidos en **2 filas** (no apretados), padding mayor,
+  `min-height:46px`, `white-space:normal`. Nueva vista **"BESS"** entre Eólica y Forecast.
+
+### Fix métricas Solar y Eólica — `tab_solar.py` / `tab_eolica.py`
+- **Desvío vs PCP**: ahora compara gen real y PCP **en la misma hora**
+  (`_gen_prog_mismo_hora`). Antes comparaba la última hora de gen contra la última PCP
+  (a veces futura) → daba −100% o "—".
+- **GHI / Temp / Viento**: eran `if valor else "—"` → con valor 0 mostraban "—"
+  (0 es *falsy*). Corregido a `is not None`. De noche GHI muestra "0 W/m²" honestamente.
+- Eliminados todos los `?` (help) de los paneles; la explicación quedó en `st.caption`.
+- **Shear**: quitado `fill="tozeroy"`+`rangemode="tozero"` (rompía con α negativo),
+  rango fijo `[-0.15, 0.65]` y **clip a `[-0.10, 0.60]`** de valores viejos absurdos.
+  Los α de −2..+5 eran datos pre-Sesión 14; se corrigen al repoblar meteo.
+
+### Forecast — `tab_forecast.py`
+- **Eliminada la línea PCP** (solo llegaba a D+1, engañosa en 7 días). El pronóstico
+  ahora es el **modelo físico propio** sobre el forecast Open-Meteo, con nota explicativa.
+  Borrada `_cargar_pcp_forecast()`.
+
+### ML Analysis — clustering de eficiencia — `tab_ml.py`
+- Scatter rediseñado: **centroides** (X grande por grupo), etiquetas por nivel
+  (**Alta/Media/Baja eficiencia** ordenadas por PR, verde/ámbar/rojo), línea PR=1.0,
+  leyenda con conteo y `st.caption` con guía de interpretación.
+
+### Meteo & Sistema — `tab_meteo_sistema.py`
+- Reordenado: **heatmaps primero** (nubosidad → viento), luego **alertas con 3
+  prioridades** (alta/media/baja) con colores, contador-resumen y animación leve
+  (`alertaIn` + `pulseAlta` en críticas). Nuevas reglas: recurso eólico bajo, nubosidad
+  moderada.
+
+### CMG — `app_ernc.py::_render_tab_cmg`
+- **Serie de tiempo primero, tabla después** (con **máx/mín 48h** por nodo).
+  Quitados los `?`. Corregido el filtro histórico **UTC→Santiago**. Nuevas **alertas**:
+  costo cero (<0.5, vertimiento), CMG alto (>200, oportunidad), desacople (spread>50),
+  máximo de ventana. Línea de costo cero en el gráfico.
+- **Nota:** la convergencia de nodos tras 21-jun 00:00 **no es bug** — es real (nodos
+  convergen sin congestión) + los 6 nodos nuevos solo tienen datos desde el fix Sesión 14.
+
+### Mapa satelital — `components/mapa_ernc.py`
+- Vista **"Satelite"** con **MapTiler** (style `hybrid` hospedado). Aparece solo si hay
+  `MAPTILER_KEY`. **CRÍTICO:** el `DeckGlJsonChart` de Streamlit exige `map_style` como
+  **STRING URL** — un dict de style raster MapLibre revienta con
+  `e.mapStyle?.indexOf is not a function`. Por eso se usa la URL hospedada, NO un dict.
+- La capa de **nubes OpenWeather NO** puede inyectarse en un style-URL (pydeck no
+  renderiza raster dicts ni TileLayers raster). Quedaría para un mapa folium aparte.
+  `OPENWEATHER_KEY` ya configurada pero sin uso por esta limitación.
+- Eliminado el dict muerto `_ESRI_SAT_STYLE`. Helpers nuevos: `_secret()`,
+  `maptiler_disponible()`, `_satelite_style_url()`.
+
+### Secrets nuevas (gitignored: `.env` y `.streamlit/secrets.toml`)
+```
+MAPTILER_KEY      ← satélite (MapTiler free)
+OPENWEATHER_KEY   ← reservada para nubes (pendiente folium)
+```
+En Streamlit Cloud: agregarlas en Settings → Secrets.
+
+### BESS — sección completa nueva
+Los BESS de AES aparecen en gen-real/v3 como **centrales separadas** (`id_central=None`,
+`tipo='BESS'`) con llaves `(Inyección)`=descarga y `(Retiro)`=carga, ambas positivas.
+**No** se filtran por idCentral → hay que escanear el feed completo.
+
+- **5 BESS confirmados** (`config.py::BESS`, llaves validadas contra la API 21-jun):
+  | Código | BESS | Parque | Pmax desc. (MW) |
+  |--------|------|--------|-----------------|
+  | AS2A_B | Andes Solar IIA | AS2A | 84.0 |
+  | AS2B_B | Andes Solar IIB | AS2B | 136.5 |
+  | AS3_B  | Andes Solar III | AS3 | 177.0 |
+  | AS4_B  | Andes Solar IV | AS4 | 140.0 |
+  | BOL_B  | Bolero | BOL | 160.0 |
+  | ~~ET1_B~~ | ~~Andes ET1~~ | — | eliminado Sesión 22 (no existe) |
+- Convención: `potencia_neta_mw = inyeccion - retiro` (>0 descarga, <0 carga).
+  AS3 y BOL tienen 2 llaves de retiro ("de central" + "del sistema") → se suman.
+- `utils/cen_api.py::fetch_gen_bess()` (ventana 2 días, scan completo, agrega por
+  `(bess, fecha_hora)`). Validado: 254 registros, signos correctos (carga mediodía,
+  descarga punta tarde).
+- `utils/db.py`: `upsert_generacion_bess()` (on_conflict `bess,fecha_hora`) +
+  `query_bess_ultimas_horas()` (try/except → `[]` si la tabla no existe).
+- `schema.sql`: tabla `generacion_bess_ernc` + RLS `anon_select` + índice
+  `idx_bess_fecha`. **Ejecutado en Supabase (Sesión 17).**
+- `Adquisicion_ernc.py`: paso `adquirir_gen_bess()` integrado al cron.
+- `components/tab_bess.py`: estado (cargando/descargando/reposo), potencia neta,
+  descarga/carga 24h, ciclos eq. (cap. energía = Pmax × 4h asumido), gráfico
+  carga/descarga + **SoC estimado** (integración del flujo neto, anclado al mínimo),
+  y **arbitraje vs CMG** del nodo del parque (ingreso descarga − costo carga + spread).
+
+### Mapa satelital migrado a folium (post-fix MapTiler)
+La vista **Satelite** se migró de pydeck a **`streamlit-folium`** porque pydeck/Streamlit
+no puede superponer capas raster (nubes) ni renderizar styles dict (crash
+`mapStyle?.indexOf is not a function`). Implementado en
+`components/mapa_ernc.py::_render_satelite_folium()`:
+- Base **Esri World Imagery** (token-free, no necesita MapTiler) + etiquetas Carto.
+- **Nubosidad OWM en vivo** (`OPENWEATHER_KEY`, opacity 0.9 — densidad codificada en el
+  tile) + **día/noche** con `folium.plugins.Terminator` (tiempo real).
+- `LayerControl` para alternar nubes/etiquetas; markers `CircleMarker` con popup por parque.
+- `st_folium(..., returned_objects=[])` para no disparar reruns.
+- Satelite es **default** del selector y siempre disponible (ESRI sin key).
+- Claro/Detallado siguen en **pydeck** con marcadores en píxeles (`radius_units=pixels`,
+  no se agrandan al zoom) y labels escalonados para el complejo Andes Solar.
+- Caption con **hora real Santiago** (usa `ZoneInfo("America/Santiago")`, NO offset fijo).
+- Dependencias nuevas en `requirements.txt`: `folium`, `streamlit-folium`.
+- Eliminado el dict/URL MapTiler muerto. La `MAPTILER_KEY` ya no se usa (queda en secrets
+  por si se quiere volver a un style hosted).
+
+### Pendientes Sesión 17
+- [ ] **TZ GLOBAL (PRIORITARIO próxima sesión):** reemplazar TODOS los offset fijos `-3`
+      por `ZoneInfo("America/Santiago")`. `utils/db.py::_ahora_santiago()` y varios tabs
+      usan `timezone(timedelta(hours=-3))`, que en **invierno chileno (UTC-4)** corre las
+      ventanas/filtros **1 h** respecto a los timestamps reales de la DB (guardados con
+      `TZ_CHILE`=ZoneInfo en adquisición). El mapa YA se corrigió (Sesión 17); falta el resto.
+- [ ] Re-correr `Adquisicion_meteo_ernc.py` para repoblar shear acotado y viento en m/s.
+- [ ] Capacidad real de energía (MWh) de cada BESS para SoC/ciclos exactos — hoy se
+      asume duración 4h (`_HORAS_BESS`). La API CEN no publica MWh.
+- [ ] (item 6 usuario) Info técnica del Coordinador para recalcular fórmulas y confirmar
+      el nodo CMG real de cada parque.
+- [ ] Nubes OWM: confirmar que `OPENWEATHER_KEY` quedó activa (daba 401 al crearse; las
+      keys nuevas tardan ~2 h). Si sigue 401, revisar la key.
+
+---
+
+---
+
+## SESIÓN 18 — PARÁMETROS TÉCNICOS REALES (CARTAS CEN) + PESTAÑA INFOTÉCNICA (2026-06-22)
+
+Erick aportó `parametros_pe_pulsar.xlsx` + `parametros_pfv_pulsar.xlsx` (cartas CEN
+y fichas de fabricante). Se ajustaron los cálculos y se agregó una pestaña de referencia.
+
+### Cambios en `config.py`
+- **`PMAX_NETA`**: Pmax neta CEN por parque (None donde no hay carta: BOL, MSM).
+- **`PMAX_FP`**: Pmax para FACTOR DE PLANTA — neta CEN si existe, si no la config.
+  Caso especial **MSM = 67.2 MW** (potencia total instalada, no la config 70.56).
+  Totales: `PMAX_FP_TOTAL` (1108), `_SOLAR` (682), `_EOLICA` (426).
+- **`TURBINA_PARQUE`**: curva de potencia por parque eólico (cut-in/rated/cut-out +
+  fabricante/modelo/n_wtg/rotor/hub). CL: Vestas V150-4.3 (cut-out **24.5**), MSM:
+  Nordex N149-4.8. Resto default 3/12/25.
+- **`BESS_HORAS`**: duración declarada (AS2B 4.95 h, AS3 3 h, AS4 5 h).
+- **`INFOTECNICA`**: ficha consolidada por parque (Pmax bruta/neta, Pmin, SSCC,
+  equipos, nota de cálculo, fuente) — solo para la pestaña de referencia.
+
+### Regla de cálculo (FP)
+Prioridad AES: **Pmax neta CEN aceptada > potencia neta verificada SSCC > potencia
+total instalada documentada**. Se cambió el FP a `PMAX_FP` en `kpis_generales.py`
+(totales y notas), `tab_solar.py`, `tab_eolica.py` (métrica ahora "Pmax neta CEN"),
+`tab_estadisticas.py`, `utils/insights.py`, `utils/pdf_report.py` y las tablas/botones
+del sidebar en `app_ernc.py`. El **modelo FV** sigue usando `PMAX` (bruta); el **modelo
+eólico** usa `PMAX_FP` (neta) + la curva `TURBINA_PARQUE` en `utils/openmeteo_api.py`.
+**Requiere re-correr `Adquisicion_meteo_ernc.py`** para repoblar `p_eolica_estimada_mw`.
+
+### Nueva pestaña Infotécnica (`components/tab_infotecnica.py`)
+Vista `"Infotecnica"` (última en `VISTAS`). Tablas: potencias+SSCC FV, potencias+SSCC
+eólica, curva de potencia eólica por parque, BESS (energía = Pmax×horas), y fichas
+expandibles por parque con equipos y fuentes. Solo lectura, sin Plotly.
+
+---
+
+---
+
+## SESIÓN 19 — UX MAYOR: ALARMAS, NAV POR CATEGORÍAS, BESS/ML/ESTADÍSTICAS (2026-06-22)
+
+1. **Insights → Alarmas** (`tab_insights.py` + `utils/insights.py`): sección renombrada.
+   `Insight` ahora tiene `timestamp`; `evaluar_insights(..., ultima_hora)` lo estampa.
+   Cards muestran **fecha/hora** del evento. Semáforo verde/amarillo/rojo (3 tarjetas de
+   conteo) + filtros por **severidad** y categoría. Subtab meteo: columna **Fecha/hora**
+   por parque + última lectura. Dispatch pasa `ultima_hora`.
+2. **Mapa & Resumen** (`app_ernc._render_tab_resumen`): mapa a **ancho completo**; tabla
+   de estado **debajo** con Pmax neta, FP, **% capacidad (ProgressColumn)**, PCP y Desvío.
+   Serie 24h ahora **apilada Solar/Eólica** + línea PCP ámbar.
+3. **BESS** (`tab_bess.py`): métricas extra (máx desc/carga, horas desc/carga, energía neta),
+   **CSV** de la serie del BESS, y **tabla resumen de los 6 BESS** (estado, carga/descarga,
+   horas, ciclos) con CSV. Nueva subsección ML **"BESS — operación"** en `tab_ml.py`
+   (perfil horario, dispersión neta vs CMG, correlación de arbitraje, importancia hora/CMG).
+4. **Estadísticas** (`tab_estadisticas.py`): 2ª fila de KPIs (FP portfolio, mejor parque,
+   precio medio capturado, **CO₂ evitado**), cumplimiento PCP, y **CSV** de detalle.
+5. **ML Analysis** (`tab_ml.py`): **fix R² absurdo** — el forecast de generación usa
+   `train_test_split` aleatorio (la gen depende del clima concurrente, no de su pasado),
+   con `np.clip` a [0,Pmax]; el backtest cronológico queda solo para visualización.
+   Expanders de **metodología/fundamento teórico** en las 4 subsecciones. Eficiencia usa
+   `PMAX_FP`.
+6. **Sidebar/Nav** (`app_ernc.py`): logo **más grande (210px) y más arriba** (padding
+   reducido + recorte de `stSidebarUserContent`). Nueva **card KPI BESS** (estado + % de
+   uso, neta) en `kpis_generales.py` (grid 4-col responsive, 8 cards). Navegación en **2
+   niveles**: `st.segmented_control` de **categorías** (Operación / Análisis / Alarmas &
+   Mercado / Referencia) → botones de vista; auto-curado al saltar desde el sidebar.
+7. **Tooltips `?` eliminados** de TODO el software (`help=` quitado en forecast, ml,
+   estadísticas, meteo_sistema, solar, eólica).
+
+---
+
+---
+
+## SESIÓN 20 — FIXES NAVEGACIÓN + MAPA NUBOSIDAD CONFIGURABLE (2026-06-22)
+
+### Navegación 2 niveles — fixes (`app_ernc.py`)
+- **Crash** `StreamlitAPIException`: el handler de los botones de vista escribía
+  `st.session_state["nav_cat"]` DESPUÉS de instanciar el widget con esa key → prohibido.
+  Se eliminó esa escritura.
+- **Las categorías no cambiaban**: la lógica forzaba `nav_cat` a la categoría de la
+  vista activa en cada rerun, revirtiendo la elección del usuario. Ahora solo se fuerza
+  con el flag `_force_cat` (lo setean los botones del sidebar al saltar a Solar/Eólica);
+  el desplegable respeta la selección del usuario. **Regla:** para sincronizar la
+  categoría desde el sidebar, setear `st.session_state["_force_cat"]` ANTES del rerun;
+  nunca escribir `nav_cat` tras crear el `selectbox`.
+- Categoría = **`st.selectbox` real (menú desplegable)** centrado (`st.columns([1,2,1])`),
+  con CSS propio (borde azul AES, gradiente, sombra al hover, ícono azul). Botones de
+  vista centrados (relleno de columnas cuando la categoría tiene <4 vistas).
+- Comportamiento: elegir categoría muestra sus botones; el contenido carga al hacer clic
+  en una vista (menú de 2 niveles).
+
+### KPIs — card BESS (`kpis_generales.py`)
+Nueva card "BESS — Almacenamiento" (estado, % de uso sobre Pmax descarga, potencia neta);
+helper `_agregado_bess(bess_rows)`. Grid pasó a `repeat(4,1fr)` responsive (8 cards).
+
+### Mapa satelital (`components/mapa_ernc.py`)
+- **Vista por defecto en región de Antofagasta**: `center=[-23.8,-69.1]`, `zoom=7`
+  (antes Chile completo) para observar nubosidad del complejo solar norte.
+- **Nubosidad configurable por el usuario**: `st.selectbox` "Paleta de nubosidad" con
+  presets (Suave/Normal/Densa/Alto contraste/Azulada). **IMPORTANTE:** el endpoint OWM
+  **Weather Maps 2.0** (`maps.openweathermap.org/maps/2.0/weather/CL/...` con `palette=`)
+  es **de pago** → con la key gratuita devuelve tiles en blanco. Se usa el tile gratuito
+  **`clouds_new`** (`tile.openweathermap.org/map/clouds_new/...`); la intensidad/color se
+  logra con `opacity` + `refuerzo` (apilar la capa N veces) + **filtros CSS**
+  (`contrast/brightness/hue-rotate`) aplicados por `className` e inyectados con
+  `m.get_root().header.add_child(folium.Element(<style>))`. Helpers `_build_cloud_layers`,
+  `_css_filtros_nubes`, dicts `_CLOUD_PRESETS`/`_CLOUD_FILTROS`. Default "Densa".
+
+---
+
+---
+
+## SESIÓN 21 — MENÚ DESPLEGABLE TIPO ESCRITORIO (REPLICADO DEL CTM) (2026-06-22)
+
+Se reemplazó la navegación de 2 niveles (selectbox de categoría → botones de vista,
+Sesión 19/20) por el **patrón de barra de menú de escritorio** que funcionó bien en el
+dashboard CTM (`dashboard_api/app.py`).
+
+### Cambio en `app_ernc.py::_navegacion()`
+- Cada **categoría** de `CATEGORIAS` es ahora un `st.popover` a todo el ancho, en una
+  fila (`st.columns(len(CATEGORIAS))`). Al hacer clic, el popover **se despliega hacia
+  abajo** mostrando las vistas de esa categoría como botones (`type="primary"` = vista
+  activa). La categoría activa muestra inline la vista elegida: `f"{cat}  ·  {vista}"`.
+- Se eliminó el `st.selectbox` de categoría y la lógica de `nav_cat` / `_force_cat`
+  (la categoría activa se **deriva** de `vista`, no se almacena). El handler consume y
+  limpia `nav_cat`/`_force_cat` heredados. `_categoria_de()` queda sin uso (inocuo).
+- El sidebar sigue saltando a Solar/Eólica escribiendo solo `st.session_state["vista"]`.
+
+### CSS (en `get_css()`)
+Se cambió el bloque del selectbox por el del popover:
+```css
+[data-testid="stPopover"] > div > button { width:100%; min-height:48px; font-weight:700;
+  background:linear-gradient(180deg,#FFFFFF,#F3F5FF); border:1.6px solid #C7CDF5;
+  border-radius:10px; color:#2530B0; justify-content:center; }
+[data-testid="stPopover"] > div > button[aria-expanded="true"] {
+  background:linear-gradient(135deg,#3B4CE8,#2530B0); color:#fff; border-color:#2530B0; }
+```
+
+**Ventaja:** se ve como app de escritorio, ocupa todo el ancho, y al renderizar solo la
+vista activa evita el bug de Plotly width=0 dentro de `st.tabs`. **Regla:** mantener este
+patrón sincronizado con el CTM si se rediseña la navegación en cualquiera de los dos.
+
+---
+
+---
+
+## SESIÓN 22 — NUEVOS ENDPOINTS CEN (CMG FUTURO + RESPALDO 8B) + LIMPIEZA BESS (2026-06-23)
+
+Tras revisar el catálogo completo de la API CEN (`resumen_endpoints_adquisicion_coordinador.md`,
+95 SIP + 44 Operaciones) y tomar como referencia las adquisiciones recién hechas en el
+dashboard CTM (`../dashboard_api/Adquisicion.py`), se integraron 2 endpoints nuevos.
+
+### CMG programado PCP (CMG futuro) — NUEVO
+- Endpoint: `/cmg-programado-pcp/v4/findByDate` (SIP). **1-indexado** (page=0 da 502),
+  NO filtra por barra → se pagina todo con **limit=4000** (las 8 barras 220 kV caben en
+  page 1) y se filtra local por `llave_cmg`. Se conserva el programa más reciente
+  (mayor `fecha_programa`) por `(nodo, fecha_hora)`.
+- `config.py::CMG_PROG_LLAVE_A_NODO`: mapea `llave_cmg` (Crucero220, Charrua220, …) a los
+  MISMOS nombres de nodo del feed S3 (`CRUCERO_______220`, …) → el CMG futuro slotea con
+  el online sin tocar el resto del dashboard.
+- `utils/cen_api.py::fetch_cmg_programado()`, `utils/db.py::upsert_cmg_programado()` +
+  `query_cmg_programado(horas)` (try/except → `[]` si la tabla no existe).
+- `schema.sql`: tabla `cmg_programado_ernc` (nodo, cmg_usd_mwh, fecha_hora, fecha_programa)
+  + RLS `anon_select` + índice. **PENDIENTE: ejecutar este bloque en Supabase SQL Editor.**
+- `Adquisicion_ernc.py`: paso `adquirir_cmg_programado()` integrado al cron.
+- Validado contra API: **968 registros, los 8 nodos × 121 h**.
+
+### CMG online 8 barras — RESPALDO del feed S3
+- Endpoint: `/costos-marginales-online-8b/v4/findAll` (SIP). Devuelve `{fecha, barras:[{nombre,
+  valores:[{fecha(epoch ms), valor}]}]}` — últimas ~24 h horarias de las 8 barras.
+- `config.py::CMG_8B_NOMBRE_A_NODO` mapea "Crucero 220 KV" → `CRUCERO_______220`.
+- `fetch_cmg_online_8b()` convierte epoch ms a hora Santiago y escribe en **cmg_ernc**
+  (mismos nodos). Se usa como **fallback en `adquirir_cmg()`** cuando el feed S3 falla o
+  está en mantenimiento. Validado: 138 registros.
+
+### `pronostico-erv` — DESCARTADO (sin datos)
+`/pronostico-erv/v4/findByDate` responde **200 pero `data:[]` / `totalPages:0`** en todas
+las ventanas probadas (hoy, ±2d, ±5d) → no hay datos publicados en nuestro plan SIP. Igual
+que demanda real (Sesión 15). No se implementó.
+
+### Limpieza BESS — ET1_B eliminado
+El BESS **Andes ET1 (`ET1_B`, AS1, 14.08 MW) no existe** → eliminado de `config.py::BESS` y
+`BESS_HORAS` (quedan **5 BESS**), de los textos "6 BESS" en `kpis_generales.py` y
+`tab_bess.py`, y de la tabla en CLAUDE.md. **Borradas 68 filas** de `generacion_bess_ernc`
+en Supabase. `BESS_LLAVE_MAP` se regenera solo → ya no mapea las llaves ET1.
+
+### Pendiente Sesión 22
+- [ ] Ejecutar el bloque `cmg_programado_ernc` de `schema.sql` en Supabase (antes de que el
+      cron escriba). Sin la tabla, `adquirir_cmg_programado` fallará en el upsert.
+- [ ] (Opcional) Consumir `query_cmg_programado()` en el tab CMG / arbitraje BESS para
+      mostrar el CMG futuro junto al online.
+
+---
+
+---
+
+## SESIÓN 23 — NASA POWER, FIXES MAPA, ARBITRAJE BESS Y UX (2026-06-23)
+
+Continuación de la Sesión 22 (CMG programado + 8b). Se cerró el ciclo de valor de los
+endpoints nuevos y se pulió UX en mapa, ML, forecast y estadísticas.
+
+### NASA POWER — 2ª fuente solar (validación de GHI)
+- `utils/nasapower_api.py`: GHI/temp/viento horario satelital (gratis, sin key). Rezago
+  ~3-7 días → **validación, no forecast**. Se guarda en `meteo_ernc` con `fuente='nasa-power'`.
+  **OJO entorno:** el reloj simulado (2026) está en el futuro de la data real de NASA → devuelve
+  `-999`; el parseo se validó con fechas 2024 reales. En producción real poblará con su rezago.
+- `Adquisicion_nasa_ernc.py`: backfill 10 días. En el workflow corre **1 vez/día (12 UTC)**
+  vía guard `if [ "$(date -u +%H)" = "12" ]` (NASA actualiza a diario, no cada hora).
+- `tab_ml.py::"Validación recurso (NASA)"`: compara GHI Open-Meteo vs NASA (sesgo/RMSE/
+  correlación + serie + dispersión) por parque solar.
+- **Sidebar:** fila "NASA POWER" en Fuentes de datos (umbral 192h por el rezago). NO cuenta
+  para el semáforo global de conexión (es validación, no tiempo real). `query_ultimas_
+  actualizaciones` devuelve `nasa`.
+- Descartado **AccuWeather** (free tier 50/día insuficiente) y **OpenWeather Solar** (de pago).
+  `pronostico-erv` también descartado (Sesión 22): 200 pero `data:[]`.
+
+### Mapa satelital (`components/mapa_ernc.py`)
+- **Nubosidad**: probamos imagen interpolada Open-Meteo (se veía tenue) y rectángulos (feos).
+  **Final: tile OWM `clouds_new` (textura real) + selector de COLOR** (Natural/Azul/Roja/Violeta)
+  vía filtros CSS (`sepia+saturate+hue-rotate` por className). `_build_cloud_layers` +
+  `_css_filtros_nubes` restaurados. Eliminadas `_cloud_grid`/`_cloud_image`/`_cloud_color`.
+- **Viento**: nuevo `_viento_actual_parques()` trae viento ACTUAL (vel+dir) de **los 11 parques**
+  en 1 llamada Open-Meteo (antes leía `wind_dir_80m` de meteo_ernc → solo salía en eólicas, porque
+  los solares no guardan dirección). Flecha grande (glifo ➜, rotación = rumbo−90) con **velocidad
+  m/s rotulada encima**, color por intensidad.
+- **Auto-refresh del mapa cada 5 min** (`st_autorefresh` en `render_mapa`, TTL caché 300s).
+
+### CMG (tab CMG, `app_ernc.py`)
+- Serie de tiempo: TODOS los nodos con **misma línea punteada** (antes CRUCERO/CHARRUA eran
+  sólidas/gruesas).
+- Nueva sección **"CMG programado PCP"** (futuro) con marca de "ahora" (pasado vs proyectado).
+
+### Arbitraje BESS (ML, `tab_ml.py`)
+- **Fix "Sin CMG suficiente":** el online S3 (`cmg_ernc`) es muy escaso (≈41 filas/20d, 0 solape
+  con horas BESS) → ahora se combina con el **CMG programado** (denso, horario) como fuente del
+  nodo. `_dataset_bess` usa `cmg_online.combine_first(cmg_prog)`. Validado 64/64 filas con CMG.
+- Nueva **recomendación de arbitraje a futuro** (`_recomendacion_arbitraje`): ventanas óptimas de
+  carga/descarga según CMG programado próximas horas + margen de ciclo estimado.
+- Los 2 gráficos BESS (scatter neta–CMG, importancia hora vs CMG) ahora con **explicación clara**.
+
+### Meteo & Sistema — heatmap nubosidad
+- Fix "todo celeste": escala **fija 0–100%** (`zmin/zmax`). El norte solar es 0% real (desierto)
+  → antes Plotly auto-escalaba a −0.4..0.4. Viento fijo 0–15 m/s.
+
+### Solar / Eólica (`tab_solar.py`, `tab_eolica.py`)
+- **Modelo FV/eólico**: línea **sólida** (no punteada) en la serie + swatch acorde.
+- **Leyendas reescritas** en lenguaje simple ("lo que el parque inyectó de verdad", "lo que
+  debería generar según el sol/viento", etc.).
+
+### Forecast 7d (`tab_forecast.py`)
+- Checkbox **"Comparar con modelo ML"**: RandomForest meteo→gen real del parque (45d) superpuesto
+  al modelo físico (`_ml_forecast_parque`, features según tecnología). NASA no aplica (histórico).
+
+### Estadísticas (`tab_estadisticas.py`)
+- Nueva sección **"Almacenamiento BESS"**: descarga/carga total, energía neta, round-trip
+  aparente, ciclos eq., barras carga/descarga por BESS, tabla + CSV. `render_tab_estadisticas`
+  recibe `bess_rows`.
+
+### Limpieza
+- BESS **ET1_B eliminado** (Sesión 22): no existe → fuera de config, textos "6→5 BESS",
+  68 filas borradas en DB.
+
+### Pendiente Sesión 23
+- [ ] Esperar a que el cron pueble `nasa-power` en producción (fecha real) para que la sección
+      de validación NASA muestre datos.
+- [ ] TZ global (`ZoneInfo` vs offset −3) sigue pendiente desde Sesión 17.
+
+---
+
+---
+
+## SESIÓN 24 — POBLADO NASA POWER + FIX DESFASE HORARIO LST (2026-06-24)
+
+La sección **ML → Validación recurso (NASA)** salía vacía. Se pobló con datos reales y se
+corrigió un bug de timezone en la fuente NASA.
+
+### Por qué salía vacía (reloj del entorno adelantado)
+El reloj del entorno está en **2026-06-24**, pero NASA POWER tiene rezago real de **~85 días**
+(no los 3-7 que asumía la doc) → su data real más reciente llega solo a **2026-03-30**. Dos
+bloqueos para el cruce Open-Meteo vs NASA:
+1. La sección miraba **30 días** hacia atrás desde junio → nunca alcanzaba marzo.
+2. El Open-Meteo en DB es de junio-julio (ventana móvil 5 días) → **cero solape** con NASA. Y el
+   endpoint *forecast* de Open-Meteo devuelve **GHI `None`** para fechas tan atrás.
+
+### Solución de poblado (backfill puntual, marzo 2026)
+- **NASA:** `fetch_nasa_meteo(dias=120)` → trae su data real (filtra `-999`). ~864 reg/parque solar.
+- **Open-Meteo histórico:** se usó el **Archive API (ERA5)** `archive-api.open-meteo.com/v1/archive`
+  (`shortwave_radiation,temperature_2m,wind_speed_10m`, `timezone=America/Santiago`, `wind_speed_unit=ms`).
+  El *forecast* NO sirve radiación histórica; el *archive* sí (límite: desde ~2026-03-23).
+- Ambos en `meteo_ernc` con `fuente` correspondiente → la validación cruza por `fecha_hora`.
+- **Dedup** `(parque,fecha_hora,fuente)` obligatorio antes del upsert (Open-Meteo trae duplicados
+  por DST, si no → error `ON CONFLICT DO UPDATE cannot affect row a second time`).
+
+### Cambio de código — ventana de la sección
+`components/tab_ml.py::_meteo_por_fuente` default **`dias=30 → 120`** para que el comparador
+alcance la data de NASA en este entorno (en prod real es inocuo: solo trae más historia).
+
+### BUG CORREGIDO — desfase horario LST (≈2 h) en NASA POWER
+`utils/nasapower_api.py` pedía `time-standard: LST` (**hora solar local**, basada en longitud) y
+guardaba la hora cruda como si fuera civil. Open-Meteo usa hora civil `America/Santiago` → la serie
+NASA quedaba **~2 h corrida** (pico NASA 11h vs Open-Meteo 13h). Esto inflaba el RMSE y partía la
+nube de dispersión en dos bandas.
+- **Fix:** pedir `time-standard: **UTC**` y convertir con
+  `datetime.strptime(k,"%Y%m%d%H").replace(tzinfo=timezone.utc).astimezone(TZ_CHILE)`.
+- Aplica también al cron diario futuro, no solo al backfill.
+- **Impacto (AS1):** RMSE **339 → 32 W/m²**, correlación **0.64 → 0.997**, sesgo −9 W/m² (real,
+  diferencia genuina modelo vs satélite). BOL: RMSE 18, corr 0.999.
+- **Regla:** NASA POWER siempre en UTC + `astimezone(TZ_CHILE)`. NUNCA `time-standard: LST` para
+  cruzar con fuentes en hora civil.
+
+### Pendiente Sesión 24
+- [ ] En producción con reloj real, el cron diario `Adquisicion_nasa_ernc.py` poblará solo (rezago
+      de días) — el backfill de marzo fue puntual para este entorno simulado.
+- [ ] (Opcional) Anclar la ventana del comparador a la última fecha de NASA en vez del fijo 120 d.
+
+---
+
+---
+
+## SESIÓN 25 — TRACKERS FV, LOGIN, ML FORECAST, BESS SIDEBAR, PDF/RECOMENDACIONES, WORKFLOW 30 MIN (2026-06-24)
+
+Lote grande de 9 ítems pedidos por Erick. Decisiones de modelado confirmadas con él:
+trackers = ganancia tracking 1-eje + **derate disponibilidad 0.80**; **stow a 16 m/s**.
+
+### 1. Password gate (`app_ernc.py`)
+- `_password_correcto()` al inicio de `main()` (antes de cargar datos). Contraseña
+  compartida: `st.secrets["APP_PASSWORD"]` → `os.environ` → fallback **`"carbon"`**.
+- Pantalla de login centrada con logo. **Logo keyed:** `_logo_keyed_html(color, width)` —
+  reusa la lógica de Sesión 16 (key por luminancia, corte 251 sobre el checkerboard
+  horneado) pero recolorea a **negro azulado** `(26,31,54)` y lo centra. En el sidebar el
+  logo sigue blanco.
+- En Streamlit Cloud: agregar `APP_PASSWORD` en Settings → Secrets (opcional).
+
+### 2-3. Modelo FV con trackers + viento solar (`config.py`, `utils/calculos.py`, `utils/openmeteo_api.py`, `components/tab_solar.py`)
+- `config.py`: `TRACKER_GAIN=1.18`, `TRACKER_AVAIL=0.80`, `TRACKER_STOW_WIND_MS=16.0`,
+  `TRACKER_POA_MAX=1100`. Se agregó `windgusts_10m` a `OPENMETEO_VARS_SOLAR`.
+- `calculos.py`: **nuevo** `poa_tracker(gti_fijo, ghi, wind, gusts)` — POA de seguidores
+  1-eje = `GTI_fijo × 1.18`, acotado a `[GHI, 1100]`; **si viento/ráfaga ≥ 16 m/s → POA=GHI**
+  (stow horizontal). `calcular_potencia_fv_estimada(...)` ahora recibe el POA y aplica el
+  factor `availability=0.80`. El `gti` que entra ya debe ser POA.
+- `openmeteo_api.py`: el bloque Solar calcula `poa = poa_tracker(...)` y guarda
+  `p_fv_estimada_mw = calcular_potencia_fv_estimada(poa, tc, pmax)`. **Requiere re-correr
+  `Adquisicion_meteo_ernc.py`** (ya hecho en la sesión; el cron lo mantiene).
+- `tab_solar.py`: métrica **"Viento 10m"** + ráfagas + **aviso de stow** cuando viento/ráfaga
+  ≥ 16 m/s (paneles horizontales). Select amplía a `wind_speed_10m,wind_gusts_10m`.
+- Todos los consumidores leen la columna `p_fv_estimada_mw` ya almacenada → solo cambia el
+  punto de cálculo (openmeteo_api).
+
+### 4. ML en Forecast 7d (`components/tab_forecast.py`)
+- `_ml_forecast_parque` ahora devuelve **(df, métricas)** con R²/MAE de holdout 80/20.
+- **Nuevo** `_ml_portfolio_total()`: suma el ML de los 11 parques → banda data-driven.
+- Checkbox "Superponer pronóstico ML del portfolio" + **KPI "Total ML 7d"** (delta vs físico).
+- En el detalle por parque: 3 métricas (R², MAE, horas) + nota de confiabilidad.
+
+### 5. BESS en el sidebar (`app_ernc.py::render_sidebar`)
+- Nuevo parámetro `bess_rows`. Sección "BESS · Almacenamiento" con botones por BESS y estado
+  inline (▲ descarga / ▼ carga / reposo). Click → vista "BESS".
+
+### 6-7. Referencia: PDF + Recomendaciones (`utils/pdf_report.py`, `utils/recomendaciones.py`, `app_ernc.py`)
+- `CATEGORIAS["Referencia"] = ["Recomendaciones", "Reportes", "Infotecnica"]`. El botón PDF
+  **se movió del sidebar** a Referencia → Reportes.
+- **`utils/recomendaciones.py` (nuevo):** `generar_recomendaciones(...)` → lista de
+  `Recomendacion(prioridad, horizonte, titulo, detalle, categoria)`. Reglas: CMG muy bajo/alto,
+  BESS vs precio, desvíos >±25%, limitaciones persistentes, buen FP global.
+- **PDF reescrito:** paleta AES, **sin emojis** (antes tenía ⚡🔴…), secciones: portada,
+  resumen ejecutivo, estado Solar/Eólica, **tabla BESS**, **recomendaciones**, alarmas.
+  Nueva firma con `bess_rows`, `recomendaciones`, `cmg_promedio`.
+- `app_ernc.py`: helper `cmg_promedio_sen()` (excl. P.MONTT). Vista Recomendaciones con cards
+  coloreadas por prioridad. Vista Reportes con botón generar + descarga.
+
+### 8. Workflow de potencia cada 30 min (`Adquisicion_potencia_ernc.py`, `.github/workflows/potencia_ernc.yml`)
+- Script ligero que solo corre **gen-real + BESS** (reusa funciones de `Adquisicion_ernc.py`).
+  Cron `25,55 * * * *`, timeout 15 min, `concurrency` para no solaparse. **No usa CEN_OPS_KEY.**
+  Bajó el lag de la generación de ~5-6 h a ~real (corre 2×/h además del horario completo).
+
+### Fixes del cron (CEN_OPS_KEY opcional) — 2 bugs encadenados
+El workflow de 30 min no define `CEN_OPS_KEY` (solo la usa SSCC, plan Operaciones):
+1. `Adquisicion_ernc.py`: el chequeo de env estaba a **nivel de módulo** → `sys.exit(1)` al
+   importarlo. Movido a `_verificar_entorno()` llamado desde `main()`.
+2. `utils/cen_api.py::_get_keys`: leía `os.environ["CEN_OPS_KEY"]` con corchetes → `KeyError`
+   en cada llamada gen-real/BESS. Ahora `os.environ.get("CEN_OPS_KEY", "")`.
+- **Regla:** `CEN_OPS_KEY` es OPCIONAL; solo SSCC la necesita. Cualquier script SIP-only
+  (gen-real, BESS, PCP, CMG, limitaciones) debe correr sin ella.
+
+### Viento del mapa = tiempo real (consulta de Erick)
+`mapa_ernc._viento_actual_parques()` usa el endpoint **`current`** de Open-Meteo (nowcast del
+modelo, ~15 min), caché 5 min + auto-refresh 5 min. Es viento **modelado** (no medido por
+SCADA/anemómetro del parque). Independiente de la adquisición CEN/DB.
+
+### Pendiente Sesión 25
+- [ ] (Opcional) Aclarar en tooltip del mapa que el viento es "modelo/pronóstico", no medición.
+- [ ] En Streamlit Cloud: agregar `APP_PASSWORD` si se quiere cambiar de `carbon`.
+- [ ] El subdominio `*.streamlit.app` se puede personalizar (Settings → General). Si se cambia,
+      actualizar el `curl` keep-alive en `adquisicion_ernc.yml`.
+
+---
+
+---
+
+## SESIÓN 26 — AUDITORÍA DE COMENTARIOS/AYUDA + FIX PCP 24h, MAPA SOLO SATELITAL, FÓRMULAS (2026-06-25)
+
+Erick pidió revisar todo el proyecto y corregir comentarios/textos de ayuda desactualizados,
+y luego 3 mejoras concretas.
+
+### Corrección de comentarios/ayuda a la realidad actual
+- **NASA POWER — rezago real ~2-3 meses (~85 días), NO 3-7 días.** Corregido en
+  `utils/nasapower_api.py` (docstrings), `Adquisicion_nasa_ernc.py` (docstring), `tab_ml.py`
+  (metodología + mensaje "sin datos"), `app_ernc.py` (panel Fuentes de datos).
+  **Fix funcional asociado:** la ventana era `DIAS=10` desde hoy → nunca alcanzaba datos con
+  el rezago real. Ampliada a **`DIAS=100`** (script y defaults `dias` en `nasapower_api.py`).
+  El umbral del semáforo NASA en el sidebar subió de **192h → 2400h** (~100 días) para que un
+  dato fresco se marque OK en vez de quedar siempre en rojo.
+- **tab_solar/tab_eolica caption:** decía "Cap. instalada: Pmax declarada / FP = Gen/Cap" pero
+  la métrica y el FP usan **Pmax neta CEN** (`PMAX_FP`, Sesión 18). Corregido. En eólica además
+  "cut-out ~20 m/s" → **~25 m/s, curva por parque** (Sesión 14/18).
+- **tab_bess.py — capacidad de energía:** usaba un fijo `_HORAS_BESS=4.0` ignorando
+  `config.BESS_HORAS` (duración declarada por BESS: AS2B 4.95h, AS3 3h, AS4 5h). Ahora usa
+  `BESS_HORAS.get(cod) or 4.0` en panel individual, SoC y tabla resumen; el caption distingue
+  horas "declaradas" vs "asumidas". (infotecnica/estadisticas/ml ya lo hacían bien.)
+- **Docstrings de cabecera:** `mapa_ernc.py` (ahora satelital), `tab_ml.py` ("Cuatro" → "Seis"
+  análisis: + BESS operación + Validación NASA). Comentario CSS "7 KPIs" en `app_ernc.py`
+  aclarado (los KPIs son cards HTML; ese bloque estiliza los `st.metric` de los paneles).
+
+### Mejora 1 — PCP nunca aparecía completa en la serie 24h (Mapa & Resumen)
+`app_ernc.py::_render_tab_resumen`: la PCP se filtraba con su **propio** máximo (se publica
+hacia el futuro, hasta D+1) → su ventana "últimas 24h" casi no solapaba con la de generación,
+y solo se veía el tramo final. **Fix:** alinear la PCP a la **misma ventana** del gráfico de
+generación (`win_min`/`win_max` derivados de gen_real) antes del merge. Ahora la línea ámbar
+aparece completa a lo largo de las 24 h.
+
+### Mejora 2 — Mapa solo satelital
+Eliminadas las vistas **Claro / Detallado**. Quitado el `selectbox` "Estilo de mapa" en
+`app_ernc.py` → el mapa siempre es satelital (folium/ESRI) a ancho completo. `render_mapa`
+simplificada a solo folium; borrado todo el bloque pydeck y el código muerto asociado
+(`import pydeck`, `MAP_STYLE/MAP_STYLES`, `_VIEW_DEFAULT`, `_VIEW_PARQUE`, `_CHILE_BOUNDS`).
+Folium sigue usando `_CIUDADES`, `_LABEL_OFFSET`, `COORDENADAS`, `PARQUES_TODOS`.
+
+### Mejora 3 — Fórmulas detalladas y estéticas (LaTeX)
+Helper compartido `_paso(n, titulo, desc)` (badge numerado + título + descripción) en
+`tab_solar.py` y `tab_eolica.py`.
+- **Modelo FV** reescrito como 4 pasos encadenados (POA seguidor 1-eje → temp. de celda NOCT →
+  potencia con disponibilidad → acotamiento), con el caso **stow por viento** que faltaba en la
+  fórmula, y glosario de variables/constantes con valores reales de `config` (g_track=1.18,
+  η_disp=0.80, v_stow=16, NOCT=45, γ=-0.4%/°C, POA_max=1100). Antes no reflejaba el modelo de
+  trackers de la Sesión 25.
+- **Modelo eólico** reescrito en 3 pasos (viento al buje + cizalle α → densidad del aire →
+  curva de potencia), mismo estilo + glosario, aclarando que cut-in/rated/cut-out son por
+  parque (Vestas V150 / Nordex N149).
+
+### Pendiente Sesión 26
+- [ ] TZ global (`ZoneInfo` vs offset −3) sigue pendiente desde Sesión 17.
+- [ ] (Opcional) emoji ☀️ en `tab_meteo_sistema.py` viola la regla "sin emojis" — no tocado.
+
+---
+
+---
+
+## SESIÓN 27 — PROGRAMACIÓN PID + DEMANDA POR ZONA + GLOSARIO (2026-06-25)
+
+Erick pidió: (1) integrar el programa **PID** (reprograma intra-día) en un workflow
+propio para no saturar la adquisición horaria, (2) sumar la **demanda** de los
+principales nodos y mostrarla en las series/gráficas pertinentes, y (3) un **glosario**
+en la sección Referencia.
+
+### Endpoints nuevos (validados contra la API real)
+- **`/generacion-programada-pid/v4/findByDate`** (SIP): mismo esquema que el PCP — campo
+  `llave_gen`, NO filtra por idCentral → se pagina todo y se filtra local por
+  `LLAVES_GEN_PROG`. Va a la **misma tabla** `generacion_programada_ernc` con
+  `fuente='CEN_PID'`. Se conserva el programa más reciente (mayor `fecha_programa`) por
+  (parque, fecha_hora). `fetch_gen_programada_pid()` en `utils/cen_api.py`.
+- **`/demanda-programada-pid/v4/findByDate`** (SIP): demanda proyectada (MW) por hora y
+  punto de consumo con campo `zona`. **Resuelve el bloqueo histórico de demanda** (las
+  variantes `demanda-real`/`v1-v5` daban 404; PID sí publica). Se agrega por
+  `(zona, fecha_hora)` excluyendo `Argentina`/None. `fetch_demanda_pid()`.
+  - Zonas del SEN: **Norte** (parques solares), **Centro**, **Centro Sur** (parques
+    eólicos), **Sur**. El total agregado refleja la **forma** del consumo, no un absoluto
+    exacto (el endpoint suma múltiples puntos/barras por zona).
+
+### config.py
+- `DIAS_VENTANA_PID = 1` (ambos endpoints paginan todo el sistema → ventana corta).
+- `DEMANDA_ZONAS`, `DEMANDA_ZONAS_EXCLUIR`, `DEMANDA_ZONA_COLOR`, `ZONA_PARQUE`.
+
+### Base de datos
+- Nueva tabla **`demanda_ernc`** (`zona, fecha_hora, demanda_mw, hora, fecha_programa`,
+  PK `(zona,fecha_hora)`) + RLS `anon_select` + índice. Bloque agregado a `schema.sql`.
+  **PENDIENTE: ejecutar ese bloque en Supabase SQL Editor** (igual que cmg_programado en
+  su momento). Sin la tabla, `query_demanda_ultimas_horas` degrada a `[]` y la sección
+  muestra un aviso; el upsert del cron fallará hasta crearla.
+- `utils/db.py`: `upsert_demanda()` (dedup + on_conflict `zona,fecha_hora`),
+  `query_demanda_ultimas_horas()` (try/except → `[]`). El PID reusa
+  `upsert_generacion_programada` (conflict ya incluye `fuente`).
+
+### Adquisición — workflow PROPIO (no satura el horario)
+- `Adquisicion_ernc.py`: funciones `adquirir_gen_programada_pid()` y
+  `adquirir_demanda_pid()` (importables, igual patrón que potencia).
+- `Adquisicion_pid_ernc.py` (**nuevo**): script ligero gen PID + demanda PID. Solo
+  `CEN_USER_KEY` (SIP) — NO usa `CEN_OPS_KEY`.
+- `.github/workflows/programacion_pid_ernc.yml` (**nuevo**): cron `40 * * * *` (espaciado
+  de :10 horario y :25/:55 potencia), `concurrency`, timeout 30 min.
+
+### Visualización
+- **PID en las series de generación**: traza propia **verde punteada** ("PID intra-día")
+  junto a la PCP (ámbar dash) en `tab_solar.py`, `tab_eolica.py` y el gráfico 24h del
+  portfolio (`app_ernc::_render_tab_resumen`). **CRÍTICO:** como PCP y PID comparten tabla,
+  se separan por `fuente` antes de graficar/sumar para no duplicar (el portfolio suma
+  PCP y PID por separado). El desvío vs PCP filtra `fuente=='CEN_PCP'`. Leyendas
+  actualizadas en ambos tabs.
+- **Demanda por zona**: componente reutilizable `components/demanda.py::render_demanda_zonas()`
+  (área apilada por zona + línea "ahora" pasado/proyectado). Se muestra en la vista **CMG**
+  (contexto de mercado) y en **Meteo & Sistema**.
+
+### Glosario (Referencia)
+- `components/tab_glosario.py` (**nuevo**) + vista `"Glosario"` en `CATEGORIAS["Referencia"]`.
+  Buscable, agrupado: Coordinador/programación, magnitudes eléctricas, solar/meteo, eólica,
+  BESS, fuentes/stack, parques. Incluye PCP/PID/CMG/demanda y toda la terminología hasta hoy.
+
+### Versión de la app
+- `config.APP_VERSION = "v2.7.0"` — major 2 = era Pulsar (rebrand + BESS + ML + NASA);
+  minor sube con cada hito de datos (2.7 = PID + demanda). Se muestra como **chip cyan**
+  en el sidebar, bajo el logo Pulsar y sobre "Creado por Erick Herrera".
+
+### TZ global RESUELTO (pendiente desde Sesión 17)
+- Reemplazados los **11 usos** de `timezone(timedelta(hours=-3))` (offset fijo) por
+  `ZoneInfo("America/Santiago")` en: `utils/db.py` (`_ahora_santiago`), `app_ernc.py` (×2),
+  `components/tab_ml.py`, `tab_insights.py`, `tab_solar.py`, `tab_eolica.py`,
+  `tab_meteo_sistema.py`, `tab_bess.py`, `tab_forecast.py` (×2). El offset fijo corría las
+  ventanas/filtros 1 h en **invierno chileno (UTC-4)**; ZoneInfo respeta el DST. Validado:
+  `_ahora_santiago()` ahora devuelve `-04:00` en junio. **Regla:** nunca más offset fijo −3.
+- **Emoji ☀️ eliminado** de `tab_meteo_sistema.py` (regla "sin emojis"). (Los círculos de
+  severidad en `utils/insights.py` se mantienen — uso funcional, no decorativo.)
+
+### Pendiente Sesión 27
+- [ ] Activar el nuevo workflow PID en GitHub (se dispara solo por cron `:40`; o
+      `workflow_dispatch`). Falta el `git push` de la sesión.
+- [x] Bloque `demanda_ernc` ejecutado en Supabase (Erick, esta sesión). Gen PID + demanda
+      poblados y validados (528 PID + 100 demanda).
+- [x] TZ global resuelto. ☀️ emoji eliminado.
+
+---
+
+---
+
+## SESIÓN 28 — SIMPLIFICACIÓN + ETAPA IA: FORECAST PROBABILÍSTICO, OPTIMIZADOR BESS (MILP), SOILING (2026-06-25)
+
+Sesión grande de cierre de la etapa de IA. Tres ejes: (1) **simplificación** de la
+navegación para el cliente, (2) **forecast probabilístico** calibrado, (3) **optimizador
+de arbitraje BESS** y **soiling**. Más backfill histórico masivo para que los modelos
+tengan datos. Esta sección está escrita en detalle para servir de manual de presentación.
+
+### 0. Concepto clave para presentar: ¿es "IA"?
+- Todo lo construido (RandomForest, LightGBM, IsolationForest, KMeans) **es IA** — el
+  Machine Learning es una rama de la Inteligencia Artificial. Es correcto y honesto decir
+  "Pulsar usa modelos de IA (Machine Learning)".
+- El **optimizador BESS (MILP)** es **optimización matemática / investigación de
+  operaciones** — IA en sentido amplio (decisión óptima), no ML.
+- **NO** se usó deep learning (CNN, RNN/LSTM, Transformers) y fue **decisión correcta**:
+  con ~115 días de datos horarios, gradient boosting (LightGBM) le gana al deep learning,
+  que sobreajusta con datasets pequeños. El deep learning brillaría con años de datos o con
+  imágenes satelitales de nubes (CNN para nowcasting) → pendiente a futuro.
+- Suncast (competidor, suncast.cl) también es "plataforma de IA" con ML clásico. Misma
+  categoría tecnológica.
+
+### 1. Simplificación de navegación: 15 → 8 vistas (`app_ernc.py`)
+El proyecto había acumulado 15 vistas en 27 sesiones. Se redujo la **superficie de UX**
+(lo que el cliente percibe) sin reescribir la lógica interna de cada tab.
+
+- `CATEGORIAS` ahora:
+  - **Operación**: Mapa & Resumen · **Parques** · BESS
+  - **Análisis**: Forecast 7d · Estadisticas · ML Analysis
+  - **Mercado & Alertas**: **Mercado & Sistema** · **Alertas**
+  - **Referencia**: **Referencia**
+- **Vistas-contenedor** (funciones delgadas que reúsan los `render_*` existentes con un
+  `st.radio` interno — NO `st.tabs`, por el bug de Plotly ancho 0):
+  - `_render_parques()` — fusiona Solar FV + Eólica con **toggle de tecnología**. El sidebar
+    al clicar un parque escribe `vista="Parques"` + `_parque_tec` (Solar/Eólica) one-shot.
+  - `_render_mercado_sistema()` — CMG + Limitaciones + Meteo & Sistema.
+  - `_render_alertas()` — Alarmas automáticas + Recomendaciones.
+  - `_render_referencia()` — Infotécnica + Glosario.
+- **Reportes/PDF** salió del menú (no se usa). `_render_tab_reportes` quedó como código
+  muerto (no se borró para no arriesgar imports).
+- El menú de popovers deriva la categoría activa de `vista` (sin estado `nav_cat`). Etiqueta
+  `f"{cat} · {vista}"` salvo categoría de una sola vista.
+
+### 2. Backfill histórico masivo (datos para entrenar)
+**Problema raíz:** la `generacion_real_ernc` solo tenía ~9 días (ventana móvil del cron),
+mientras la meteo open-meteo cubría desde 2026-03-01. Sin pares meteo→gen no hay ML.
+
+- **`Backfill_historico_ernc.py`** (NUEVO, NO va al cron): gen-real + BESS de la API CEN en
+  tramos de 7 días. Reusa `fetch_gen_real_todos` y `fetch_gen_bess` (ya aceptan
+  start/end). Idempotente (mismos upserts on_conflict). Resultado: **gen_real 2.453 →
+  30.701 filas**, **BESS 635 → 13.600** (span 2026-03-01 → hoy, ~115 días).
+- **`Backfill_meteo_historico_ernc.py`** (NUEVO): meteo histórica de los **parques eólicos**
+  (el backfill de la Sesión 24 fue solo solar → la meteo de viento solo existía ~8 días).
+  Usa `OPENMETEO_HISTORICAL_URL` (reanálisis) con los internos de `openmeteo_api`
+  (`_params_eolica`, `_response_to_registros`) → mismas variables y cálculos (v100m,
+  densidad, cizalle). +14.035 filas eólicas. Dedup `(parque,fecha_hora,fuente)` obligatorio.
+- **Regla:** estos scripts son utilidades puntuales, no cron. La API CEN devuelve gen-real
+  hasta varios meses atrás; el reanálisis Open-Meteo desde ~2026-03.
+
+### 3. Bug crítico de paginación Supabase (afecta TODO query >1000 filas)
+`_dataset_parque` (en `tab_ml.py`) no paginaba → **PostgREST/Supabase trunca a 1000 filas
+por request**. Con 120 días (~2.880 filas/parque) el join meteo⋈gen se quedaba sin solape:
+eólica daba "sin datos", solar truncaba a 916. Nunca importó pre-backfill (había <1000
+filas). **Fix:** helper `_fetch_paginado(query_fn, page=1000)` que pagina con `.range()`
+hasta agotar. **Regla:** cualquier query que pueda superar 1000 filas DEBE paginar con
+`.range()`; `.limit(N)` NO sube el tope del servidor.
+
+### 4. Forecast probabilístico (LightGBM cuantílico + CQR) — `tab_ml.py`
+Nueva subsección **"Forecast probabilístico"** en ML Analysis (junto al RF puntual, no lo
+reemplaza). Es el hito de mayor valor: pasa de "200 MW" a **"180–220 MW con 80% de
+confianza"** (banda P10–P50–P90), lo que sirve para declarar al CEN y gestionar desvíos.
+
+- **Modelo:** 3 × `LGBMRegressor(objective="quantile", alpha=q)` para q ∈ {0.10, 0.50,
+  0.90}. `n_estimators=200, learning_rate=0.07, num_leaves=31`.
+- **Features:** las meteo del parque (`FEATURES_SOLAR`/`FEATURES_EOLICA`) + hora del día
+  codificada en **seno/coseno** (`_add_ciclicas`) para periodicidad diaria.
+- **Calibración conformal (CQR)** — `_train_cal()`: el LightGBM cuantílico subcubre (la
+  eólica daba 66% de cobertura para una banda nominal 80%). CQR mide sobre un set de
+  calibración cuánto ensanchar la banda (score de no-conformidad `E = max(p10−y, y−p90)`,
+  `Q = quantile(E, (1−α)(1+1/n))`) y `_banda_cal()` aplica `[p10−Q, p90+Q]`. **Resultado:
+  cobertura 77–82% en los 11 parques** (eólica subió de 66% a ~80%). Sin CQR el "80%" sería
+  mentira.
+- **Split 60/20/20**: train (entrena cuantiles) / calibración (CQR) / test (métricas).
+  Se reutiliza el mismo modelo (60%) para backtest y futuro (evita un 2º entrenamiento).
+- **Métricas mostradas:** Cobertura P10–P90 (clave, ideal 80%), Pinball loss, MAE P50, y
+  **MAE del P50 vs MAE del modelo físico** (cuánto le gana el ML).
+- **Monotonía** P10≤P50≤P90 garantizada (`np.sort`). Solar: banda forzada a 0 de noche.
+- **PERFORMANCE — `@st.cache_data` en `_entrenar_prob(parque)`**: el entrenamiento (~10-15s)
+  se hacía en cada interacción → la UI "colgaba". Ahora se entrena **una vez por parque
+  (ttl 1h)** y las re-ejecuciones son instantáneas. Primera carga ~2-5s con spinner.
+  **Regla:** entrenamientos ML costosos siempre dentro de una función `@st.cache_data` que
+  devuelva el modelo + métricas, no re-entrenar en el cuerpo del render.
+- `requirements.txt`: `lightgbm>=4.0.0`.
+
+### 5. Optimizador de arbitraje BESS (programación lineal) — `tab_ml.py`
+Reemplaza la heurística previa (n horas baratas/caras) por un **óptimo real**. Es el "wow"
+comercial: convierte el dashboard de *observar* a *recomendar con USD asociado*.
+
+- **`_optimizar_bess(precios, pmax, energia_mwh, eta_rt=0.85, max_ciclos=1.5)`**:
+  - Variables por hora: carga `c_t`, descarga `d_t` ∈ [0, pmax]; estado `s_t` ∈ [0, E].
+  - Dinámica SoC: `s_t = s_{t-1} + η·c_t − d_t`. Objetivo: `max Σ precio_t·(d_t − c_t)`.
+  - Restricción de ciclos: `Σ d_t ≤ max_ciclos · E`.
+  - **Es LP, no MILP con binarios**: con precios positivos el óptimo nunca carga y descarga
+    a la vez → no hacen falta binarios → rápido. Solver CBC vía **PuLP**.
+- **`_render_arbitraje_milp(cod)`**: corre sobre el **CMG programado futuro**
+  (`cmg_programado_ernc`, denso). Muestra cronograma carga/descarga (barras), **SoC** (área),
+  e **ingreso esperado en USD** + ciclos. Fallback a la heurística `_recomendacion_arbitraje`
+  si PuLP no está. Capacidad de energía = `pmax × BESS_HORAS` (declaradas) o 4h asumidas.
+- Validado con CMG real: AS3_B ~$33k/33h, BOL_B ~$35k. Restricciones (SoC, η=85%, 1.5
+  ciclos, sin simultaneidad) verificadas.
+- `requirements.txt`: `pulp>=2.7.0`.
+
+### 6. Soiling FV (ensuciamiento de paneles) — `tab_ml.py`
+Nueva subsección **"Soiling FV"** (solo parques solares). Cierra un gap conceptual con
+Suncast (que vende "predicción de soiling").
+
+- **No hay columna de precipitación** en `meteo_ernc` → el soiling se infiere del
+  **performance ratio**, sin necesidad de lluvia (método tipo Kimber/NREL).
+- **`_soiling_diario(parque)`** (`@st.cache_data` 30min): PR = `gen_real / p_fv_estimada`
+  (modelo físico, que ya corrige temperatura/POA/trackers) en horas de sol fuerte
+  (`is_day, ghi>400, pfv>10%max`), agregado a **mediana diaria**, y **normalizado contra el
+  P90 del propio parque** (= estado limpio de referencia) para quitar el sesgo del modelo.
+  Soiling ratio: 1.0 = limpio, <1.0 = subrendimiento.
+- **Por qué normalizar:** el modelo físico tiene sesgo (PR absoluto sale ~1.4 en solar →
+  subestima). El P90 propio elimina el sesgo y la estacionalidad de temperatura.
+- **`_render_soiling`**: métricas (soiling ratio actual 7d, tendencia %/día, pérdida
+  estimada, nº de recuperaciones por lluvia/lavado), serie diaria con línea de tendencia y
+  marcadores de recuperación. **Salvedad honesta en el expander:** capta subrendimiento
+  *total* (soiling + curtailment + limitaciones); la precisión mejora con datos de
+  precipitación y una referencia de panel limpio medida.
+
+### 7. DS88 — DESCARTADO (no aplica a AES)
+Investigación web: **Decreto Supremo 88/2020 = Reglamento de PMGD/PMG (≤9.000 kW conectados
+a distribución)** con régimen de precio estabilizado. Los parques de AES son utility-scale
+(23–220 MW, transmisión) → **DS88 NO les aplica**. Suncast lo ofrece para sus clientes PMGD
+pequeños; no es un gap real para AES. **Alternativa que sí aplica a generadores grandes:**
+informe de cumplimiento de pronóstico al CEN (forecast vs generado, skill vs PCP/PID) e
+informe operacional mensual. Quedan como pendientes opcionales.
+
+### 8. Auditoría de expanders ML (manual para el cliente)
+Se revisaron TODOS los expanders de metodología y se actualizaron a los cambios:
+- **Forecast de generación (RF):** aclara que es pronóstico *puntual* y remite al
+  probabilístico para la banda; nota de datos (~115 días).
+- **BESS — operación:** nuevo punto 4 (optimizador MILP, "decirle qué hacer con USD").
+- **Análisis de eficiencia:** nota sobre el sesgo del modelo físico (comparar PR relativo,
+  no absoluto) + remite a Soiling FV.
+- **Leyenda** agregada al backtest del probabilístico ("la real debe caer en la banda ~80%").
+- Ya correctos: Forecast probabilístico, Anomalías, CMG, Soiling, Validación NASA.
+- Los expanders de Solar/Eólica (fórmulas físicas, Sesión 26) e Infotécnica no se tocaron.
+
+### Inventario de subsecciones de ML Analysis (8 análisis) — para presentar
+1. **Forecast de generación** — RF puntual meteo→gen, R²/MAE, vs modelo físico, importancia.
+2. **Forecast probabilístico** — banda P10–P50–P90 (LightGBM+CQR), cobertura ~80%, fan chart.
+3. **Detección de anomalías** — residuo z-score>3 + IsolationForest sobre clima+gen.
+4. **Predicción de CMG** — RF con rezagos, pronóstico recursivo 12h.
+5. **Análisis de eficiencia** — PR real/teórico + clustering KMeans de regímenes.
+6. **Soiling FV** — soiling ratio diario, tendencia, recuperaciones, pérdida estimada.
+7. **BESS — operación** — perfil horario, neta vs CMG, **optimizador de arbitraje (LP)**.
+8. **Validación recurso (NASA)** — GHI Open-Meteo vs NASA POWER (sesgo/RMSE/correlación).
+
+### Glosario (`components/tab_glosario.py`)
+Se agregaron los términos nuevos de la etapa IA: forecast puntual vs probabilístico,
+P10/P50/P90, cuantil, banda de confianza, cobertura, pinball loss, LightGBM, gradient
+boosting, CQR, MAE/R², MILP/programación lineal, arbitraje BESS, round-trip, ciclo
+equivalente, soiling/soiling ratio, performance ratio, IA vs ML vs deep learning.
+
+### Archivos tocados Sesión 28
+- `app_ernc.py` — navegación 15→8, vistas-contenedor, saltos sidebar.
+- `components/tab_ml.py` — forecast probabilístico+CQR+cache, paginación, optimizador BESS,
+  soiling, expanders actualizados.
+- `components/tab_glosario.py` — términos nuevos de IA.
+- `requirements.txt` — `lightgbm>=4.0.0`, `pulp>=2.7.0`.
+- `config.py` — `APP_VERSION = v2.8.0`.
+- `Backfill_historico_ernc.py`, `Backfill_meteo_historico_ernc.py` — NUEVOS (utilidades).
+
+### Pendientes Sesión 28
+- [ ] (Opcional) Informe de cumplimiento de pronóstico al CEN / operacional mensual (lo que
+      reemplaza a DS88 para generadores grandes).
+- [ ] (Opcional) Agregar **precipitación** a `meteo_ernc` (schema + adquisición) para atribuir
+      lavados de soiling a lluvia.
+- [ ] (Futuro lejano) Nowcasting de nubes con **CNN** sobre imágenes satelitales — único caso
+      donde el deep learning superaría al boosting; requiere pipeline de imágenes + GPU.
+- [ ] (Opcional) `.gitignore` para `.cache_openmeteo.sqlite`.
+- [ ] Para Streamlit Cloud: el primer deploy reinstala deps (lightgbm + pulp) → arranque más
+      lento la primera vez.
+
+---
+
+---
+
+## SESIÓN 29 — FIX SERIES TRUNCADAS, SHEAR CUR, AUDITORÍA DATOS, HISTÓRICOS, NUBES (2026-06-26)
+
+Sesión de pulido de datos/visualización para presentación. Foco: integridad de datos
+(Erick enfatiza que errores perjudican la presentación), navegación de alarmas, y dos
+features nuevas (Históricos + nubes térmicas).
+
+### 1. Series truncadas a 1000 filas (PostgREST) — PCP/PID y GEN REAL
+**Bug raíz recurrente:** PostgREST/Supabase trunca a **1000 filas/request**. Con 11
+parques × 168 h, los queries de lectura sin paginar perdían las filas más viejas
+(ordenadas `desc` → solo las ~45-90 h recientes) → las series aparecían "cortadas" en
+los días viejos, en TODOS los tabs (comparten `gen_rows`/`prog_rows`).
+- `utils/db.py::query_gen_prog_ultimas_horas` (PCP/PID, ~3.700 filas con 2 fuentes) y
+  `query_gen_real_ultimas_horas` (~1.850 filas): ahora **paginan con `.range()`** hasta
+  agotar. Validado: PCP 2.882 filas / gen real 1.712 filas, ventana completa 7 días.
+- **Regla (ya en Sesión 28 para `_dataset_parque`):** toda query >1000 filas DEBE
+  paginar con `.range()`; `.limit(N)` NO sube el tope del servidor. BESS (5×168=840) y
+  meteo por parque (168) quedan bajo el tope → no se truncan hoy.
+
+### 2. Modelo FV — línea continua a 0 de noche (`tab_solar.py`)
+El modelo FV se cortaba de noche (NaN + `connectgaps=False`). De noche la potencia
+física es **0** (sin irradiancia POA=0; el calor de las celdas NO genera, resta
+eficiencia). Ahora las horas nocturnas se grafican como **0 real** con
+`connectgaps=True` → la curva baja al eje y se reconecta al amanecer sin la diagonal
+falsa que motivó el corte. (Pregunta de Erick: no es por calor almacenado.)
+
+### 3. Alarmas clicables que SÍ navegan (`tab_insights.py`)
+La tarjeta de alarma completa es clicable (botón overlay transparente), pero **no
+navegaba**: el CSS emotion de Streamlit sobrescribía por especificidad `top/bottom/
+height` del botón → quedaba con **altura 0 al pie de la card** (verificado con
+Playwright: rect y=1182 h=0). **Fix:** forzar la geometría del overlay con
+`!important` (+ estirar el `stElementContainer` del botón). Verificado: clic en
+cualquier punto de la alarma navega a la vista de detalle.
+- **Regla:** para overlays de botón sobre HTML en Streamlit, las propiedades
+  geométricas (`inset/top/bottom/height/width`) necesitan `!important` o el CSS interno
+  de Streamlit las gana.
+
+### 4. Wind shear de PE Los Cururos saturado (dato corrupto de Open-Meteo)
+El α (cizalle) de **CUR** estaba clavado en el tope 0.60 el 100% del tiempo. Causa: en
+la celda de CUR, Open-Meteo entrega `wind_speed_80m` **corrupto** (cae por debajo del
+v10m el **82%** de las horas: v80~3.5 con v10~5.7 y v120~10). El 120m y 10m son
+coherentes; solo el 80m está glitcheado. α=ln(v120/v80)/ln(120/80) se disparaba a ~3.
+- **Fix** (`utils/calculos.py::interpolar_viento_100m`): ahora recibe `v_10m` y, si el
+  v80 cae fuera del bracket físico `[v10, v120]`, lo descarta y calcula el cizalle con
+  el par fiable **10m–120m**. CUR pasó de α med 0.60 (100% clip) a 0.22 (5-11% clip);
+  los demás parques apenas cambian (el fallback solo actúa en horas con 80m no físico).
+  `openmeteo_api.py` pasa `v10` a la función.
+- **`Backfill_historico` no, sino `Recompute_shear_ernc.py` (NUEVO):** reescribió
+  `wind_shear_alpha`/`wind_speed_100m` de las **~15k filas eólicas** ya almacenadas con
+  el fix. Utilidad de una sola vez, idempotente, NO va al cron.
+- **Memoria:** `[[integridad-datos-pulsar]]` registra este modo de falla (glitch de
+  niveles de viento Open-Meteo por celda) + el de truncación 1000 filas.
+
+### 5. Auditoría de integridad de datos (todo sano salvo CUR)
+Barrido sistemático 2026-06-26: gen_real sin negativos ni sobre-Pmax, continuidad
+horaria sin huecos ni duplicados (168 filas/parque); CMG 8 nodos 0-313 USD sin
+negativos; BESS signo correcto (`neta=iny-ret` exacto); demanda 4 zonas sin negativos;
+densidad aire eólica 1.22-1.25; p_fv/p_eolica dentro de límites. Falso positivo
+aclarado: `p_fv>0` con `is_day=False` es **crepúsculo legítimo** (GHI~58 a las 18:00),
+no error. Único problema real: el shear de CUR (corregido).
+
+### 6. BESS en la serie del portfolio (`app_ernc.py::_render_tab_resumen`)
+El gráfico apilado "Generación del portfolio — últimas 24h" ahora incluye la traza
+**BESS neto** (violeta): potencia neta agregada por hora, >0 descarga apila sobre la
+generación, <0 carga se dibuja **bajo cero** (consumo). `_render_tab_resumen` recibe
+`bess_rows`.
+
+### 7. Nubes del mapa — paleta térmica de densidad + fix colores (`mapa_ernc.py`)
+El tile `clouds_new` de OWM entrega nubes **casi blancas** (densidad en el canal
+**alfa**, no en brillo) → el blanco no se puede teñir con `hue-rotate` (sin matiz):
+"Roja" salía amarilla y "Violeta" blanca.
+- **Fix:** helper `_tint(hue, sat, contrast, bright)` que **oscurece primero**
+  (`grayscale + brightness 0.5`) para crear tono, luego `sepia + saturate + hue-rotate`.
+  El matiz final ≈ **38° (base sepia) + hue_deg**; un brillo final alto lava el color a
+  pastel (rojo→rosa) → se baja `bright` en tonos cálidos. Colores reales: Azul/Roja/
+  Violeta/Amarilla/Verde (verificado con Playwright).
+- **Nuevo preset "Térmica (densidad)" (default):** mapa de calor amarillo→blanco tipo
+  visión térmica; la densidad se intensifica apilando capas (`refuerzo`).
+  **LIMITACIÓN honesta:** un LUT multicolor real por densidad (azul→rojo→blanco) NO es
+  posible con CSS sobre este tile (densidad en alfa) — requeriría la API de paletas de
+  OWM, de pago (descartada Sesión 20). Un `mix-blend-mode:screen` de 2 capas se probó y
+  daba verde-azulado → descartado.
+
+### 8. Sección Históricos (NUEVA) — `components/tab_historicos.py`
+Vista **"Históricos"** en `CATEGORIAS["Análisis"]`. Visualiza cualquier evento del
+pasado en **todo el rango de la DB** (~desde 2026-03-01, backfill Sesión 28). A
+diferencia de los tabs operativos (ventana móvil 168 h), consulta por **rango de fechas
+explícito** con selector Desde/Hasta acotado al rango real.
+- 4 temas: **Generación** (real vs PCP/PID, por parque o portfolio apilado con energía
+  total), **Meteorología** (GHI+modelo FV / viento hub+ráfagas+modelo), **CMG**
+  (multi-nodo), **BESS** (neto + descarga/carga/energía).
+- `utils/db.py`: `_fetch_rango(tabla, select, desde, hasta, filtros)` paginado +
+  `query_gen_real_rango`, `query_gen_prog_rango`, `query_bess_rango`, `query_cmg_rango`,
+  `query_meteo_rango`, `query_fecha_min_gen_real`. Todas degradan a `[]` si falla.
+
+### 9. Nubosidad TOTAL en el forecast del GHI (`tab_solar.py::_grafico_ghi`)
+El gráfico GHI solo mostraba **nubosidad baja**, que en el desierto (Atacama) es ~0 (no
+hay camanchaca tierra adentro) → el forecast se veía vacío pese a haber nubes (visibles
+en el heat map del mapa). Ahora muestra **ambas** series con color distinto:
+**Nubosidad total %** (gris, `cloud_cover_pct` — forecast real hasta 98%, la que baja
+el GHI) + **Nubosidad baja %** (violeta, `cloudcover_low_pct` — camanchaca). Título y
+leyenda actualizados.
+
+### 10. Limpieza repo
+`.cache_openmeteo.sqlite` (caché requests-cache) destrackeado (`git rm --cached`) e
+ignorado (`.gitignore` + `*.sqlite`) → `git status` limpio. (Pendiente cerrado de
+Sesión 28.)
+
+### Archivos tocados Sesión 29
+- `utils/db.py` — paginación gen real/PCP + queries por rango (Históricos).
+- `utils/calculos.py`, `utils/openmeteo_api.py` — fix shear bracket 10m-120m.
+- `components/tab_solar.py` — modelo FV continuo + nubosidad total/baja.
+- `components/tab_insights.py` — overlay alarmas con `!important`.
+- `components/mapa_ernc.py` — paleta térmica + fix colores nubes.
+- `components/tab_historicos.py` — NUEVO (sección Históricos).
+- `app_ernc.py` — BESS en portfolio + vista Históricos + import.
+- `Recompute_shear_ernc.py` — NUEVO (utilidad recálculo shear).
+- `.gitignore` — `*.sqlite`.
+
+### Pendientes Sesión 29
+- [ ] (Opcional) Paleta térmica multicolor real → requiere tier de pago de OpenWeather.
+- [ ] (Opcional) Anclar la ventana del comparador NASA a la última fecha de NASA.
+
+---
+
+---
+
+## SESIÓN 30 — FIXES RESUMEN/KPIS/FORECAST/HISTÓRICOS/CMG + GLOSARIO CON CLAVE (2026-06-30)
+
+Sesión de pulido a partir de 7 observaciones del usuario sobre la app en producción.
+Todos cambios acotados, sin tablas ni endpoints nuevos. `APP_VERSION = v2.8.1`.
+
+1. **BESS solo descarga en el Resumen.** En `_render_tab_resumen` (`app_ernc.py`) la
+   serie BESS del portfolio (área apilada de las últimas 24 h) ahora **clampea el neto
+   a ≥0** (`bess_t["BESS"].clip(lower=0)`): solo grafica la **descarga** (inyección)
+   como potencia entregada; la carga (neto <0) ya no baja bajo cero. Trace renombrado
+   "BESS (descarga)" y caption actualizado.
+
+2. **KPI CMG en 0 mostraba "—".** En `kpis_generales.py`, `f"...{cmg_prom}..." if cmg_prom`
+   trataba el **0 como falsy**. Cambiado a `if cmg_prom is not None` (también para
+   `ingreso_total`). Ahora un CMG de 0 USD/MWh se muestra como "0.0 USD/MWh".
+
+3. **Desvío vs PCP >1000%.** `calcular_desvio` (`utils/calculos.py`) explotaba cuando el
+   PCP base era ~0 (solar al amanecer). Fix central (afecta KPIs, tab_solar, tab_eolica,
+   insights, PDF): si `|PCP| < DESVIO_BASE_MIN_MW` (1 MW) → se reporta solo el desvío en
+   MW (`desvio_pct=None`, `semaforo=None`); además el % se **acota a ±DESVIO_PCT_CAP**
+   (200%). El cálculo agregado de `tab_estadisticas` (energía del período) no se tocó:
+   su base es grande y no explota.
+
+4. **Forecast 7d: el eje Y se reescalaba al togglear ML.** En `tab_forecast.py`, al
+   superponer la serie ML el eje de potencia autoescalaba (`rangemode="tozero"`) y la
+   curva física parecía "cambiar de valores". Ahora el rango del eje MW se **ancla al
+   modelo físico** (y a `PMAX` del parque), estable con o sin ML. Aplicado a
+   `_grafico_portfolio` (`range=[0, ymax_físico*1.1]`) y `_grafico_parque`
+   (`range=[0, max(data, PMAX)*1.05]`).
+
+5. **Históricos: abanico de parámetros meteo.** `_hist_meteo` (`tab_historicos.py`)
+   reemplaza las 2-3 series fijas por un `st.multiselect` sobre `_METEO_PARAMS` (10
+   parámetros: GHI, nubosidad, temp 2m/celda, viento 10/100m, ráfagas, shear α, modelos
+   FV/eólico). Reparte hasta **2 unidades** en eje izquierdo/derecho; si se elige una 3ª
+   unidad, avisa cuáles quedaron fuera. Default según tecnología del parque.
+
+6. **Demanda y barras CMG fuera de "Meteo & Sistema".** En `tab_meteo_sistema.py` se
+   quitó la **demanda programada del SEN** y el **ranking de barras horizontales de CMG**
+   (queda solo el resumen Norte/Sur/Spread + caption). El ranking de barras se **movió a
+   la subsección CMG** (`_render_tab_cmg` en `app_ernc.py`, key `cmg_ranking_barras`); la
+   demanda ya vivía ahí. Así cada dato aparece en una sola subsección.
+
+7. **Glosario con clave.** `render_tab_glosario` (`tab_glosario.py`) ahora exige password
+   (`lens`, const `_GLOSARIO_PASSWORD`) antes de mostrar contenido; estado en
+   `st.session_state["glosario_ok"]`.
+
+### Archivos tocados Sesión 30
+- `app_ernc.py` — BESS solo descarga (Resumen) + ranking de barras CMG en subsección CMG.
+- `components/kpis_generales.py` — CMG=0 visible (is not None).
+- `utils/calculos.py` — `calcular_desvio` con base mínima 1 MW + cap ±200%.
+- `components/tab_forecast.py` — eje Y de potencia anclado al modelo físico.
+- `components/tab_historicos.py` — multiselect de parámetros meteo (`_METEO_PARAMS`).
+- `components/tab_meteo_sistema.py` — sin demanda ni barras CMG (solo resumen Norte/Sur).
+- `components/tab_glosario.py` — gate de clave.
+- `config.py` — `APP_VERSION = v2.8.1`.
+
+---
+
+---
+
+## SESIÓN 31 — RÁFAGA+STOW EN EL MAPA + HORA DEL DATO EN MÉTRICAS (2026-06-30)
+
+A raíz de la activación real del stow en Andes Solar, Erick quiso revisar el histórico de
+viento del sector y se aclaró la diferencia de "frescura" entre fuentes. `APP_VERSION =
+v2.8.2`. Cambios acotados, sin tablas ni endpoints nuevos.
+
+### Contexto de datos confirmado
+- **Viento histórico del stow** ya estaba disponible en **Históricos → Meteorología** (los
+  parques solares guardan `wind_speed_10m` y `wind_gusts_10m` desde Sesión 25). Solo hay que
+  **deseleccionar** GHI/Nubosidad/Modelo FV en el multiselect y dejar Viento 10m + Ráfagas
+  10m: Históricos grafica **hasta 2 unidades** a la vez (eje izq/der) y descarta las demás
+  con aviso. (No se tocó código de Históricos.)
+- **Rezago gen-real CEN ~4-5 h confirmado contra la API:** a las 13:31 la API solo publica
+  hasta las 09:00 (varios parques hasta 05:00). NO es bug — la tabla del resumen sí muestra
+  la última potencia adquirida; el FP se ve "bajo" porque es una foto de las 09:00 (solar
+  subiendo), no del mediodía. El meteo Open-Meteo NO tiene rezago (modelo) → las métricas de
+  clima son ~actuales. Esa diferencia de horas era lo que confundía.
+
+### 1. Mapa: ráfaga + indicador de stow (`components/mapa_ernc.py`)
+- `_viento_actual_parques()` ahora pide también `wind_gusts_10m` al endpoint `current` de
+  Open-Meteo y devuelve `"raf"` junto a `"vel"`/`"dir"`.
+- Tooltip del viento: `viento X m/s · ráfaga Y m/s desde N°` + **`· STOW (≥16 m/s)`** cuando
+  el viento medio **o** la ráfaga cruzan `TRACKER_STOW_WIND_MS`. La **flecha se pinta roja**
+  en condición de stow (antes solo por velocidad ≥12).
+
+### 2. Hora del dato en las métricas (`tab_solar.py`, `tab_eolica.py`)
+- `_gen_prog_mismo_hora` de eólica ahora devuelve también `hora` (solar ya la devolvía).
+- Cada métrica del panel lleva un **caption `dato: DD/MM HH:MM`** debajo (NO en el label de
+  `st.metric`, que se trunca con "…"). Generación/FP/Desvío usan la hora de gen-real CEN;
+  GHI/Temp/Viento/Ráfagas/Shear usan la hora de la última fila histórica de meteo. El aviso
+  de stow incluye la hora; el caption explica el rezago CEN vs meteo actual.
+
+### 3. Tabla del resumen del portfolio (`app_ernc.py::_render_tab_resumen`)
+- Título con la **hora del último dato**: `…datos al DD/MM HH:MM (gen real CEN, rezago
+  ~4-5 h)`.
+- Nueva columna **"Hora dato"** por parque (algunos quedan en horas distintas: 09:00 vs
+  05:00). Hora derivada de `gen_rows` (ordenado desc → primera fila por parque).
+- Caption explica el rezago y por qué la hora no es la actual.
+
+### Archivos tocados Sesión 31
+- `components/mapa_ernc.py` — ráfaga + stow en tooltip, flecha roja en stow.
+- `components/tab_solar.py`, `components/tab_eolica.py` — caption `dato:` por métrica.
+- `app_ernc.py` — columna "Hora dato" + hora en título de la tabla resumen.
+- `config.py` — `APP_VERSION = v2.8.2`.
+
+---
+
+---
+
+## SESIÓN 32 — ALTA DE PFV CRISTALES (PARQUE FV + BESS) (2026-06-30)
+
+Erick consultó si los nuevos parques FV de AES (Arenales, Cristales) ya estaban en la API
+CEN. Consulta en vivo a `generacion-real/v3`:
+
+- **PFV Cristales — SÍ existe** como central solar: `id_central=2419`, `llave_opreal="PFV
+  Cristales"`, **Pmax 300 MW**, propietario/coordinado **Cristales SpA**. La API la marca
+  **`PFV CRISTALES [EN_REVISION]`** con `gen_real_mw=0` → registrada pero en puesta en
+  servicio (aún no inyecta). **Sin llave PCP** publicada todavía.
+  - BESS asociado: **`SAE PFV Cristales`** (370 MW), llaves `(Inyección)`,
+    `(Retiro de central)`, `(Retiro de sistema)`.
+- **Arenales — NO tiene unidad FV aún**: solo aparece el `BESS Arenales` (315 MW) y la
+  llave PCP `BAT_ARENALES`. Se deja **pendiente** hasta que el CEN publique su generación FV.
+
+### Alta de Cristales en `config.py` (código `CRI`, BESS `CRI_B`)
+Se agregó `CRI` a TODOS los dicts por parque: `ID_CENTRAL` (2419), `NOMBRE_DISPLAY`,
+`LLAVES_OPREAL` ("PFV Cristales"), `LLAVES_GEN_PROG` (**`[]`** — sin PCP aún, no rompe el
+loop de adquisición), `ZONA_PARQUE` (Norte), `TECNOLOGIA` (Solar), `PMAX` (300),
+`PMAX_NETA` (None → FP usa 300), `COORDENADAS` (**PLACEHOLDER** -22.6/-69.1, pendiente
+confirmar), `CMG_NODO` (**CRUCERO_______220**, confirmado con Erick), `INFOTECNICA` (ficha
+con nota EN_REVISION). `BESS["CRI_B"]` (370 MW) + `BESS_HORAS` (None → 4 h asumidas).
+**Totales:** 12 parques (7 FV + 5 eólicos), 6 BESS. `PMAX_TOTAL` 1357 → **1657 MW**.
+
+### UI — conteos dinámicos
+`kpis_generales.py` ahora usa `len(PARQUES_*)`/`len(BESS)` en vez de "11/6/5" hardcodeado.
+Textos actualizados en `tab_bess.py` (mensaje sin datos) y `tab_glosario.py` (lista de parques).
+
+### Incorporación automática
+La adquisición es data-driven: `fetch_gen_real` itera `ID_CENTRAL` (tomará idCentral=2419)
+y `fetch_gen_bess` usa `BESS_LLAVE_MAP` (incluye CRI_B). Sin cambios de schema (tablas
+genéricas por `parque`). Cristales aparecerá en todo el dashboard automáticamente; mientras
+esté EN_REVISION mostrará gen=0.
+
+### Alerta de stow + heatmap de viento solar (mismo push)
+- **Alerta de stow por viento fuerte (solares):** nueva regla `_check_stow_solar` en
+  `utils/insights.py` — cuando el viento 10m o la ráfaga superan `TRACKER_STOW_WIND_MS`
+  (**16 m/s**, sin cambiar el modelo), los trackers se ponen horizontales (POA=GHI) y se
+  pierde la ganancia de tracking (~18%). Severidad "alerta", categoría meteo. (Erick mencionó
+  "5 m/s" pero pidió mantener el umbral original 16.)
+- **Heatmap de ráfagas 10m de los solares** en Meteo & Sistema (`tab_meteo_sistema.py`),
+  análogo al de nubosidad: escala con quiebre en el umbral de stow (verde < 16, ámbar→rojo
+  sobre él), `key="meteo_hm_rafagas_solar"`. Se agregó `wind_speed_10m` al query de forecast
+  y una **alerta anticipada de stow** (próx. 48 h) en `_seccion_alertas`.
+
+### Pendientes Sesión 32
+- [ ] **Coordenadas reales de PFV Cristales** (hoy placeholder en el mapa).
+- [ ] **Llave PCP** de Cristales cuando el CEN la publique → agregar a `LLAVES_GEN_PROG["CRI"]`.
+- [ ] Confirmar **barra/nodo CMG** real (asignado CRUCERO por defecto).
+- [ ] Confirmar **Pmax neta CEN** cuando exista carta → `PMAX_NETA["CRI"]`.
+- [ ] **Arenales:** dar de alta su FV cuando el CEN lo publique (hoy solo BESS 315 MW).
+
+---
+
+---
+
+## SESIÓN 33 — BESS ARENALES (BACKFILL + NAV), FIX FORECAST PROB, STOW EN ANOMALÍAS, UMBRAL STOW POR PARQUE (2026-07-01)
+
+Alta operativa de Arenales + fixes y una mejora de modelado del stow. `APP_VERSION = v2.9.2`.
+
+### 1. BESS Arenales — navegación + backfill histórico
+- **Fix navegación sidebar:** el botón de cada BESS solo hacía `vista="BESS"` sin decir *cuál*
+  BESS mostrar, y `tab_bess` filtraba el selector a los que tenían datos → **Cristales
+  (EN_REVISION, gen=0) y Arenales no eran seleccionables**. Ahora el botón pasa
+  `st.session_state["_force_bess"]` con el código clickeado, y `tab_bess` hace **seleccionables
+  todos los BESS** (con datos primero) consumiendo `_force_bess` (one-shot) antes del selectbox.
+  (`app_ernc.py`, `components/tab_bess.py`.)
+- **Backfill histórico de Arenales (`ARE_B`):** se pobló `generacion_bess_ernc` desde 2026-03-01
+  con solo la parte BESS (reusando `fetch_gen_bess` + `upsert_generacion_bess` en tramos de 7d,
+  idempotente → no duplica los otros 5 BESS). **2.933 filas ARE_B en DB.** Arenales **no operó
+  hasta ~2026-05-02** (todo en 0 antes = puesta en servicio); desde mayo opera con magnitudes
+  bajas (~2-9 MW vs 315 MW Pmax, rampa temprana). Signos correctos (iny=descarga, ret=carga).
+
+### 2. Fix forecast probabilístico — `CacheReplayClosureError` (`components/tab_ml.py`)
+`_entrenar_prob` (cacheada con `@st.cache_data`) recibía un callback `_prog` que ejecutaba
+`barra.progress(...)` **dentro** del cache → en el *cache hit* Streamlit reproduce esos mensajes
+desde un closure y revienta (visible al abrir el forecast probabilístico de cualquier parque).
+**Regla:** una función cacheada NUNCA debe emitir elementos de Streamlit. Fix: se quitó `_prog` y
+sus llamadas; el progreso ahora es un `st.spinner` **fuera** del cache, en `_render_forecast_prob`.
+
+### 3. Contexto de stow en Detección de anomalías (`components/tab_ml.py`)
+Consulta de Erick: un stow en el cluster Andes no aparecía como anomalía. Diagnóstico (verificado
+con datos reales de AS4): (a) en las horas de stow la generación estuvo **en línea o por encima**
+de lo que el clima predecía (residuo ≥0, z≤2) → nada anómalo; (b) el stow vespertino es
+**recurrente** → el RF lo aprende como normal; (c) `FEATURES_SOLAR` no incluye viento y `z>3`
+(~27 MW con σ≈9) es más estricto que la merma de un stow (~15-20 MW). **La sección está correcta
+y actualizada** — el stow no es lo que ese detector busca. Mejora elegida: se **sombrean** las
+horas de stow (viento/ráfaga ≥ umbral) como **contexto** en el gráfico (solo solar), sin cambiar
+el criterio z>3. El stow sigue viéndose en **Alertas**, tab **Solar** y el **mapa**.
+
+### 4. Umbral de stow POR PARQUE (fuentes oficiales de planta)
+Antes global `TRACKER_STOW_WIND_MS = 16`. Ahora `config.TRACKER_STOW_WIND` + helper
+**`stow_umbral(parque)`**: **cluster Andes Solar 11.15 m/s**, **Bolero 12.5 m/s**, resto **16**
+(default). Aplicado en TODO el software con contexto de parque: modelo físico (`poa_tracker`
+acepta `stow_ms`; `openmeteo_api` pasa `stow_umbral(parque)`), `insights._check_stow_solar`,
+`tab_solar` (métrica + aviso + fórmulas LaTeX), `tab_ml` (sombreado), `tab_meteo_sistema`
+(alerta por parque + heatmap con quiebre en el umbral mínimo y rango en el título),
+`mapa_ernc` (flecha roja + tooltip). Glosario actualizado. **`p_fv_estimada_mw` se repuebla con
+el cron** (ventana 5 días); el histórico previo mantiene el 16 hasta un backfill de meteo.
+Validado: a 12 m/s, AS4 entra en stow (POA=GHI) mientras Bolero y Cristales siguen operando.
+
+### Commits Sesión 33
+- `dca159d` nav BESS · `2825f74` fix forecast prob · `911918f` stow en anomalías ·
+  `665299d` umbral stow por parque (+ alta BESS Arenales previa `69ac4ac`).
+
+### Pendientes Sesión 33
+- [ ] (Opcional) Backfill de meteo para recalcular `p_fv_estimada_mw` histórico con los nuevos
+      umbrales de stow (el cron lo corrige hacia adelante).
+- [ ] Coordenadas reales de PFV Cristales y su llave PCP / nodo CMG (desde Sesión 32).
+- [ ] Dar de alta el FV de Arenales cuando el CEN publique su generación (hoy solo el BESS).
+
+---
+
+*Actualizado 2026-07-01 — Sesiones 1–33 (v2.9.2).*
+*Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER + scikit-learn + LightGBM + PuLP*
+
+---
