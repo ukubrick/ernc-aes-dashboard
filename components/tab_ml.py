@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from config import (
     NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS,
     TECNOLOGIA, CMG_NODOS_TODOS, BESS, BESS_HORAS, CMG_NODO,
+    TRACKER_STOW_WIND_MS,
 )
 
 AES_AZUL    = "#3B4CE8"
@@ -550,7 +551,12 @@ def _render_anomalias(parque: str) -> None:
             "2. **Isolation Forest:** algoritmo no supervisado que aísla combinaciones raras de "
             "clima+generación (contaminación 5%). Detecta patrones atípicos aunque el residuo sea "
             "moderado.\n\n"
-            "Una hora es anómala si **cualquiera** de los dos criterios la marca."
+            "Una hora es anómala si **cualquiera** de los dos criterios la marca.\n\n"
+            "**Contexto de stow (solar):** las bandas grises sombrean las horas en que el viento "
+            "o la ráfaga superan el umbral de stow (los seguidores se ponen horizontales y se "
+            "pierde la ganancia de tracking). NO es un criterio de anomalía: es contexto para "
+            "distinguir una caída con causa conocida (stow) de una anomalía sin explicar. El stow "
+            "vespertino recurrente suele quedar dentro de lo 'normal' que el modelo ya aprendió."
         )
 
     # Residuos del modelo: gen real vs esperado dado el clima (validación cruzada simple)
@@ -577,6 +583,26 @@ def _render_anomalias(parque: str) -> None:
 
     _titulo(f"Generación real con anomalías marcadas — {NOMBRE_DISPLAY[parque]}", "12px 0 6px")
     fig = go.Figure()
+
+    # Contexto de stow (solo solar): sombrear horas con viento/ráfaga >= umbral de stow.
+    # NO es criterio de anomalía; ayuda a distinguir una caída con causa conocida (trackers
+    # horizontales, POA=GHI) de una anomalía sin explicar.
+    if tec == "Solar":
+        cols_v = [c for c in ("wind_speed_10m", "wind_gusts_10m") if c in d.columns]
+        if cols_v:
+            stow = d[(d[cols_v] >= TRACKER_STOW_WIND_MS).any(axis=1)].sort_values("fecha_hora")
+            for _, r in stow.iterrows():
+                ini = r["fecha_hora"] - pd.Timedelta(minutes=30)
+                fin = r["fecha_hora"] + pd.Timedelta(minutes=30)
+                fig.add_vrect(x0=ini, x1=fin, fillcolor="#6B7280", opacity=0.12,
+                              line_width=0, layer="below")
+            if not stow.empty:
+                # Traza fantasma solo para que el stow aparezca en la leyenda.
+                fig.add_trace(go.Scatter(
+                    x=[stow["fecha_hora"].iloc[0]], y=[None], mode="markers",
+                    marker=dict(color="#6B7280", size=10, symbol="square"),
+                    name=f"Stow (viento/ráfaga ≥ {TRACKER_STOW_WIND_MS:.0f} m/s)"))
+
     fig.add_trace(go.Scatter(x=d["fecha_hora"], y=d["esperado"], name="Esperado (modelo)",
                              line=dict(color=AES_VIOLETA, width=1.2, dash="dot")))
     fig.add_trace(go.Scatter(x=d["fecha_hora"], y=d["gen_real_mw"], name="Gen. real",
