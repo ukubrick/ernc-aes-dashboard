@@ -377,15 +377,14 @@ def _banda_cal(modelos, X, Q: float, pmax: float):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _entrenar_prob(parque: str, _prog=None) -> dict | None:
+def _entrenar_prob(parque: str) -> dict | None:
     """Entrena y calibra (CQR) la banda probabilística de un parque. Cacheado 1h:
     el entrenamiento LightGBM es lo caro, así que se hace una sola vez y las
-    re-ejecuciones de la UI son instantáneas. `_prog(frac, texto)` es un callback
-    opcional para la barra de progreso (el guion bajo hace que el cache lo ignore;
-    en cache hit no se llama y la carga es instantánea). Devuelve modelos+métricas+
-    backtest listos para graficar, o None / {'insuf':True} si faltan datos."""
+    re-ejecuciones de la UI son instantáneas. NO debe emitir elementos de Streamlit
+    (el spinner vive en el render): hacerlo revienta el cache hit con
+    CacheReplayClosureError. Devuelve modelos+métricas+backtest listos para graficar,
+    o None / {'insuf':True} si faltan datos."""
     from sklearn.model_selection import train_test_split
-    if _prog: _prog(0.10, "Cargando histórico meteo + generación...")
     tec = TECNOLOGIA[parque]
     pmax = PMAX[parque] if tec == "Solar" else PMAX_FP[parque]
     df = _dataset_parque(parque, dias=90)
@@ -398,7 +397,6 @@ def _entrenar_prob(parque: str, _prog=None) -> dict | None:
     if len(d) < 300:
         return {"insuf": True, "n": len(d)}
 
-    if _prog: _prog(0.45, "Entrenando modelos cuantílicos (LightGBM)...")
     col_fis = "p_fv_estimada_mw" if tec == "Solar" else "p_eolica_estimada_mw"
     cols = feats_q + ["gen_real_mw"] + ([col_fis] if col_fis in d.columns else [])
     tr_full, te = train_test_split(d[cols], test_size=0.2, random_state=42)
@@ -406,7 +404,6 @@ def _entrenar_prob(parque: str, _prog=None) -> dict | None:
 
     modelos, Q = _train_cal(tr[feats_q].values, tr["gen_real_mw"].values,
                             cal[feats_q].values, cal["gen_real_mw"].values, pmax)
-    if _prog: _prog(0.85, "Calibrando banda y preparando gráficos...")
     p10, p50, p90 = _banda_cal(modelos, te[feats_q].values, Q, pmax)
     y_te = te["gen_real_mw"].values
     cobertura = float(np.mean((y_te >= p10) & (y_te <= p90)) * 100)
@@ -427,7 +424,6 @@ def _entrenar_prob(parque: str, _prog=None) -> dict | None:
     n_vis = min(len(d), max(72, int(len(d) * 0.25)))
     dv = d.sort_values("fecha_hora").iloc[-n_vis:]
     b10, b50, b90 = _banda_cal(modelos_full, dv[feats_q].values, Q_full, pmax)
-    if _prog: _prog(1.0, "Listo")
 
     return {
         "tec": tec, "pmax": pmax, "feats_q": feats_q,
@@ -461,11 +457,12 @@ def _render_forecast_prob(parque: str) -> None:
             "determinístico que ya usa el dashboard."
         )
 
-    # Barra de progreso: solo se mueve en cache miss (primer entrenamiento del parque).
-    # En cache hit, _entrenar_prob no llama el callback → carga instantánea.
-    barra = st.progress(0, text="Preparando banda probabilística...")
-    res = _entrenar_prob(parque, _prog=lambda f, t: barra.progress(f, text=t))
-    barra.empty()
+    # El spinner vive FUERA del cache. No se puede emitir ningún elemento de
+    # Streamlit dentro de _entrenar_prob: al cachearla, esos mensajes se
+    # reproducen en el cache hit y, al venir de un closure, revientan con
+    # CacheReplayClosureError. Por eso ya no se pasa callback de progreso.
+    with st.spinner("Entrenando banda probabilística (LightGBM + CQR)..."):
+        res = _entrenar_prob(parque)
     if res is None:
         st.info("Sin datos meteo+generación para este parque todavía.")
         return
