@@ -71,7 +71,17 @@ def render_tab_bess(bess_rows: list | None = None) -> None:
     df = pd.DataFrame(bess_rows)
     df["fecha_hora"] = pd.to_datetime(df["fecha_hora"]).dt.tz_localize(None)
 
-    codigos = [c for c in BESS if c in df["bess"].unique()] or list(BESS.keys())
+    # Todos los BESS son seleccionables (aunque no tengan datos aún: Cristales
+    # EN_REVISION, Arenales recién dado de alta). Los con datos van primero.
+    con_datos = [c for c in BESS if c in df["bess"].unique()]
+    sin_datos = [c for c in BESS if c not in df["bess"].unique()]
+    codigos = con_datos + sin_datos
+
+    # Salto desde el sidebar: preseleccionar el BESS clickeado (one-shot).
+    _forzado = st.session_state.pop("_force_bess", None)
+    if _forzado in codigos:
+        st.session_state["bess_sel"] = _forzado
+
     bess_sel = st.selectbox(
         "BESS", codigos, format_func=lambda c: BESS[c]["nombre"], key="bess_sel",
     )

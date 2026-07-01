@@ -610,6 +610,7 @@ def render_sidebar(gen_por_parque: dict[str, float | None], actualizaciones: dic
                          key=f"btn_bess_{cod}", use_container_width=True):
                 st.session_state["vista"] = "BESS"
                 st.session_state["_force_cat"] = "Operación"
+                st.session_state["_force_bess"] = cod
                 st.rerun()
 
         st.divider()
