@@ -548,16 +548,26 @@ def query_instrucciones_ultimas(horas: int = 72) -> list[dict]:
 def query_sscc_programado(horas: int = 48) -> list[dict]:
     """SSCC programados (provisión MW por servicio) de las centrales del portfolio,
     desde ahora hacia adelante. [] si la tabla no existe aún."""
-    desde = _ahora_santiago().strftime("%Y-%m-%d %H:%M:%S")
+    from datetime import timedelta
+    ahora = _ahora_santiago()
+    desde = ahora.strftime("%Y-%m-%d %H:%M:%S")
+    hasta = (ahora + timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+    # Volumen alto (varios servicios × parques × horas) → paginar (tope 1000/request)
     try:
         sb = get_client()
-        res = (sb.table("sscc_programado_ernc")
-                 .select("parque,central,tipo_servicio,provision_mw,fecha_hora,barra")
-                 .gte("fecha_hora", desde)
-                 .order("fecha_hora", desc=False)
-                 .limit(5000)
-                 .execute())
-        return res.data or []
+        out, page = [], 0
+        while True:
+            res = (sb.table("sscc_programado_ernc")
+                     .select("parque,central,tipo_servicio,provision_mw,fecha_hora,barra")
+                     .gte("fecha_hora", desde).lte("fecha_hora", hasta)
+                     .order("fecha_hora", desc=False)
+                     .range(page * 1000, page * 1000 + 999)
+                     .execute())
+            filas = res.data or []
+            out.extend(filas)
+            if len(filas) < 1000:
+                return out
+            page += 1
     except Exception:
         return []
 

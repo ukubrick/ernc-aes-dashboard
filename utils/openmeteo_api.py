@@ -86,6 +86,10 @@ def _aq_por_hora(lat: float, lon: float, start: str, end: str) -> dict[str, dict
     """
     from config import OPENMETEO_AQ_URL, OPENMETEO_VARS_AQ
     import pandas as pd
+    # La AQ API pronostica máximo ~6 días (menos que los 7 del forecast meteo) —
+    # acotar end_date o rechaza la request completa con "out of allowed range".
+    max_end = (datetime.now(TZ_CHILE) + timedelta(days=6)).strftime("%Y-%m-%d")
+    end = min(end, max_end)
     try:
         responses = _client.weather_api(OPENMETEO_AQ_URL, params={
             "latitude": lat, "longitude": lon,
