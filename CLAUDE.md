@@ -2192,5 +2192,62 @@ esté EN_REVISION mostrará gen=0.
 
 ---
 
-*Actualizado 2026-06-30 — Sesiones 1–32 (v2.9.0).*
+## SESIÓN 33 — BESS ARENALES (BACKFILL + NAV), FIX FORECAST PROB, STOW EN ANOMALÍAS, UMBRAL STOW POR PARQUE (2026-07-01)
+
+Alta operativa de Arenales + fixes y una mejora de modelado del stow. `APP_VERSION = v2.9.2`.
+
+### 1. BESS Arenales — navegación + backfill histórico
+- **Fix navegación sidebar:** el botón de cada BESS solo hacía `vista="BESS"` sin decir *cuál*
+  BESS mostrar, y `tab_bess` filtraba el selector a los que tenían datos → **Cristales
+  (EN_REVISION, gen=0) y Arenales no eran seleccionables**. Ahora el botón pasa
+  `st.session_state["_force_bess"]` con el código clickeado, y `tab_bess` hace **seleccionables
+  todos los BESS** (con datos primero) consumiendo `_force_bess` (one-shot) antes del selectbox.
+  (`app_ernc.py`, `components/tab_bess.py`.)
+- **Backfill histórico de Arenales (`ARE_B`):** se pobló `generacion_bess_ernc` desde 2026-03-01
+  con solo la parte BESS (reusando `fetch_gen_bess` + `upsert_generacion_bess` en tramos de 7d,
+  idempotente → no duplica los otros 5 BESS). **2.933 filas ARE_B en DB.** Arenales **no operó
+  hasta ~2026-05-02** (todo en 0 antes = puesta en servicio); desde mayo opera con magnitudes
+  bajas (~2-9 MW vs 315 MW Pmax, rampa temprana). Signos correctos (iny=descarga, ret=carga).
+
+### 2. Fix forecast probabilístico — `CacheReplayClosureError` (`components/tab_ml.py`)
+`_entrenar_prob` (cacheada con `@st.cache_data`) recibía un callback `_prog` que ejecutaba
+`barra.progress(...)` **dentro** del cache → en el *cache hit* Streamlit reproduce esos mensajes
+desde un closure y revienta (visible al abrir el forecast probabilístico de cualquier parque).
+**Regla:** una función cacheada NUNCA debe emitir elementos de Streamlit. Fix: se quitó `_prog` y
+sus llamadas; el progreso ahora es un `st.spinner` **fuera** del cache, en `_render_forecast_prob`.
+
+### 3. Contexto de stow en Detección de anomalías (`components/tab_ml.py`)
+Consulta de Erick: un stow en el cluster Andes no aparecía como anomalía. Diagnóstico (verificado
+con datos reales de AS4): (a) en las horas de stow la generación estuvo **en línea o por encima**
+de lo que el clima predecía (residuo ≥0, z≤2) → nada anómalo; (b) el stow vespertino es
+**recurrente** → el RF lo aprende como normal; (c) `FEATURES_SOLAR` no incluye viento y `z>3`
+(~27 MW con σ≈9) es más estricto que la merma de un stow (~15-20 MW). **La sección está correcta
+y actualizada** — el stow no es lo que ese detector busca. Mejora elegida: se **sombrean** las
+horas de stow (viento/ráfaga ≥ umbral) como **contexto** en el gráfico (solo solar), sin cambiar
+el criterio z>3. El stow sigue viéndose en **Alertas**, tab **Solar** y el **mapa**.
+
+### 4. Umbral de stow POR PARQUE (fuentes oficiales de planta)
+Antes global `TRACKER_STOW_WIND_MS = 16`. Ahora `config.TRACKER_STOW_WIND` + helper
+**`stow_umbral(parque)`**: **cluster Andes Solar 11.15 m/s**, **Bolero 12.5 m/s**, resto **16**
+(default). Aplicado en TODO el software con contexto de parque: modelo físico (`poa_tracker`
+acepta `stow_ms`; `openmeteo_api` pasa `stow_umbral(parque)`), `insights._check_stow_solar`,
+`tab_solar` (métrica + aviso + fórmulas LaTeX), `tab_ml` (sombreado), `tab_meteo_sistema`
+(alerta por parque + heatmap con quiebre en el umbral mínimo y rango en el título),
+`mapa_ernc` (flecha roja + tooltip). Glosario actualizado. **`p_fv_estimada_mw` se repuebla con
+el cron** (ventana 5 días); el histórico previo mantiene el 16 hasta un backfill de meteo.
+Validado: a 12 m/s, AS4 entra en stow (POA=GHI) mientras Bolero y Cristales siguen operando.
+
+### Commits Sesión 33
+- `dca159d` nav BESS · `2825f74` fix forecast prob · `911918f` stow en anomalías ·
+  `665299d` umbral stow por parque (+ alta BESS Arenales previa `69ac4ac`).
+
+### Pendientes Sesión 33
+- [ ] (Opcional) Backfill de meteo para recalcular `p_fv_estimada_mw` histórico con los nuevos
+      umbrales de stow (el cron lo corrige hacia adelante).
+- [ ] Coordenadas reales de PFV Cristales y su llave PCP / nodo CMG (desde Sesión 32).
+- [ ] Dar de alta el FV de Arenales cuando el CEN publique su generación (hoy solo el BESS).
+
+---
+
+*Actualizado 2026-07-01 — Sesiones 1–33 (v2.9.2).*
 *Stack: Streamlit + folium + supabase-py + GitHub Actions + Open-Meteo + API CEN + NASA POWER + scikit-learn + LightGBM + PuLP*

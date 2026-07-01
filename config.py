@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 #         (370 MW). Central EN_REVISION en la API (gen=0 hasta PES). 12 parques / 6 BESS.
 # 2.9.1 — Sesión 33: alta de BESS Arenales (315 MW, standalone, sin FV asociado).
 #         Confirmado en gen-real/v3. 7 BESS.
-APP_VERSION = "v2.9.1"
+APP_VERSION = "v2.9.2"
 
 # ── Timezone ───────────────────────────────────────────────────────────────────
 TZ_CHILE = ZoneInfo("America/Santiago")
