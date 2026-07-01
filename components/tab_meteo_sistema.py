@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from config import (
     NOMBRE_DISPLAY, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS,
-    CMG_NODOS_TODOS, TRACKER_STOW_WIND_MS,
+    CMG_NODOS_TODOS, stow_umbral,
 )
 
 AES_AZUL    = "#3B4CE8"
@@ -113,13 +113,14 @@ def _seccion_alertas(df: pd.DataFrame) -> None:
         if sub.empty:
             continue
         sub["peor_viento"] = sub[["wind_speed_10m", "wind_gusts_10m"]].max(axis=1)
-        stow = sub[sub["peor_viento"] >= TRACKER_STOW_WIND_MS]
+        umbral_p = stow_umbral(p)
+        stow = sub[sub["peor_viento"] >= umbral_p]
         if not stow.empty:
             r = stow.iloc[0]
             n_h = len(stow)
             alertas.append(("alta", NOMBRE_DISPLAY[p], "Stow de trackers por viento fuerte",
                             f"Viento/rafaga {r['peor_viento']:.1f} m/s a las {str(r['fecha_hora'])[5:16]} "
-                            f"(≥{TRACKER_STOW_WIND_MS:.0f} m/s) — {n_h} h con seguidores en stow, merma de generacion"))
+                            f"(≥{umbral_p:.1f} m/s) — {n_h} h con seguidores en stow, merma de generacion"))
 
     # Solar: nubosidad que reduce recurso en horas diurnas
     for p in PARQUES_SOLAR:
@@ -264,13 +265,18 @@ def render_tab_meteo_sistema(cmg_rows: list | None = None) -> None:
                 "correcto, no un fallo de datos."
             )
         # Viento 10m / ráfagas en los SOLARES — anticipa el stow de trackers.
-        # Escala con quiebre en el umbral de stow (verde < umbral, ámbar→rojo sobre él).
-        _stow_frac = min(max(TRACKER_STOW_WIND_MS / 25.0, 0.05), 0.95)
+        # Los umbrales de stow difieren por planta (Andes 11.15, Bolero 12.5, resto 16):
+        # el quiebre de color se ancla al menor (el más exigente) y el título da el rango.
+        _umbrales_solar = [stow_umbral(p) for p in PARQUES_SOLAR]
+        _stow_min, _stow_max = min(_umbrales_solar), max(_umbrales_solar)
+        _stow_frac = min(max(_stow_min / 25.0, 0.05), 0.95)
         _esc_stow = [[0, "#F0FDF4"], [max(_stow_frac - 0.001, 0.01), "#FDE68A"],
                      [_stow_frac, AES_AMBAR], [1, AES_ROJO]]
+        _rango_stow = (f"≥{_stow_min:.1f} m/s" if _stow_min == _stow_max
+                       else f"≥{_stow_min:.1f}–{_stow_max:.0f} m/s segun planta")
         _heatmap(
             df, PARQUES_SOLAR, "wind_gusts_10m",
-            f"Rafagas 10m pronosticadas (m/s) — anticipan stow de trackers (≥{TRACKER_STOW_WIND_MS:.0f} m/s)",
+            f"Rafagas 10m pronosticadas (m/s) — anticipan stow de trackers ({_rango_stow})",
             _esc_stow, "meteo_hm_rafagas_solar", ".1f", zmin=0, zmax=25,
         )
         _heatmap(

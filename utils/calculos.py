@@ -29,12 +29,13 @@ def calcular_temp_celda(t_amb: float, ghi: float, wind_ms: float = 1.0) -> float
 
 
 def poa_tracker(gti_fijo: float, ghi: float, wind_ms: float = 0.0,
-                gusts_ms: float | None = None) -> float:
+                gusts_ms: float | None = None,
+                stow_ms: float = TRACKER_STOW_WIND_MS) -> float:
     """
     Irradiancia en el plano (POA) para seguidores de 1 eje, a partir del GTI de tilt
     fijo de Open-Meteo. Modelo pragmático:
-      - Stow por viento alto: si viento/ráfaga ≥ TRACKER_STOW_WIND_MS, los paneles se
-        ponen horizontales por protección → POA ≈ GHI (no se aprovecha el tracking).
+      - Stow por viento alto: si viento/ráfaga ≥ stow_ms (umbral por parque), los paneles
+        se ponen horizontales por protección → POA ≈ GHI (no se aprovecha el tracking).
       - Operación normal: POA = GTI_fijo × TRACKER_GAIN, nunca menor que GHI (un tracker
         no rinde peor que horizontal) y acotado a TRACKER_POA_MAX.
     """
@@ -42,7 +43,7 @@ def poa_tracker(gti_fijo: float, ghi: float, wind_ms: float = 0.0,
         return 0.0
     ghi = ghi or 0.0
     viento = max(wind_ms or 0.0, gusts_ms or 0.0)
-    if viento >= TRACKER_STOW_WIND_MS:
+    if viento >= stow_ms:
         return round(min(max(ghi, 0.0), TRACKER_POA_MAX), 2)
     poa = gti_fijo * TRACKER_GAIN
     poa = max(poa, ghi)

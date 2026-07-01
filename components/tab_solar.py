@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from config import (
-    NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, TRACKER_STOW_WIND_MS,
+    NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, stow_umbral,
     TRACKER_GAIN, TRACKER_AVAIL, TRACKER_POA_MAX, PANEL_NOCT, PANEL_GAMMA,
 )
 from utils.calculos import calcular_factor_planta, calcular_desvio
@@ -314,8 +314,9 @@ def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
         st.metric("Temp. celda", f"{tc:.1f} °C" if tc is not None else "—")
         st.caption(f"dato: {h_met}")
     with c7:
+        umbral_stow = stow_umbral(parque_sel)
         v_ref = max(viento or 0.0, rafaga or 0.0)
-        delta_stow = "Stow (horizontal)" if v_ref >= TRACKER_STOW_WIND_MS else None
+        delta_stow = "Stow (horizontal)" if v_ref >= umbral_stow else None
         st.metric(
             "Viento 10m",
             f"{viento:.1f} m/s" if viento is not None else "—",
@@ -324,11 +325,12 @@ def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
         )
         st.caption(f"dato: {h_met}")
 
+    umbral_stow = stow_umbral(parque_sel)
     v_ref = max(viento or 0.0, rafaga or 0.0)
-    if v_ref >= TRACKER_STOW_WIND_MS:
+    if v_ref >= umbral_stow:
         st.warning(
             f"Protección de viento alto activa ({h_met}): viento/ráfaga {v_ref:.1f} m/s ≥ "
-            f"{TRACKER_STOW_WIND_MS:.0f} m/s → trackers en posición horizontal (stow). "
+            f"{umbral_stow:.1f} m/s → trackers en posición horizontal (stow). "
             "La generación cae porque los paneles dejan de seguir al sol."
         )
 
@@ -339,7 +341,7 @@ def _panel_metricas(df_gen, df_prog, df_meteo, parque_sel):
         "generacion mostrada sea de horas antes. · Pmax neta CEN (potencia aceptada) · "
         "FP = Gen/Pmax neta × 100 · Desvio = (Gen − PCP)/PCP × 100 a la misma hora "
         "(verde ≤15% · ambar ≤25% · rojo >25%) · Temp. celda: modelo NOCT · "
-        f"Viento 10m: protección de trackers (stow horizontal sobre {TRACKER_STOW_WIND_MS:.0f} m/s)."
+        f"Viento 10m: protección de trackers (stow horizontal sobre {umbral_stow:.1f} m/s)."
     )
 
 
@@ -463,6 +465,7 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
 
     with st.expander("Fórmulas y modelo físico FV (seguidores de 1 eje)"):
         _gamma_pct = abs(PANEL_GAMMA) * 100.0
+        _v_stow = stow_umbral(parque_sel)
         st.markdown(
             f"<div style='font-size:12px;color:{AES_TEXTO};line-height:1.6;margin-bottom:6px'>"
             "El modelo encadena <b>4 pasos</b> desde la meteorología de Open-Meteo hasta la "
@@ -475,7 +478,7 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
               "Se parte del GTI de tilt fijo de Open-Meteo y se escala por la ganancia de "
               f"seguimiento ({TRACKER_GAIN:.2f}). Nunca rinde menos que la horizontal (GHI) "
               f"ni más que {TRACKER_POA_MAX:.0f} W/m². Con viento o ráfaga ≥ "
-              f"{TRACKER_STOW_WIND_MS:.0f} m/s los paneles se aplanan por protección (stow) "
+              f"{_v_stow:.1f} m/s los paneles se aplanan por protección (stow) "
               "y el POA cae a GHI.")
         st.latex(
             r"POA = \begin{cases}"
@@ -512,7 +515,7 @@ letter-spacing:0.8px;margin-bottom:10px'>Leyenda de series</div>
             r"$GHI$ — irradiancia global horizontal $[\mathrm{W/m^2}]$ · "
             rf"$POA$ — irradiancia plano del seguidor · $POA_{{max}}={TRACKER_POA_MAX:.0f}$ W/m²<br>"
             rf"$g_{{track}}={TRACKER_GAIN:.2f}$ — ganancia de seguimiento 1 eje · "
-            rf"$v_{{stow}}={TRACKER_STOW_WIND_MS:.0f}$ m/s — umbral de protección por viento<br>"
+            rf"$v_{{stow}}={_v_stow:.1f}$ m/s — umbral de protección por viento (según planta)<br>"
             rf"$NOCT={PANEL_NOCT:.0f}\,^{{\circ}}\mathrm{{C}}$ — temp. de operación nominal · "
             rf"$\gamma=-{_gamma_pct:.1f}\,\%/^{{\circ}}\mathrm{{C}}$ — coef. térmico (silicio cristalino)<br>"
             rf"$\eta_{{disp}}={TRACKER_AVAIL:.2f}$ — disponibilidad de seguidores · "

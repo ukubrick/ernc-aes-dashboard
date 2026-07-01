@@ -11,7 +11,7 @@ from typing import Literal
 from config import (
     NOMBRE_DISPLAY, TECNOLOGIA, PMAX, PMAX_FP,
     PARQUES_SOLAR, PARQUES_EOLICA, CMG_NODO,
-    TRACKER_STOW_WIND_MS, TRACKER_GAIN,
+    TRACKER_GAIN, stow_umbral,
 )
 from utils.calculos import calcular_factor_planta, calcular_desvio
 
@@ -163,16 +163,17 @@ def _check_eficiencia_solar(parque: str, gen_por_parque: dict, insights: list[In
 def _check_stow_solar(parque: str, insights: list[Insight]) -> None:
     """Viento fuerte que pone los trackers en stow horizontal → perjudica la generación FV.
 
-    Cuando el viento medio 10m o la ráfaga superan TRACKER_STOW_WIND_MS, los seguidores
-    se aplanan (POA = GHI) y se pierde la ganancia de tracking (~+18%).
+    Cuando el viento medio 10m o la ráfaga superan el umbral de stow del parque, los
+    seguidores se aplanan (POA = GHI) y se pierde la ganancia de tracking (~+18%).
     """
     meteo = _get_meteo_actual(parque)
     if not meteo:
         return
+    umbral = stow_umbral(parque)
     viento = meteo.get("wind_speed_10m") or 0
     rafaga = meteo.get("wind_gusts_10m") or 0
     peor = max(viento, rafaga)
-    if peor < TRACKER_STOW_WIND_MS:
+    if peor < umbral:
         return
     perdida_pct = (1 - 1 / TRACKER_GAIN) * 100  # ganancia de tracking que se pierde en stow
     gatillo = "ráfaga" if rafaga >= viento else "viento"
@@ -182,7 +183,7 @@ def _check_stow_solar(parque: str, insights: list[Insight]) -> None:
         titulo="Stow de trackers por viento fuerte",
         detalle=(
             f"Viento 10m {viento:.1f} m/s, ráfaga {rafaga:.1f} m/s ({gatillo} ≥ "
-            f"{TRACKER_STOW_WIND_MS:.0f} m/s). Los seguidores se ponen horizontales (stow) "
+            f"{umbral:.1f} m/s). Los seguidores se ponen horizontales (stow) "
             f"→ se pierde la ganancia de tracking (~{perdida_pct:.0f}% de POA) y baja la generación."
         ),
         valor=peor,

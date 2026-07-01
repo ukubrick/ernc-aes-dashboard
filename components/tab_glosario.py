@@ -55,7 +55,7 @@ GLOSARIO: dict[str, list[tuple[str, str]]] = {
         ("DHI", "Diffuse Horizontal Irradiance. Radiación difusa del cielo."),
         ("GTI / POA", "Global Tilted Irradiance / Plane of Array. Radiación sobre el plano del panel (inclinado/seguidor)."),
         ("Tracker (seguidor 1-eje)", "Estructura que gira el panel siguiendo al sol. Ganancia ~1.18 (TRACKER_GAIN) sobre el plano fijo."),
-        ("Stow", "Posición horizontal de protección del tracker ante viento fuerte (≥16 m/s, TRACKER_STOW_WIND_MS). El POA cae a GHI."),
+        ("Stow", "Posición horizontal de protección del tracker ante viento fuerte. El umbral es por planta (Andes ~11.15 m/s, Bolero 12.5 m/s; 16 m/s por defecto). El POA cae a GHI."),
         ("Disponibilidad (η_disp)", "Derate por mantenimiento/fallas aplicado al modelo FV (0.80, TRACKER_AVAIL)."),
         ("Temp. de celda (Tc)", "Temperatura de la celda FV (modelo NOCT ajustado por viento). Reduce la potencia ~0.4%/°C sobre 25 °C."),
         ("NOCT", "Nominal Operating Cell Temperature (~45 °C). Constante del modelo térmico del panel."),

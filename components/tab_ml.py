@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 from config import (
     NOMBRE_DISPLAY, PMAX, PMAX_FP, PARQUES_SOLAR, PARQUES_EOLICA, PARQUES_TODOS,
     TECNOLOGIA, CMG_NODOS_TODOS, BESS, BESS_HORAS, CMG_NODO,
-    TRACKER_STOW_WIND_MS,
+    stow_umbral,
 )
 
 AES_AZUL    = "#3B4CE8"
@@ -589,8 +589,9 @@ def _render_anomalias(parque: str) -> None:
     # horizontales, POA=GHI) de una anomalía sin explicar.
     if tec == "Solar":
         cols_v = [c for c in ("wind_speed_10m", "wind_gusts_10m") if c in d.columns]
+        umbral_stow = stow_umbral(parque)
         if cols_v:
-            stow = d[(d[cols_v] >= TRACKER_STOW_WIND_MS).any(axis=1)].sort_values("fecha_hora")
+            stow = d[(d[cols_v] >= umbral_stow).any(axis=1)].sort_values("fecha_hora")
             for _, r in stow.iterrows():
                 ini = r["fecha_hora"] - pd.Timedelta(minutes=30)
                 fin = r["fecha_hora"] + pd.Timedelta(minutes=30)
@@ -601,7 +602,7 @@ def _render_anomalias(parque: str) -> None:
                 fig.add_trace(go.Scatter(
                     x=[stow["fecha_hora"].iloc[0]], y=[None], mode="markers",
                     marker=dict(color="#6B7280", size=10, symbol="square"),
-                    name=f"Stow (viento/ráfaga ≥ {TRACKER_STOW_WIND_MS:.0f} m/s)"))
+                    name=f"Stow (viento/ráfaga ≥ {umbral_stow:.1f} m/s)"))
 
     fig.add_trace(go.Scatter(x=d["fecha_hora"], y=d["esperado"], name="Esperado (modelo)",
                              line=dict(color=AES_VIOLETA, width=1.2, dash="dot")))

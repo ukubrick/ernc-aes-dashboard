@@ -90,7 +90,7 @@ def _response_to_registros(response, parque: str, variables: list[str]) -> list[
         calcular_potencia_eolica_estimada,
     )
     from config import TURBINA_V_CUTIN, TURBINA_V_RATED, TURBINA_V_CUTOUT
-    from config import TECNOLOGIA, PMAX, PMAX_FP, TURBINA_PARQUE
+    from config import TECNOLOGIA, PMAX, PMAX_FP, TURBINA_PARQUE, stow_umbral
 
     tecnologia = TECNOLOGIA[parque]
     pmax = PMAX[parque]                       # capacidad bruta — modelo FV
@@ -141,7 +141,8 @@ def _response_to_registros(response, parque: str, variables: list[str]) -> list[
             tc = calcular_temp_celda(temp or 25.0, ghi or 0.0, wind or 1.0)
             row["temp_celda_c"] = tc
             # POA con seguidores de 1 eje (stow horizontal si viento alto) + derate disponibilidad
-            poa = poa_tracker(gti or 0.0, ghi or 0.0, wind or 0.0, gusts)
+            poa = poa_tracker(gti or 0.0, ghi or 0.0, wind or 0.0, gusts,
+                              stow_ms=stow_umbral(parque))
             row["p_fv_estimada_mw"] = calcular_potencia_fv_estimada(poa, tc, pmax)
         else:
             v80  = row.get("wind_speed_80m")

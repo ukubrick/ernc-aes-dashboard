@@ -381,8 +381,22 @@ PANEL_AZIMUTH  = 0.0     # ° — 0=norte verdadero (hemisferio sur)
 # acotado a [GHI, ~1100]. Un derate de disponibilidad cubre la confiabilidad del 80%.
 TRACKER_GAIN          = 1.18   # ganancia media POA tracking 1-eje vs tilt fijo (~+18%)
 TRACKER_AVAIL         = 0.80   # confiabilidad/disponibilidad de los trackers (80%)
-TRACKER_STOW_WIND_MS  = 16.0   # [m/s] sobre esto los trackers se ponen horizontales (stow)
+TRACKER_STOW_WIND_MS  = 16.0   # [m/s] umbral de stow por defecto (parques sin dato de planta)
 TRACKER_POA_MAX       = 1100.0 # [W/m²] tope físico plausible del POA con tracking
+
+# Umbral de stow por parque, según la documentación oficial de cada planta (Sesión 33).
+# Sobre este viento medio 10m (o ráfaga) los seguidores se ponen horizontales (POA=GHI).
+# Los parques sin entrada usan TRACKER_STOW_WIND_MS (16 m/s) por defecto.
+TRACKER_STOW_WIND = {
+    # Cluster Andes Solar
+    "AS1": 11.15, "AS2A": 11.15, "AS2B": 11.15, "AS3": 11.15, "AS4": 11.15,
+    "BOL": 12.5,   # Bolero
+}
+
+
+def stow_umbral(parque: str) -> float:
+    """Umbral de stow (m/s) del parque, o el default global si no está documentado."""
+    return TRACKER_STOW_WIND.get(parque, TRACKER_STOW_WIND_MS)
 
 # ── Parámetros eólicos ─────────────────────────────────────────────────────────
 # Curva de potencia simplificada de turbina típica onshore (clase IEC II/III):

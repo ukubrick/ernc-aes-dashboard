@@ -7,7 +7,8 @@ import os
 import streamlit as st
 import pandas as pd
 
-from config import NOMBRE_DISPLAY, COORDENADAS, TECNOLOGIA, PMAX, PARQUES_TODOS
+from config import (NOMBRE_DISPLAY, COORDENADAS, TECNOLOGIA, PMAX, PARQUES_TODOS,
+                    stow_umbral)
 
 
 def _secret(nombre: str) -> str | None:
@@ -238,8 +239,9 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
             # El glifo ➜ apunta al este (0° CSS), y el rumbo es 0=N/90=E → rotar (rumbo-90).
             rumbo = (w["dir"] + 180) % 360
             rot = (rumbo - 90) % 360
-            # Stow de trackers FV: se gatilla con viento medio O ráfaga ≥ 16 m/s.
-            stow = max(vel or 0, raf or 0) >= 16
+            # Stow de trackers FV: se gatilla con viento medio O ráfaga ≥ umbral de planta.
+            _um = stow_umbral(r["parque"])
+            stow = max(vel or 0, raf or 0) >= _um
             col = "#EF4444" if (stow or (vel or 0) >= 12) else ("#F59E0B" if (vel or 0) >= 7 else "#22D3EE")
             vtxt = f"{vel:.1f}" if vel is not None else "s/d"
             rtxt = f"{raf:.1f}" if raf is not None else "s/d"
@@ -258,7 +260,7 @@ def _render_satelite_folium(df: pd.DataFrame, parque_activo: str | None) -> None
                 icon=folium.DivIcon(html=html, icon_size=(54, 54), icon_anchor=(27, 27)),
                 tooltip=(f"{r['nombre']} — viento {vtxt} m/s · ráfaga {rtxt} m/s "
                          f"desde {w['dir']:.0f}°"
-                         + (" · STOW (≥16 m/s)" if stow else "")),
+                         + (f" · STOW (≥{_um:.1f} m/s)" if stow else "")),
             ).add_to(fgv)
         fgv.add_to(m)
 
