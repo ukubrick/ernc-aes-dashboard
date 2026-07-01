@@ -1,15 +1,21 @@
 # CLAUDE.md — Dashboard ERNC AES Andes
 > Contexto completo para Claude Code. Leer al inicio de cada sesión.
 > Autor: Erick Herrera — AES Andes, Antofagasta, Chile.
-> Última actualización: 2026-06-25 (Sesión 26 — auditoría comentarios/ayuda, fix PCP 24h, mapa solo satelital, fórmulas LaTeX detalladas).
+> Última actualización: 2026-07-01 (Sesión 33 — v2.9.2).
+>
+> REGLA DE MANTENIMIENTO: la cabecera (todo lo anterior al historial de sesiones) es la
+> ÚNICA fuente de verdad del estado actual; `config.py` manda sobre este markdown.
+> Las sesiones son historia inmutable. Al cerrar cada sesión, actualizar la cabecera
+> ADEMÁS de agregar el log de sesión.
 
 ---
 
 ## DESCRIPCIÓN DEL PROYECTO
 
-Dashboard operacional para **11 parques de energías renovables (ERNC) de AES Andes** en Chile:
-- 6 parques solares FV (norte, Atacama/Antofagasta)
+Dashboard operacional **"Pulsar"** (v2.9.2) para **12 parques de energías renovables (ERNC) de AES Andes** en Chile:
+- 7 parques solares FV (norte, Atacama/Antofagasta) — incluye PFV Cristales (EN_REVISION, gen=0)
 - 5 parques eólicos (sur, Biobío/Coquimbo)
+- 7 BESS asociados (incluye SAE Cristales 370 MW y BESS Arenales 315 MW)
 
 **Proyecto independiente** del dashboard CTM Mejillones (térmicas ANG/CCR). Hereda el stack y patrones de ese proyecto pero con visualización significativamente más rica.
 
@@ -48,7 +54,7 @@ AES_BLANCO   = "#FFFFFF"   # fondo de cards
 
 ```
 Frontend:        Streamlit (Python), tema claro, paleta AES
-Mapa 2D:         pydeck (ScatterplotLayer sobre Carto Positron — light)
+Mapa:            folium + streamlit-folium, SOLO satelital (Esri World Imagery + nubes OWM) — pydeck eliminado (S26)
 Gráficos:        Plotly (template plotly_white, paleta AES)
 Base de datos:   Supabase (REST API via supabase-py — NO psycopg2 directo)
 Adquisición:     Python + GitHub Actions (cron horario, minuto :10 UTC)
@@ -56,6 +62,8 @@ Meteorología:    Open-Meteo (gratuita, sin key, resolución horaria, forecast 7
 API energía:     CEN (SIPUB + Operaciones)
 CMG:             JSON S3 público del Coordinador Eléctrico Nacional
 Exportación:     ReportLab (PDF, in-memory BytesIO)
+ML/Optimización: scikit-learn + LightGBM (forecast probabilístico) + PuLP (optimizador BESS)
+Validación:      NASA POWER (GHI satelital, rezago ~85 días)
 Autorefresh:     streamlit-autorefresh (cada 3.600.000 ms)
 ```
 
@@ -101,39 +109,54 @@ El `anon key` se encuentra en: Supabase → proyecto ernc-aes → Settings → A
 
 ```
 ernc-aes-dashboard/
-├── CLAUDE.md                                 ← este archivo
-├── .env                                      ← credenciales locales (gitignored)
-├── .env.example                              ← plantilla sin valores reales
-├── .gitignore
-├── config.py                                 ← TODAS las constantes del proyecto
-├── schema.sql                                ← esquema Supabase (ya ejecutado)
+├── CLAUDE.md                        ← este archivo
+├── .env / .env.example              ← credenciales locales (gitignored) / plantilla
+├── config.py                        ← TODAS las constantes del proyecto (parques, BESS, umbrales)
+├── schema.sql                       ← esquema Supabase (ejecutado)
 ├── requirements.txt
-├── Adquisicion_ernc.py                       ← script de adquisición CEN
-├── Adquisicion_meteo_ernc.py                 ← (Sesión 3) meteorología Open-Meteo
-├── app_ernc.py                               ← (Sesión 4) app Streamlit principal
+├── app_ernc.py                      ← app Streamlit principal (login, sidebar, navegación, CSS, vistas Resumen/CMG)
+├── Adquisicion_ernc.py              ← cron horario: gen-real, PCP, BESS, CMG (+8b), CMG prog, limitaciones, SSCC
+├── Adquisicion_meteo_ernc.py        ← cron horario: meteo Open-Meteo + calculados
+├── Adquisicion_potencia_ernc.py     ← cron :25/:55: solo gen-real + BESS (baja lag)
+├── Adquisicion_pid_ernc.py          ← cron :40: gen programada PID + demanda PID
+├── Adquisicion_nasa_ernc.py         ← 1×/día 12 UTC: NASA POWER (validación GHI)
+├── Backfill_historico_ernc.py       ← utilidad puntual (NO cron): gen-real/BESS histórico
+├── Backfill_meteo_historico_ernc.py ← utilidad puntual: meteo histórica eólica (reanálisis)
+├── Recompute_shear_ernc.py          ← utilidad puntual: recálculo wind_shear_alpha
 ├── utils/
-│   ├── __init__.py
-│   ├── cen_api.py                            ← wrappers APIs CEN
-│   ├── db.py                                 ← cliente Supabase + upserts + queries
-│   ├── openmeteo_api.py                      ← (Sesión 3) wrapper Open-Meteo
-│   ├── calculos.py                           ← (Sesión 3) fórmulas derivadas
-│   └── insights.py                           ← (Sesión 6) motor de alertas automáticas
+│   ├── cen_api.py                   ← wrappers APIs CEN (retry, paginación totalPages)
+│   ├── db.py                        ← cliente Supabase + upserts + queries (paginación .range())
+│   ├── openmeteo_api.py             ← wrapper Open-Meteo + calculados por tecnología
+│   ├── nasapower_api.py             ← NASA POWER (UTC → Santiago)
+│   ├── calculos.py                  ← fórmulas físicas (FV trackers/stow, eólica, derivados)
+│   ├── insights.py                  ← motor de alarmas automáticas
+│   ├── recomendaciones.py           ← recomendaciones operativas
+│   └── pdf_report.py                ← reporte PDF (ReportLab)
 ├── components/
-│   ├── __init__.py
-│   ├── mapa_ernc.py                          ← mapa 2D pydeck (Carto Positron, ScatterplotLayer)
-│   ├── kpis_generales.py                     ← fila KPIs con tooltips help=
-│   ├── tab_solar.py                          ← tab Solar FV (parque_activo, tooltips, plotly_white)
-│   ├── tab_eolica.py                         ← tab Eólica (parque_activo, tooltips, plotly_white)
-│   ├── tab_forecast.py                       ← forecast 7 días + mensaje claro si no hay datos
-│   └── tab_insights.py                       ← hallazgos automáticos (cards light, sin emojis)
-└── .github/
-    └── workflows/
-        └── adquisicion_ernc.yml              ← cron horario :10
+│   ├── mapa_ernc.py                 ← mapa satelital folium (nubes OWM, viento actual, stow)
+│   ├── kpis_generales.py            ← cards KPI HTML
+│   ├── tab_solar.py / tab_eolica.py ← detalle por parque (vista fusionada "Parques")
+│   ├── tab_bess.py                  ← estado/SoC/arbitraje BESS
+│   ├── tab_forecast.py              ← forecast 7 días (físico + ML)
+│   ├── tab_ml.py                    ← 8 análisis ML (RF, probabilístico CQR, anomalías, CMG, eficiencia, soiling, BESS LP, NASA)
+│   ├── tab_estadisticas.py          ← acumulados, FP, ingresos, CO2, BESS
+│   ├── tab_historicos.py            ← consultas por rango de fechas (toda la DB)
+│   ├── tab_insights.py              ← alarmas (cards clicables)
+│   ├── tab_meteo_sistema.py         ← alertas meteo + heatmaps + contexto CMG
+│   ├── tab_infotecnica.py           ← fichas técnicas por parque
+│   ├── tab_glosario.py              ← glosario (gate con clave)
+│   └── demanda.py                   ← demanda por zona (componente reutilizable)
+├── assets/logo_pulsar.png
+├── .streamlit/config.toml           ← (+ secrets.toml gitignored)
+└── .github/workflows/
+    ├── adquisicion_ernc.yml         ← cron horario :10 (completo + keep-alive)
+    ├── potencia_ernc.yml            ← cron :25/:55 (gen-real + BESS)
+    └── programacion_pid_ernc.yml    ← cron :40 (PID + demanda)
 ```
 
 ---
 
-## PARQUES (11 confirmados en API CEN)
+## PARQUES (12 confirmados en API CEN)
 
 ### Solares FV
 
@@ -145,6 +168,7 @@ ernc-aes-dashboard/
 | AS3 | Andes Solar III | 2322 | PFV Andes Solar III | ANDES_3_FV | 175.0 | -24.001486 | -68.565828 | OSM way 1296706747 |
 | AS4 | Andes Solar IV | 2076 | PFV ANDES SOLAR IV | ANDES_4_FV | 220.0 | -24.021944 | -68.573460 | OSM way 1144233017 |
 | BOL | PFV Bolero | 456 | PFV BOLERO | BOLERO_1_FV | 161.3 | -23.475195 | -69.408486 | Sierra Gorda, Antofagasta |
+| CRI | PFV Cristales | 2419 | PFV Cristales | *(sin PCP aún)* | 300.0 | -24.1024 | -68.7756 | EN_REVISION, gen=0 (Sesión 32) |
 
 ### Eólicos
 
@@ -156,13 +180,16 @@ ernc-aes-dashboard/
 | STM | PE San Matías | 2091 | PE SAN MATIAS | SAN_MATIAS_EO | 87.5 | -37.434120 | -72.552807 | Los Ángeles, Biobío |
 | MSM | PE Mesamavida | 1758 | PE MESAMÁVIDA | MESAMAVIDA_EO | 70.56 | -37.489984 | -72.459097 | Los Ángeles, Biobío |
 
-**Capacidad total:** ~891 MW Solar + ~466 MW Eólica = **~1.357 MW**
+**Capacidad total:** ~1.191 MW Solar + ~466 MW Eólica = **~1.657 MW** (`PMAX_TOTAL` en config.py)
 
 > Coordenadas confirmadas por Erick Herrera (2026-06-19) desde OSM y datos AES.
 
-### BESS asociados (en API gen-real, id_central=None — ignorar en v1)
-AS2A, AS2B, AS3, AS4, BOL tienen BESS/SAE asociados que aparecen en la API.
-Filtrar por `llave_opreal` exacta para excluirlos.
+### BESS asociados (7 en `config.BESS` — adquiridos desde Sesión 17)
+AS2A_B (84), AS2B_B (136.5), AS3_B (177), AS4_B (140), BOL_B (160), CRI_B (370),
+ARE_B (Arenales, 315 — sin parque FV propio aún). En la API gen-real aparecen como
+centrales separadas (`id_central=None`, llaves `(Inyección)`/`(Retiro)`); se adquieren
+vía `fetch_gen_bess()` a la tabla `generacion_bess_ernc`. En gen-real de parques,
+filtrar por `llave_opreal` exacta para excluirlos.
 
 ---
 
@@ -329,11 +356,16 @@ fecha_hora = item["fecha_hora"][:19]  # solo truncar a segundos
 
 # st.plotly_chart: SIEMPRE agregar key= único explícito para evitar
 # StreamlitDuplicateElementId cuando hay múltiples gráficos en tabs/columnas.
+
+# SECRETOS: NUNCA escribir valores reales de keys/tokens/passwords en CLAUDE.md ni en
+# ningún archivo commiteado (el repo es PÚBLICO). Solo nombre de variable + dónde vive
+# (.env local / GitHub Actions Secrets / Streamlit Cloud Secrets). El historial de git
+# ya fue purgado una vez (2026-07-01) — no reintroducir.
 ```
 
 ---
 
-## OPEN-METEO (Sesión 3 — pendiente)
+## OPEN-METEO (implementado — ver "OPEN-METEO — DETALLES IMPLEMENTACIÓN" más abajo)
 
 ```python
 pip install openmeteo-requests requests-cache retry-requests
@@ -348,9 +380,11 @@ Forecast 7 días + 2 días históricos en cada llamada.
 
 ---
 
-## CÁLCULOS DERIVADOS (Sesión 3 — pendiente)
+## CÁLCULOS DERIVADOS (implementados en `utils/calculos.py`)
 
-Implementar en `utils/calculos.py`:
+> Nota: el modelo FV incluye trackers 1-eje con stow por viento (`poa_tracker`, umbral
+> POR PARQUE vía `stow_umbral()` — Sesiones 25/33) y el eólico usa curva de potencia por
+> parque (`TURBINA_PARQUE`, Sesiones 14/18). Esta tabla es el índice de funciones:
 
 | Función | Descripción |
 |---------|-------------|
@@ -366,48 +400,18 @@ Implementar en `utils/calculos.py`:
 
 ---
 
-## ORDEN DE IMPLEMENTACIÓN POR SESIÓN
+## HISTORIAL DE SESIONES
 
-| Sesión | Estado | Contenido |
-|--------|--------|-----------|
-| **1 — Fundación** | ✅ COMPLETA | `config.py`, `utils/db.py`, `utils/cen_api.py`, `schema.sql`, `requirements.txt` |
-| **2 — Adquisición** | ✅ COMPLETA | `Adquisicion_ernc.py`, `adquisicion_ernc.yml`, prueba en producción OK |
-| **3 — Meteorología** | ✅ COMPLETA | `utils/openmeteo_api.py`, `Adquisicion_meteo_ernc.py`, `utils/calculos.py` |
-| **4 — Mapa y Dashboard base** | ✅ COMPLETA | `components/mapa_ernc.py`, `components/kpis_generales.py`, `app_ernc.py` (sidebar + KPIs + mapa + tab CMG + tab limitaciones) |
-| **5 — Tabs Solar y Eólica** | ✅ COMPLETA | `components/tab_solar.py`, `components/tab_eolica.py` (detalle_parque integrado en cada tab) |
-| **6 — Forecast e Insights** | ✅ COMPLETA | `components/tab_forecast.py`, `utils/insights.py`, `components/tab_insights.py` |
-| **7 — PDF y Deploy** | ✅ COMPLETA | `utils/pdf_report.py`, `.streamlit/config.toml`, deploy Streamlit Cloud, `db.py` soporta st.secrets |
-| **8 — Bugs producción** | ✅ COMPLETA | StreamlitDuplicateElementId, timezone UTC vs Santiago, RLS sin políticas anon, key rotado |
-| **9 — Mejoras visuales + fixes** | ✅ COMPLETA | Ver sección SESIÓN 9 |
-| **10 — Fix paginación PCP v4 + ventana 5 días** | ✅ COMPLETA | Ver sección SESIÓN 10 |
-| **11 — UX mejoras múltiples** | ✅ COMPLETA | Ver sección SESIÓN 11 |
+Las 33 sesiones están documentadas en detalle más abajo (secciones "SESIÓN N").
+Hitos mayores: 1-8 fundación/deploy · 9-13 UX y fixes · 14-18 modelos físicos reales ·
+17 BESS · 19-21 navegación · 22-24 CMG programado/PID/NASA · 25 trackers+stow ·
+27 PID+demanda · 28 etapa IA (probabilístico, LP BESS, soiling) · 32-33 Cristales/Arenales.
+
+> Obsoleto (histórico): mapa 3D pydeck/TerrainLayer (el mapa es satelital folium desde S26).
 
 ---
 
-## DATOS CONFIRMADOS EN PRODUCCIÓN (2026-06-18)
-
-- **Gen. real:** 275 registros en Supabase (11 parques × 25 horas, ventana 2 días)
-- **Gen. programada PCP:** 36 registros (llaves `_FV` y `_EO` funcionando)
-- **CMG CRUCERO_______220:** 296.1 USD/MWh (nodo activo para parques del norte)
-- **Limitaciones:** PE Campo Lindo con 64.5 MW pendiente
-- **SSCC:** Sin instrucciones activas en ventana consultada
-
----
-
-## NOTAS PARA EL MAPA 3D (Sesión 4)
-
-```python
-# TerrainLayer con tiles Terrarium (sin costo, sin token)
-elevation_data = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
-texture = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-# elevation_scale = 2.5  # exagerar relieve para visualización
-# ColumnLayer con altura proporcional a generación actual (elevation = gen_mw × 200)
-# Vista inicial: lat=-33.0, lon=-70.5, zoom=4.5, pitch=45, bearing=-10
-```
-
----
-
-## INSIGHTS AUTOMÁTICOS A IMPLEMENTAR (Sesión 6)
+## INSIGHTS AUTOMÁTICOS (implementados en `utils/insights.py` — Sesión 6, ampliados S15/S32/S33)
 
 1. Desvío gen_real vs programada > ±15% (alerta si > ±25%)
 2. Limitación de transmisión activa + caída de generación correlacionada
@@ -819,15 +823,22 @@ if page >= total_pages:
 
 ---
 
-## PENDIENTES
+## PENDIENTES VIVOS (lista única — actualizar aquí, no en los logs de sesión)
 
-- [ ] Confirmar nodo CMG correcto para eólicos sur (CHARRUA_______220 vs otro)
-- [ ] Agregar logo AES Andes en sidebar cuando esté disponible (assets/logo_aes.png)
-- [ ] `st.segmented_control` requiere Streamlit >= 1.38 — verificar versión en Streamlit Cloud
-- [ ] Correr workflow manual para repoblar `p_eolica_estimada_mw` en `meteo_ernc` (fix sesión 9)
-- [x] Gráficos comprimidos en primer render de tab — RESUELTO en Sesión 13 (navegación de vista única)
-- [ ] **Satélite en el mapa**: reactivar vista Satélite agregando un token gratuito (Mapbox o MapTiler) a `secrets.toml`. El style raster ESRI ya está dormido en `mapa_ernc.py` (`_ESRI_SAT_STYLE`); sin token, pydeck no lo renderiza. (Sesión 15)
-- [ ] **Ventana PCP**: si la query PCP de 5 días se sigue colgando/degradando en la API del CEN, bajar `DIAS_VENTANA` del PCP a 1-2 días para que el cron sea más robusto. (Sesión 15)
+- [ ] Llave PCP de PFV Cristales cuando el CEN la publique → `LLAVES_GEN_PROG["CRI"]` (S32)
+- [ ] Confirmar barra/nodo CMG real de Cristales (asignado CRUCERO_______220 por defecto) → `CMG_NODO["CRI"]` (S32)
+- [ ] Confirmar Pmax neta CEN de Cristales cuando exista carta → `PMAX_NETA["CRI"]` (S32)
+- [ ] Alta del FV de Arenales cuando el CEN publique su generación (hoy solo el BESS ARE_B) (S32/S33)
+- [ ] (Opcional) Backfill de meteo para recalcular `p_fv_estimada_mw` histórico con los umbrales de stow por parque — el cron lo corrige hacia adelante (S33)
+- [ ] (Opcional) Anclar la ventana del comparador NASA a la última fecha de NASA en vez del fijo 120 d (S24/S29)
+- [ ] **Ventana PCP**: si la query PCP de 5 días se degrada en la API CEN, bajar la ventana PCP a 1-2 días (S15)
+- [ ] (Opcional) Precipitación en `meteo_ernc` (schema + adquisición) para atribuir lavados de soiling a lluvia (S28)
+- [ ] (Opcional) Informe de cumplimiento de pronóstico al CEN / skill vs PCP-PID (S28)
+- [ ] Confirmación formal del nodo CMG de eólicos sur — CHARRUA_______220 en uso desde S5, sin confirmación de AES
+
+Resueltos (histórico): logo sidebar (S16), satélite en mapa (S17/S26), gráficos comprimidos
+(S13), repoblar `p_eolica_estimada_mw` (S25), TZ global ZoneInfo (S27), coordenadas de
+Cristales (config.py ya tiene -24.1024/-68.7756), `.gitignore` sqlite (S29).
 
 ---
 
